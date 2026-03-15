@@ -24,14 +24,21 @@ export default function App() {
   } = useSession();
 
   const [rubricError, setRubricError] = useState(null);
+  const [saving, setSaving] = useState(false);
 
   async function handleSaveRun() {
-    await saveRun({
-      currentPatternState: patternState,
-      currentTranscripts: transcripts,
-      currentRunCount: runCount,
-      currentCurrentTranscript: currentTranscript,
-    });
+    if (saving) return;
+    setSaving(true);
+    try {
+      await saveRun({
+        currentPatternState: patternState,
+        currentTranscripts: transcripts,
+        currentRunCount: runCount,
+        currentCurrentTranscript: currentTranscript,
+      });
+    } finally {
+      setSaving(false);
+    }
   }
 
   async function handleDiscoverEvals() {
@@ -90,7 +97,7 @@ export default function App() {
               Pattern check failed — save another run to retry.
             </span>
           )}
-          {rubricError && (
+          {rubricError && patternState === "error" && (
             <span className="text-xs text-red-500">{rubricError}</span>
           )}
         </div>
@@ -106,6 +113,7 @@ export default function App() {
             patternState={patternState}
             onSaveRun={handleSaveRun}
             onDiscoverEvals={handleDiscoverEvals}
+            saving={saving}
           />
           <ChatInterface
             currentTranscript={currentTranscript}

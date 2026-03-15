@@ -4,6 +4,7 @@ export default function RunControls({
   patternState,
   onSaveRun,
   onDiscoverEvals,
+  saving,
 }) {
   const canSave = currentTranscriptLength >= 3;
   const showDiscoverButton = patternState === "pattern_found";
@@ -30,7 +31,7 @@ export default function RunControls({
 
       <button
         onClick={onSaveRun}
-        disabled={!canSave}
+        disabled={!canSave || saving}
         className="bg-gray-800 text-white px-4 py-1.5 rounded-lg text-sm font-medium hover:bg-gray-700 disabled:opacity-40 disabled:cursor-not-allowed"
       >
         Save Run &amp; Start New

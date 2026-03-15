@@ -64,15 +64,15 @@ export function useSession() {
   const [patternState, setPatternStateRaw] = useState(() => getItem(KEYS.PATTERN_STATE, "idle"));
   const [patternSummary, setPatternSummaryRaw] = useState(() => getItem(KEYS.PATTERN_SUMMARY, null));
 
-  function setPatternState(val) {
+  const setPatternState = useCallback((val) => {
     setPatternStateRaw(val);
     setItem(KEYS.PATTERN_STATE, val);
-  }
+  }, []);
 
-  function setPatternSummary(val) {
+  const setPatternSummary = useCallback((val) => {
     setPatternSummaryRaw(val);
     setItem(KEYS.PATTERN_SUMMARY, val);
-  }
+  }, []);
 
   const addMessage = useCallback((message) => {
     setCurrentTranscriptState((prev) => {
@@ -142,7 +142,7 @@ export function useSession() {
         setPatternState("error");
       }
     }
-  }, []);
+  }, [setPatternState, setPatternSummary]);
 
   return {
     runCount,
