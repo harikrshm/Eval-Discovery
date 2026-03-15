@@ -17,3 +17,10 @@ def test_extract_json_strips_both():
     raw = "<think>hmm</think>\n```json\n{\"found\": true}\n```"
     result = extract_json(raw)
     assert result == '{"found": true}'
+
+
+def test_extract_json_extracts_from_prose():
+    from backend.utils import extract_json
+    raw = 'Here is the rubric:\n{"name": "Pricing Redirect", "definition": "..."}\nLet me know if you need changes.'
+    result = extract_json(raw)
+    assert result == '{"name": "Pricing Redirect", "definition": "..."}'
