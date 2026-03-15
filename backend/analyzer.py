@@ -1,15 +1,25 @@
 import json
 import re
 from fastapi import APIRouter, HTTPException
-from backend.models import AnalyzeRequest, AnalyzeResponse, Rubric
+from pydantic import BaseModel
+from backend.models import Rubric
 from backend.groq_client import groq_chat
-from backend.prompts import (
-    INTENT_DETECTION_SYSTEM,
-    INTENT_DETECTION_USER_TEMPLATE,
-    RUBRIC_GENERATION_SYSTEM,
-    RUBRIC_GENERATION_USER_TEMPLATE,
-    format_transcripts,
-)
+from backend.prompts import format_transcripts
+
+# Legacy models kept here until Task 7 removes this module
+class AnalyzeRequest(BaseModel):
+    transcripts: list
+    run_count: int = 0
+
+class AnalyzeResponse(BaseModel):
+    intent: str
+    rubric: Rubric
+
+# Legacy prompt stubs until Task 7 removes this module
+INTENT_DETECTION_SYSTEM = ""
+INTENT_DETECTION_USER_TEMPLATE = "{n}{transcripts}"
+RUBRIC_GENERATION_SYSTEM = ""
+RUBRIC_GENERATION_USER_TEMPLATE = "{intent}{transcripts}"
 
 router = APIRouter()
 
