@@ -15,28 +15,67 @@ def test_chat_request_empty_messages_fails():
         ChatRequest(messages=[])
 
 
-def test_analyze_request_valid():
-    from backend.models import AnalyzeRequest
-    transcript = [{"role": "user", "content": "Hi"}, {"role": "assistant", "content": "Hey"}, {"role": "user", "content": "Tell me more"}]
-    req = AnalyzeRequest(transcripts=[transcript, transcript, transcript, transcript, transcript], run_count=5)
-    assert req.run_count == 5
-    assert len(req.transcripts) == 5
+def test_rubric_requires_why_discovered():
+    from backend.models import Rubric
+    with pytest.raises(ValidationError):
+        Rubric(name="Test", definition="Def", good_example="Good", bad_example="Bad")
 
 
-def test_analyze_request_single_transcript_valid():
-    from backend.models import AnalyzeRequest
-    transcript = [{"role": "user", "content": "Hi"}, {"role": "assistant", "content": "Hey"}, {"role": "user", "content": "Tell me more"}]
-    req = AnalyzeRequest(transcripts=[transcript], run_count=1)
-    assert len(req.transcripts) == 1
-
-
-def test_rubric_response_shape():
-    from backend.models import Rubric, AnalyzeResponse
+def test_rubric_valid_with_why_discovered():
+    from backend.models import Rubric
     rubric = Rubric(
-        name="Test",
-        definition="Def",
-        good_example="Good",
-        bad_example="Bad",
+        name="Pricing Redirect",
+        definition="Evaluates whether Alex deflects pricing questions.",
+        good_example="Alex: Let's cover that in the demo.",
+        bad_example="Alex: It's $20/month.",
+        why_discovered="User pushed for pricing in 3 consecutive runs.",
     )
-    resp = AnalyzeResponse(intent="objection_handling", rubric=rubric)
-    assert resp.intent == "objection_handling"
+    assert rubric.why_discovered == "User pushed for pricing in 3 consecutive runs."
+
+
+def test_pattern_check_request_valid():
+    from backend.models import PatternCheckRequest
+    transcript = [
+        {"role": "user", "content": "What does it cost?"},
+        {"role": "assistant", "content": "Let's cover that in the demo."},
+        {"role": "user", "content": "Just tell me the price."},
+    ]
+    req = PatternCheckRequest(transcripts=[transcript, transcript])
+    assert len(req.transcripts) == 2
+
+
+def test_pattern_check_response_found_requires_non_empty_summary():
+    from backend.models import PatternCheckResponse
+    with pytest.raises(ValidationError):
+        PatternCheckResponse(found=True, pattern_summary="")
+
+
+def test_pattern_check_response_found_with_summary():
+    from backend.models import PatternCheckResponse
+    resp = PatternCheckResponse(found=True, pattern_summary="User repeatedly asked for pricing.")
+    assert resp.found is True
+    assert len(resp.pattern_summary) > 0
+
+
+def test_pattern_check_response_not_found_allows_empty_summary():
+    from backend.models import PatternCheckResponse
+    resp = PatternCheckResponse(found=False, pattern_summary="")
+    assert resp.found is False
+
+
+def test_rubric_request_rejects_empty_summary():
+    from backend.models import RubricRequest
+    with pytest.raises(ValidationError):
+        RubricRequest(pattern_summary="")
+
+
+def test_rubric_request_rejects_whitespace_only_summary():
+    from backend.models import RubricRequest
+    with pytest.raises(ValidationError):
+        RubricRequest(pattern_summary="   ")
+
+
+def test_rubric_request_valid():
+    from backend.models import RubricRequest
+    req = RubricRequest(pattern_summary="User repeatedly pushed for pricing before booking demo.")
+    assert req.pattern_summary == "User repeatedly pushed for pricing before booking demo."

@@ -25,21 +25,40 @@ class ChatResponse(BaseModel):
     reply: str
 
 
-class AnalyzeRequest(BaseModel):
-    model_config = ConfigDict(extra='forbid')
-    transcripts: list[list[Message]]
-    run_count: int
-
-
 class Rubric(BaseModel):
     model_config = ConfigDict(extra='forbid')
     name: str
     definition: str
     good_example: str
     bad_example: str
+    why_discovered: str
 
 
-class AnalyzeResponse(BaseModel):
+class PatternCheckRequest(BaseModel):
     model_config = ConfigDict(extra='forbid')
-    intent: str
-    rubric: Rubric
+    transcripts: list[list[Message]]
+
+
+class PatternCheckResponse(BaseModel):
+    model_config = ConfigDict(extra='forbid')
+    found: bool           # MUST be declared first — validator below reads it via info.data
+    pattern_summary: str  # Pydantic v2 validates fields in declaration order; info.data only contains prior fields
+
+    @field_validator("pattern_summary")
+    @classmethod
+    def non_empty_when_found(cls, v, info):
+        if info.data.get("found") and not v.strip():
+            raise ValueError("pattern_summary must be non-empty when found=True")
+        return v
+
+
+class RubricRequest(BaseModel):
+    model_config = ConfigDict(extra='forbid')
+    pattern_summary: str
+
+    @field_validator("pattern_summary")
+    @classmethod
+    def non_empty(cls, v):
+        if not v.strip():
+            raise ValueError("pattern_summary must not be empty")
+        return v
