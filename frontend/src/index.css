@@ -1,3 +1,13 @@
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
+
+:root {
+  --background: #ffffff;
+  --foreground: #111111;
+  --muted: #fafafa;
+  --muted-foreground: #999999;
+  --border: #e8e8e8;
+  --card: #ffffff;
+  --ring: #111111;
+}
