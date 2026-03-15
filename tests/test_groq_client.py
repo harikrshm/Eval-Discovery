@@ -40,14 +40,14 @@ def test_pattern_model_does_not_receive_reasoning_format():
         assert "reasoning_format" not in call_kwargs
 
 
-def test_rubric_model_receives_reasoning_format_hidden():
-    from backend.groq_client import groq_chat, MODEL_RUBRIC
+def test_criteria_model_receives_reasoning_format_hidden():
+    from backend.groq_client import groq_chat, MODEL_CRITERIA
 
     mock_response = MagicMock()
     mock_response.choices[0].message.content = "ok"
 
     with patch("backend.groq_client.client.chat.completions.create", return_value=mock_response) as mock_create:
-        groq_chat(system="sys", messages=[{"role": "user", "content": "hi"}], model=MODEL_RUBRIC)
+        groq_chat(system="sys", messages=[{"role": "user", "content": "hi"}], model=MODEL_CRITERIA)
         call_kwargs = mock_create.call_args.kwargs
         assert call_kwargs["reasoning_format"] == "hidden"
 

@@ -7,7 +7,7 @@ load_dotenv()
 
 MODEL_CHAT    = "llama-3.1-8b-instant"
 MODEL_PATTERN = "openai/gpt-oss-120b"
-MODEL_RUBRIC  = "qwen/qwen3-32b"
+MODEL_CRITERIA = "qwen/qwen3-32b"
 
 _api_key = os.getenv("GROQ_API_KEY") or "sk-test-placeholder"
 client = Groq(api_key=_api_key)
@@ -22,7 +22,7 @@ def groq_chat(system: str, messages: list[dict], model: str = MODEL_CHAT) -> str
     """Send messages to Groq and return the assistant reply text, stripped of thinking blocks."""
     full_messages = [{"role": "system", "content": system}] + messages
     kwargs = {"model": model, "messages": full_messages}
-    if model == MODEL_RUBRIC:
+    if model == MODEL_CRITERIA:
         kwargs["reasoning_format"] = "hidden"
     response = client.chat.completions.create(**kwargs)
     return _strip_thinking(response.choices[0].message.content)

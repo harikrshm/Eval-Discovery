@@ -2,7 +2,7 @@ import json
 import logging
 from fastapi import APIRouter, HTTPException
 from backend.models import CriteriaRequest, EvalCriteria
-from backend.groq_client import groq_chat, MODEL_RUBRIC
+from backend.groq_client import groq_chat, MODEL_CRITERIA
 from backend.prompts import RUBRIC_GEN_SYSTEM, RUBRIC_GEN_USER_TEMPLATE
 from backend.utils import extract_json
 
@@ -22,7 +22,7 @@ def generate_criteria(request: CriteriaRequest):
                     pattern_summary=request.pattern_summary,
                 ),
             }],
-            model=MODEL_RUBRIC,
+            model=MODEL_CRITERIA,
         )
         data = json.loads(extract_json(raw))
         # Normalize dialogue fields: model sometimes returns a list of speaker objects
