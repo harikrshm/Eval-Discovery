@@ -2,12 +2,12 @@ export default function RunControls({
   runCount,
   currentTranscriptLength,
   patternState,
+  showDiscoverButton,
   onSaveRun,
   onDiscoverEvals,
   saving,
 }) {
   const canSave = currentTranscriptLength >= 3;
-  const showDiscoverButton = patternState === "pattern_found";
   const discoverDisabled = patternState === "generating";
 
   return (
