@@ -44,6 +44,30 @@ def test_generate_rubric_rejects_whitespace_summary(client):
     assert response.status_code == 422
 
 
+def test_generate_rubric_normalizes_list_examples(client):
+    """Model sometimes returns good_example/bad_example as lists of speaker objects."""
+    mock_resp = json.dumps({
+        "name": "Pricing Redirect Under Repeated Pressure",
+        "definition": "Evaluates whether Alex deflects repeated pricing questions.",
+        "good_example": [
+            {"speaker": "Prospect", "text": "What does it cost?"},
+            {"speaker": "Alex", "text": "Let's cover that in the demo."},
+        ],
+        "bad_example": [
+            {"speaker": "Prospect", "text": "Just give me a number."},
+            {"speaker": "Alex", "text": "$20/month."},
+        ],
+        "why_discovered": "User repeatedly asked for pricing.",
+    })
+    with patch("backend.rubric.groq_chat", return_value=mock_resp):
+        response = client.post("/generate-rubric", json={"pattern_summary": VALID_PATTERN_SUMMARY})
+    assert response.status_code == 200
+    body = response.json()
+    assert isinstance(body["good_example"], str)
+    assert isinstance(body["bad_example"], str)
+    assert "Prospect" in body["good_example"]
+
+
 def test_generate_rubric_handles_groq_failure(client):
     with patch("backend.rubric.groq_chat", side_effect=Exception("Groq down")):
         response = client.post("/generate-rubric", json={"pattern_summary": VALID_PATTERN_SUMMARY})

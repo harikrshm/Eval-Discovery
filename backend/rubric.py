@@ -25,6 +25,13 @@ def generate_rubric(request: RubricRequest):
             model=MODEL_RUBRIC,
         )
         data = json.loads(extract_json(raw))
+        # Normalize dialogue fields: model sometimes returns a list of speaker objects
+        for field in ("good_example", "bad_example"):
+            if isinstance(data.get(field), list):
+                data[field] = " ".join(
+                    f"{turn.get('speaker', '')}: '{turn.get('text', turn.get('content', ''))}'"
+                    for turn in data[field]
+                )
         return Rubric(**data)
     except HTTPException:
         raise

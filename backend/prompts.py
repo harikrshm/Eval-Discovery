@@ -62,8 +62,8 @@ Do NOT use generic AI evaluation language. The criterion must be specific to the
 Return a JSON object with exactly these keys:
 - "name": a concise, specific rubric name (5-10 words, not generic — name the exact behavior)
 - "definition": what this criterion evaluates and why it matters for this specific agent (2-3 sentences)
-- "good_example": a short dialogue exchange showing ideal agent behavior, grounded in the described context
-- "bad_example": a short dialogue exchange showing the failure mode the pattern revealed, using context from the evidence
+- "good_example": a short dialogue exchange as a plain string (e.g., "Prospect: 'question' Alex: 'response'") showing ideal agent behavior, grounded in the described context
+- "bad_example": a short dialogue exchange as a plain string (e.g., "Prospect: 'question' Alex: 'response'") showing the failure mode the pattern revealed, using context from the evidence
 - "why_discovered": one sentence explaining what the tester's repeated behavior revealed about which agent capability needed evaluation
 
 Respond ONLY with valid JSON. No markdown fences, no explanation outside the JSON."""
