@@ -13,7 +13,7 @@ function PatternBadge({ patternState, criteriaError, evalCriteriaCount }) {
 
   if (patternState === "checking") {
     return (
-      <Badge variant="outline" className="bg-gray-100 text-gray-500 border-0 animate-pulse">
+      <Badge variant="outline" className="bg-muted text-muted-foreground border-0 animate-pulse">
         Checking for patterns…
       </Badge>
     );
@@ -186,6 +186,7 @@ export default function App() {
           <button
             className="h-7 w-7 flex items-center justify-center rounded-md text-muted-foreground hover:text-foreground hover:bg-muted"
             aria-label="More options (reserved)"
+            tabIndex="-1"
             disabled
           >
             ···
@@ -205,12 +206,12 @@ export default function App() {
           />
         </div>
 
-        {/* Eval criteria panel — kept mounted to preserve state, hidden via width collapse */}
-        {evalCriteria.length > 0 && (
-          <div
-            className="flex-shrink-0 overflow-hidden border-l border-border bg-[#fafafa] transition-[width] duration-200"
-            style={{ width: panelVisible ? 384 : 0 }}
-          >
+        {/* Eval criteria panel — always mounted so CSS width transition animates on first reveal */}
+        <div
+          className="flex-shrink-0 overflow-hidden border-l border-border bg-[#fafafa] transition-[width] duration-200"
+          style={{ width: panelVisible && evalCriteria.length > 0 ? 384 : 0 }}
+        >
+          {evalCriteria.length > 0 && (
             <div className="w-96 h-full">
               <EvalCriteriaPanel
                 evalCriteria={evalCriteria}
@@ -221,8 +222,8 @@ export default function App() {
                 onExportAll={handleExportAll}
               />
             </div>
-          </div>
-        )}
+          )}
+        </div>
       </div>
 
       {/* ── Bottom Controls Bar (44px) ── */}

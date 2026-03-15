@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect, useCallback } from "react";
+import { useState, useRef, useEffect } from "react";
 import { sendMessage } from "../api";
 import { Button } from "./ui/button";
 import { Input } from "./ui/input";

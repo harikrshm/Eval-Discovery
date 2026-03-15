@@ -16,7 +16,7 @@ function CriterionCard({ criterion, index, isExpanded, onToggle, onUpdate }) {
     <div className="border border-border rounded-lg overflow-hidden bg-white">
       {/* Card header — criterion name Input inline + collapse toggle */}
       {/* Input click is stopped so it doesn't trigger the collapse toggle */}
-      <div className="flex items-center gap-2 px-4 py-2.5 hover:bg-muted transition-colors">
+      <div className="flex items-center gap-2 px-4 py-2.5">
         <span className="text-sm font-medium text-foreground flex-shrink-0">
           #{index + 1}
         </span>
