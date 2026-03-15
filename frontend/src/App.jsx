@@ -62,7 +62,9 @@ export default function App() {
     const a = document.createElement("a");
     a.href = url;
     a.download = "eval-rubric.json";
+    document.body.appendChild(a);
     a.click();
+    document.body.removeChild(a);
     URL.revokeObjectURL(url);
   }
 
@@ -97,7 +99,7 @@ export default function App() {
           <ChatInterface
             currentTranscript={currentTranscript}
             onMessage={addMessage}
-            disabled={false}
+            disabled={analyzing}
           />
         </div>
 
