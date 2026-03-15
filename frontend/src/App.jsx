@@ -4,6 +4,54 @@ import { generateCriteria } from "./api";
 import ChatInterface from "./components/ChatInterface";
 import RunControls from "./components/RunControls";
 import EvalCriteriaPanel from "./components/EvalCriteriaPanel";
+import { Badge } from "./components/ui/badge";
+
+// Status badge config keyed by patternState + evalCriteria.length
+// "New pattern found" when criteria already exist (evalCriteriaCount > 0), "Pattern found" on first discovery
+function PatternBadge({ patternState, criteriaError, evalCriteriaCount }) {
+  if (patternState === "idle" || patternState === "pattern_not_found") return null;
+
+  if (patternState === "checking") {
+    return (
+      <Badge variant="outline" className="bg-gray-100 text-gray-500 border-0 animate-pulse">
+        Checking for patterns…
+      </Badge>
+    );
+  }
+  if (patternState === "pattern_found") {
+    return (
+      <Badge variant="outline" className="bg-green-50 text-green-700 border border-green-200">
+        {evalCriteriaCount === 0 ? "Pattern found" : "New pattern found"}
+      </Badge>
+    );
+  }
+  if (patternState === "generating") {
+    return (
+      <Badge variant="outline" className="bg-amber-50 text-amber-700 border border-amber-200 animate-pulse">
+        Generating eval…
+      </Badge>
+    );
+  }
+  if (patternState === "complete") {
+    return (
+      <Badge variant="outline" className="bg-blue-50 text-blue-700 border border-blue-200">
+        Eval ready
+      </Badge>
+    );
+  }
+  if (patternState === "error") {
+    const msg =
+      criteriaError !== null
+        ? "Eval generation failed — retry"
+        : "Pattern check failed — retrying automatically";
+    return (
+      <Badge variant="outline" className="bg-red-50 text-red-600 border border-red-200">
+        {msg}
+      </Badge>
+    );
+  }
+  return null;
+}
 
 export default function App() {
   const {
@@ -101,71 +149,55 @@ export default function App() {
   }
 
   const isGenerating = patternState === "generating";
-  // "Discover Evals" shows for pattern_found, and for error-from-generation (criteriaError set)
   const showDiscoverButton =
     patternState === "pattern_found" ||
     (patternState === "error" && criteriaError !== null);
 
   return (
-    <div className="flex flex-col h-screen bg-white">
-      {/* Header */}
-      <header className="px-6 py-4 border-b flex items-center justify-between">
-        <div>
-          <h1 className="text-lg font-semibold text-gray-900">Eval Discovery</h1>
-          <p className="text-xs text-gray-500">Chat with Alex · CloudSync SDR</p>
+    <div className="flex flex-col h-screen bg-background font-['-apple-system,BlinkMacSystemFont,Inter,sans-serif']">
+
+      {/* ── Top Bar (44px) ── */}
+      <header className="h-11 flex items-center px-5 border-b border-border flex-shrink-0 bg-white">
+        {/* Left: run counter */}
+        <div className="flex items-center gap-1 text-sm text-muted-foreground w-40">
+          <span>↺</span>
+          <span>Runs ({runCount})</span>
         </div>
-        <div className="flex items-center gap-3">
-          {patternState === "checking" && (
-            <span className="text-xs text-blue-600 animate-pulse font-medium">
-              Checking for patterns…
-            </span>
-          )}
-          {patternState === "generating" && (
-            <span className="text-xs text-amber-600 animate-pulse font-medium">
-              Generating eval…
-            </span>
-          )}
-          {patternState === "error" && criteriaError !== null && (
-            <span className="text-xs text-red-500">Eval generation failed — retry</span>
-          )}
-          {patternState === "error" && criteriaError === null && (
-            <span className="text-xs text-red-500">
-              Pattern check failed — retrying automatically
-            </span>
-          )}
-          {patternState === "pattern_found" && evalCriteria.length === 0 && (
-            <span className="text-xs text-green-600 font-medium">Pattern found</span>
-          )}
-          {patternState === "pattern_found" && evalCriteria.length > 0 && (
-            <span className="text-xs text-green-600 font-medium">New pattern found</span>
-          )}
-          {patternState === "complete" && (
-            <span className="text-xs text-blue-600 font-medium">Eval ready</span>
-          )}
+
+        {/* Center: title */}
+        <div className="flex-1 text-center">
+          <span className="text-sm font-semibold text-foreground">Eval Discovery</span>
+          <span className="text-xs text-muted-foreground ml-2">· Alex / CloudSync SDR</span>
+        </div>
+
+        {/* Right: badges + menu placeholder */}
+        <div className="flex items-center gap-2 w-40 justify-end">
+          <PatternBadge patternState={patternState} criteriaError={criteriaError} evalCriteriaCount={evalCriteria.length} />
+
           {evalCriteria.length > 0 && (
             <button
               onClick={() => setPanelVisible(true)}
-              className="text-xs text-blue-700 bg-blue-50 border border-blue-200 rounded-full px-3 py-1 hover:bg-blue-100"
+              className="inline-flex items-center rounded-full border border-blue-200 bg-blue-50 px-2.5 py-0.5 text-xs font-semibold text-blue-700 hover:bg-blue-100 transition-colors"
             >
               Eval Criteria ({evalCriteria.length})
             </button>
           )}
+
+          <button
+            className="h-7 w-7 flex items-center justify-center rounded-md text-muted-foreground hover:text-foreground hover:bg-muted"
+            aria-label="More options (reserved)"
+            disabled
+          >
+            ···
+          </button>
         </div>
       </header>
 
-      {/* Body */}
+      {/* ── Body ── */}
       <div className="flex flex-1 overflow-hidden">
-        {/* Left: chat + controls */}
+
+        {/* Chat column */}
         <div className="flex flex-col flex-1 overflow-hidden">
-          <RunControls
-            runCount={runCount}
-            currentTranscriptLength={currentTranscript.length}
-            patternState={patternState}
-            showDiscoverButton={showDiscoverButton}
-            onSaveRun={handleSaveRun}
-            onDiscoverEvals={handleDiscoverEvals}
-            saving={saving}
-          />
           <ChatInterface
             currentTranscript={currentTranscript}
             onMessage={addMessage}
@@ -173,11 +205,10 @@ export default function App() {
           />
         </div>
 
-        {/* Right: eval criteria panel — kept mounted to preserve expandedIndex state,
-             hidden via width collapse (spec requires state not be cleared on dismiss) */}
+        {/* Eval criteria panel — kept mounted to preserve state, hidden via width collapse */}
         {evalCriteria.length > 0 && (
           <div
-            className="flex-shrink-0 overflow-hidden border-l transition-[width] duration-200"
+            className="flex-shrink-0 overflow-hidden border-l border-border bg-[#fafafa] transition-[width] duration-200"
             style={{ width: panelVisible ? 384 : 0 }}
           >
             <div className="w-96 h-full">
@@ -193,6 +224,17 @@ export default function App() {
           </div>
         )}
       </div>
+
+      {/* ── Bottom Controls Bar (44px) ── */}
+      <RunControls
+        runCount={runCount}
+        currentTranscriptLength={currentTranscript.length}
+        patternState={patternState}
+        showDiscoverButton={showDiscoverButton}
+        onSaveRun={handleSaveRun}
+        onDiscoverEvals={handleDiscoverEvals}
+        saving={saving}
+      />
     </div>
   );
 }

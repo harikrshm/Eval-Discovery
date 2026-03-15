@@ -1,4 +1,11 @@
 import { useState, useEffect } from "react";
+import { Button } from "./ui/button";
+import { Input } from "./ui/input";
+import { Textarea } from "./ui/textarea";
+import { Label } from "./ui/label";
+import { Separator } from "./ui/separator";
+import { ScrollArea } from "./ui/scroll-area";
+import { ChevronDown, ChevronUp } from "lucide-react";
 
 function CriterionCard({ criterion, index, isExpanded, onToggle, onUpdate }) {
   function handleBlur(field, value) {
@@ -6,59 +13,52 @@ function CriterionCard({ criterion, index, isExpanded, onToggle, onUpdate }) {
   }
 
   return (
-    <div className="border border-gray-200 rounded-lg overflow-hidden">
-      <button
-        className="w-full flex items-center justify-between px-4 py-3 bg-gray-50 text-left hover:bg-gray-100"
-        onClick={onToggle}
-      >
-        <span className="text-sm font-medium text-gray-800">
-          #{index + 1} {criterion.name}
+    <div className="border border-border rounded-lg overflow-hidden bg-white">
+      {/* Card header — criterion name Input inline + collapse toggle */}
+      {/* Input click is stopped so it doesn't trigger the collapse toggle */}
+      <div className="flex items-center gap-2 px-4 py-2.5 hover:bg-muted transition-colors">
+        <span className="text-sm font-medium text-foreground flex-shrink-0">
+          #{index + 1}
         </span>
-        <span className="text-gray-400 text-xs ml-2 flex-shrink-0">
-          {isExpanded ? "▲" : "▼"}
-        </span>
-      </button>
+        <Input
+          defaultValue={criterion.name}
+          onBlur={(e) => handleBlur("name", e.target.value)}
+          onClick={(e) => e.stopPropagation()}
+          className="flex-1 h-7 text-sm"
+        />
+        <button onClick={onToggle} className="flex-shrink-0 p-1 rounded hover:bg-muted-foreground/10">
+          {isExpanded ? (
+            <ChevronUp className="h-4 w-4 text-muted-foreground" />
+          ) : (
+            <ChevronDown className="h-4 w-4 text-muted-foreground" />
+          )}
+        </button>
+      </div>
 
       {isExpanded && (
-        <div className="p-4 space-y-3 border-t border-gray-200">
+        <div className="px-4 pb-4 pt-2 space-y-3 border-t border-border">
           {/* Why discovered — read-only */}
           <div>
-            <p className="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-1">
-              Why discovered
-            </p>
-            <p className="text-xs text-gray-600 leading-relaxed">
+            <Label className="mb-1 block">Why discovered</Label>
+            <p className="text-xs text-muted-foreground leading-relaxed">
               {criterion.why_discovered}
             </p>
           </div>
 
-          {/* Name (editable) */}
-          <div>
-            <label className="block text-xs font-semibold text-gray-500 uppercase tracking-wide mb-1">
-              Name
-            </label>
-            <input
-              type="text"
-              defaultValue={criterion.name}
-              onBlur={(e) => handleBlur("name", e.target.value)}
-              className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400 bg-white"
-            />
-          </div>
+          <Separator />
 
-          {/* Definition, Good example, Bad example (editable textareas) */}
+          {/* Definition, Good Example, Bad Example */}
           {[
             { key: "definition", label: "Definition" },
             { key: "good_example", label: "Good Example" },
             { key: "bad_example", label: "Bad Example" },
           ].map(({ key, label }) => (
             <div key={key}>
-              <label className="block text-xs font-semibold text-gray-500 uppercase tracking-wide mb-1">
-                {label}
-              </label>
-              <textarea
+              <Label className="mb-1 block">{label}</Label>
+              <Textarea
                 defaultValue={criterion[key]}
                 onBlur={(e) => handleBlur(key, e.target.value)}
                 rows={3}
-                className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400 bg-white resize-none"
               />
             </div>
           ))}
@@ -76,10 +76,10 @@ export default function EvalCriteriaPanel({
   onAdd,
   onExportAll,
 }) {
-  // Track which card is expanded: last card expanded by default
+  // expandedIndex: only the last card is expanded by default
   const [expandedIndex, setExpandedIndex] = useState(evalCriteria.length - 1);
 
-  // When list grows (new criterion added), expand the new last card
+  // When the list grows (new criterion appended), expand the new last card
   useEffect(() => {
     setExpandedIndex(evalCriteria.length - 1);
   }, [evalCriteria.length]);
@@ -89,22 +89,24 @@ export default function EvalCriteriaPanel({
   }
 
   return (
-    <div className="flex flex-col h-full bg-gray-50">
+    <div className="flex flex-col h-full bg-[#fafafa]">
       {/* Header */}
-      <div className="px-4 py-3 border-b border-gray-200 flex items-center justify-between flex-shrink-0">
-        <span className="text-xs font-semibold text-gray-500 uppercase tracking-wide">
+      <div className="h-11 flex items-center justify-between px-4 border-b border-border flex-shrink-0">
+        <span className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
           Eval Criteria
         </span>
-        <button
+        <Button
+          variant="ghost"
+          size="icon"
           onClick={onDismiss}
-          className="text-gray-400 hover:text-gray-600 text-lg leading-none"
+          className="h-7 w-7 text-muted-foreground"
           aria-label="Close panel"
         >
           ×
-        </button>
+        </Button>
       </div>
 
-      {/* New pattern notification banner */}
+      {/* "New pattern detected" notification banner */}
       {patternState === "pattern_found" && evalCriteria.length > 0 && (
         <div className="px-4 py-2 bg-green-50 border-b border-green-200 text-xs text-green-700 flex-shrink-0">
           ⚡ New pattern detected — click Discover Evals to add another criterion
@@ -112,33 +114,30 @@ export default function EvalCriteriaPanel({
       )}
 
       {/* Scrollable criteria cards */}
-      <div className="flex-1 overflow-y-auto p-4 space-y-3">
-        {evalCriteria.map((criterion, index) => (
-          <CriterionCard
-            key={criterion.id}
-            criterion={criterion}
-            index={index}
-            isExpanded={expandedIndex === index}
-            onToggle={() => handleToggle(index)}
-            onUpdate={onUpdate}
-          />
-        ))}
-      </div>
+      <ScrollArea className="flex-1">
+        <div className="p-4 space-y-3">
+          {evalCriteria.map((criterion, index) => (
+            <CriterionCard
+              key={criterion.id}
+              criterion={criterion}
+              index={index}
+              isExpanded={expandedIndex === index}
+              onToggle={() => handleToggle(index)}
+              onUpdate={onUpdate}
+            />
+          ))}
+        </div>
+      </ScrollArea>
 
       {/* Fixed footer */}
-      <div className="px-4 py-3 border-t border-gray-200 flex gap-2 flex-shrink-0">
-        <button
-          onClick={onExportAll}
-          className="flex-1 bg-gray-800 text-white py-2 rounded-lg text-sm font-medium hover:bg-gray-700"
-        >
+      <Separator />
+      <div className="px-4 py-3 flex gap-2 flex-shrink-0">
+        <Button className="flex-1" onClick={onExportAll}>
           Export All
-        </button>
-        <button
-          onClick={onAdd}
-          className="px-4 py-2 border border-gray-300 rounded-lg text-sm text-gray-600 hover:bg-gray-100"
-        >
+        </Button>
+        <Button variant="outline" onClick={onAdd}>
           + Add Criterion
-        </button>
+        </Button>
       </div>
     </div>
   );
