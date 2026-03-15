@@ -137,7 +137,7 @@ export default function EvalCriteriaPanel({
           onClick={onAdd}
           className="px-4 py-2 border border-gray-300 rounded-lg text-sm text-gray-600 hover:bg-gray-100"
         >
-          + Add Criteria
+          + Add Criterion
         </button>
       </div>
     </div>

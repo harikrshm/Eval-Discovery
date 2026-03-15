@@ -158,6 +158,10 @@ export function useSession() {
     setCurrentTranscriptState([]);
     setItem(KEYS.CURRENT_TRANSCRIPT, []);
 
+    // All states except "checking" and "generating" are re-triggerable by design.
+    // "complete" re-triggers so new patterns are detected after criteria are already generated.
+    // "pattern_found" re-triggers to update patternSummary before the user clicks Discover Evals.
+    // See pattern-detection spec state machine table.
     if (
       nextCount - currentLastCheckedAtRun >= 2 &&
       !["checking", "generating"].includes(currentPatternState) &&

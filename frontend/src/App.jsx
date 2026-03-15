@@ -25,6 +25,17 @@ export default function App() {
   const [saving, setSaving] = useState(false);
   const [panelVisible, setPanelVisible] = useState(false);
 
+  // On mount: if session was reloaded into "error" with a valid patternSummary, the error
+  // came from criteria generation (criteriaError is not persisted). Reset to "pattern_found"
+  // so the "Discover Evals" button reappears instead of showing the misleading
+  // "Pattern check failed" message.
+  useEffect(() => {
+    if (patternState === "error" && patternSummary) {
+      setPatternState("pattern_found");
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []); // intentionally runs once on mount only
+
   // Reset criteriaError whenever a new pattern check starts
   useEffect(() => {
     if (patternState === "checking") {

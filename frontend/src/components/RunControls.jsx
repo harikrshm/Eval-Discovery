@@ -8,6 +8,8 @@ export default function RunControls({
   saving,
 }) {
   const canSave = currentTranscriptLength >= 3;
+  // Defense-in-depth: showDiscoverButton is already false during "generating",
+  // so this disabled state is normally unreachable. Guards against future prop changes.
   const discoverDisabled = patternState === "generating";
 
   return (
