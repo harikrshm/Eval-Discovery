@@ -25,7 +25,7 @@ class ChatResponse(BaseModel):
     reply: str
 
 
-class Rubric(BaseModel):
+class EvalCriteria(BaseModel):
     model_config = ConfigDict(extra='forbid')
     name: str
     definition: str
@@ -52,7 +52,7 @@ class PatternCheckResponse(BaseModel):
         return v
 
 
-class RubricRequest(BaseModel):
+class CriteriaRequest(BaseModel):
     model_config = ConfigDict(extra='forbid')
     pattern_summary: str
 
