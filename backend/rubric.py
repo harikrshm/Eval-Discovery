@@ -1,9 +1,12 @@
 import json
+import logging
 from fastapi import APIRouter, HTTPException
 from backend.models import RubricRequest, Rubric
 from backend.groq_client import groq_chat, MODEL_RUBRIC
 from backend.prompts import RUBRIC_GEN_SYSTEM, RUBRIC_GEN_USER_TEMPLATE
 from backend.utils import extract_json
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
@@ -23,5 +26,8 @@ def generate_rubric(request: RubricRequest):
         )
         data = json.loads(extract_json(raw))
         return Rubric(**data)
+    except HTTPException:
+        raise
     except Exception as exc:
+        logger.exception("Rubric generation failed")
         raise HTTPException(status_code=502, detail="Rubric generation unavailable, try again.") from exc

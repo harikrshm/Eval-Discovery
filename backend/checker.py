@@ -1,9 +1,12 @@
 import json
+import logging
 from fastapi import APIRouter, HTTPException
 from backend.models import PatternCheckRequest, PatternCheckResponse
 from backend.groq_client import groq_chat, MODEL_PATTERN
 from backend.prompts import ALEX_SYSTEM_PROMPT, PATTERN_CHECK_SYSTEM, PATTERN_CHECK_USER_TEMPLATE, format_transcripts
 from backend.utils import extract_json
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
@@ -42,5 +45,8 @@ def check_pattern(request: PatternCheckRequest):
         )
         data = json.loads(extract_json(raw))
         return PatternCheckResponse(**data)
+    except HTTPException:
+        raise
     except Exception as exc:
+        logger.exception("Pattern check failed")
         raise HTTPException(status_code=502, detail="Pattern check unavailable, try again.") from exc
