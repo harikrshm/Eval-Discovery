@@ -15,22 +15,22 @@ def test_chat_request_empty_messages_fails():
         ChatRequest(messages=[])
 
 
-def test_rubric_requires_why_discovered():
-    from backend.models import Rubric
+def test_eval_criteria_requires_why_discovered():
+    from backend.models import EvalCriteria
     with pytest.raises(ValidationError):
-        Rubric(name="Test", definition="Def", good_example="Good", bad_example="Bad")
+        EvalCriteria(name="Test", definition="Def", good_example="Good", bad_example="Bad")
 
 
-def test_rubric_valid_with_why_discovered():
-    from backend.models import Rubric
-    rubric = Rubric(
+def test_eval_criteria_valid_with_why_discovered():
+    from backend.models import EvalCriteria
+    criterion = EvalCriteria(
         name="Pricing Redirect",
         definition="Evaluates whether Alex deflects pricing questions.",
         good_example="Alex: Let's cover that in the demo.",
         bad_example="Alex: It's $20/month.",
         why_discovered="User pushed for pricing in 3 consecutive runs.",
     )
-    assert rubric.why_discovered == "User pushed for pricing in 3 consecutive runs."
+    assert criterion.why_discovered == "User pushed for pricing in 3 consecutive runs."
 
 
 def test_pattern_check_request_valid():
@@ -63,19 +63,19 @@ def test_pattern_check_response_not_found_allows_empty_summary():
     assert resp.found is False
 
 
-def test_rubric_request_rejects_empty_summary():
-    from backend.models import RubricRequest
+def test_criteria_request_rejects_empty_summary():
+    from backend.models import CriteriaRequest
     with pytest.raises(ValidationError):
-        RubricRequest(pattern_summary="")
+        CriteriaRequest(pattern_summary="")
 
 
-def test_rubric_request_rejects_whitespace_only_summary():
-    from backend.models import RubricRequest
+def test_criteria_request_rejects_whitespace_only_summary():
+    from backend.models import CriteriaRequest
     with pytest.raises(ValidationError):
-        RubricRequest(pattern_summary="   ")
+        CriteriaRequest(pattern_summary="   ")
 
 
-def test_rubric_request_valid():
-    from backend.models import RubricRequest
-    req = RubricRequest(pattern_summary="User repeatedly pushed for pricing before booking demo.")
+def test_criteria_request_valid():
+    from backend.models import CriteriaRequest
+    req = CriteriaRequest(pattern_summary="User repeatedly pushed for pricing before booking demo.")
     assert req.pattern_summary == "User repeatedly pushed for pricing before booking demo."
