@@ -4,7 +4,7 @@ from typing import Literal
 
 class Message(BaseModel):
     model_config = ConfigDict(extra='forbid')
-    role: Literal["user", "assistant", "system"]
+    role: Literal["user", "assistant"]
     content: str
 
 
