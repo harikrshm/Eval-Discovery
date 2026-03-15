@@ -4,13 +4,13 @@ Helps voice agent builders break out of the preview run loop by auto-generating 
 
 ## Setup
 
-**Backend** (requires Python 3.11+)**:**
+**Backend** (requires Python 3.11+):
 
     pip install -r requirements.txt
     cp .env.example .env   # add your GROQ_API_KEY
     uvicorn backend.main:app --reload
 
-**Frontend** (requires Node 18+)**:**
+**Frontend** (requires Node 18+):
 
     cd frontend
     npm install
