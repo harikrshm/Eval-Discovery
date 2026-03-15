@@ -1,7 +1,6 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from backend.agent import router as agent_router
-from backend.analyzer import router as analyzer_router
 from backend.checker import router as checker_router
 from backend.rubric import router as rubric_router
 
@@ -15,6 +14,5 @@ app.add_middleware(
 )
 
 app.include_router(agent_router)
-app.include_router(analyzer_router)
 app.include_router(checker_router)
 app.include_router(rubric_router)
