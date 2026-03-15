@@ -1,6 +1,6 @@
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { useSession } from "./hooks/useSession";
-import { analyzeTranscripts } from "./api";
+import { generateRubric } from "./api";
 import ChatInterface from "./components/ChatInterface";
 import RunControls from "./components/RunControls";
 import EvalSuggestionPanel from "./components/EvalSuggestionPanel";
@@ -13,47 +13,41 @@ export default function App() {
     evalTriggered,
     evalDismissed,
     evalRubric,
-    evalIntent,
-    shouldTriggerAnalysis,
-    threshold,
+    patternState,
+    patternSummary,
     addMessage,
     saveRun,
     markTriggered,
     dismissEval,
     saveRubric,
-    saveIntent,
+    setPatternState,
   } = useSession();
 
-  const [analyzing, setAnalyzing] = useState(false);
-  const [analyzeError, setAnalyzeError] = useState(null);
+  const [rubricError, setRubricError] = useState(null);
 
-  // Trigger analysis when threshold is crossed
-  useEffect(() => {
-    if (!shouldTriggerAnalysis || analyzing) return;
+  async function handleSaveRun() {
+    await saveRun({
+      currentPatternState: patternState,
+      currentTranscripts: transcripts,
+      currentRunCount: runCount,
+      currentCurrentTranscript: currentTranscript,
+    });
+  }
 
-    async function runAnalysis() {
-      setAnalyzing(true);
-      setAnalyzeError(null);
-      markTriggered();
-      try {
-        const allTranscripts = transcripts.map((t) =>
-          t.map((m) => ({ role: m.role, content: m.content }))
-        );
-        const result = await analyzeTranscripts(allTranscripts, runCount);
-        saveIntent(result.intent);
-        saveRubric(result.rubric);
-      } catch (err) {
-        setAnalyzeError(err.message);
-      } finally {
-        setAnalyzing(false);
-      }
+  async function handleDiscoverEvals() {
+    if (!patternSummary) return;
+    setPatternState("generating");
+    setRubricError(null);
+    markTriggered();
+    try {
+      const rubric = await generateRubric(patternSummary);
+      saveRubric(rubric);
+      setPatternState("complete");
+    } catch (err) {
+      setRubricError(err.message);
+      setPatternState("error");
     }
-
-    runAnalysis();
-  }, [shouldTriggerAnalysis, analyzing, transcripts, runCount, markTriggered, saveRubric, saveIntent]);
-
-  const showEvalPanel =
-    evalRubric && evalTriggered && !evalDismissed && !analyzing;
+  }
 
   function handleSaveRubric(edited) {
     saveRubric(edited);
@@ -68,6 +62,10 @@ export default function App() {
     URL.revokeObjectURL(url);
   }
 
+  const showEvalPanel = evalRubric && evalTriggered && !evalDismissed && patternState === "complete";
+  const isChecking = patternState === "checking";
+  const isGenerating = patternState === "generating";
+
   return (
     <div className="flex flex-col h-screen bg-white">
       {/* Header */}
@@ -76,14 +74,26 @@ export default function App() {
           <h1 className="text-lg font-semibold text-gray-900">Eval Discovery</h1>
           <p className="text-xs text-gray-500">Chat with Alex · CloudSync SDR</p>
         </div>
-        {analyzing && (
-          <span className="text-xs text-amber-600 animate-pulse font-medium">
-            Analyzing transcripts…
-          </span>
-        )}
-        {analyzeError && (
-          <span className="text-xs text-red-500">{analyzeError}</span>
-        )}
+        <div className="flex items-center gap-3">
+          {isChecking && (
+            <span className="text-xs text-blue-600 animate-pulse font-medium">
+              Checking for patterns…
+            </span>
+          )}
+          {isGenerating && (
+            <span className="text-xs text-amber-600 animate-pulse font-medium">
+              Generating eval…
+            </span>
+          )}
+          {patternState === "error" && !isGenerating && (
+            <span className="text-xs text-red-500">
+              Pattern check failed — save another run to retry.
+            </span>
+          )}
+          {rubricError && (
+            <span className="text-xs text-red-500">{rubricError}</span>
+          )}
+        </div>
       </header>
 
       {/* Body */}
@@ -92,23 +102,23 @@ export default function App() {
         <div className="flex flex-col flex-1 overflow-hidden">
           <RunControls
             runCount={runCount}
-            threshold={threshold}
             currentTranscriptLength={currentTranscript.length}
-            onSaveRun={saveRun}
+            patternState={patternState}
+            onSaveRun={handleSaveRun}
+            onDiscoverEvals={handleDiscoverEvals}
           />
           <ChatInterface
             currentTranscript={currentTranscript}
             onMessage={addMessage}
-            disabled={analyzing}
+            disabled={isGenerating}
           />
         </div>
 
-        {/* Right: eval panel (slides in when ready) */}
+        {/* Right: eval panel */}
         {showEvalPanel && (
           <div className="w-96 flex-shrink-0 overflow-hidden">
             <EvalSuggestionPanel
               rubric={evalRubric}
-              intent={evalIntent}
               onDismiss={dismissEval}
               onSave={handleSaveRubric}
             />
