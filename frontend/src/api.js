@@ -10,15 +10,28 @@ export async function sendMessage(messages) {
   return res.json();
 }
 
-export async function analyzeTranscripts(transcripts, runCount) {
-  const res = await fetch(`${BASE_URL}/analyze`, {
+export async function checkPattern(transcripts) {
+  const res = await fetch(`${BASE_URL}/check-pattern`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ transcripts, run_count: runCount }),
+    body: JSON.stringify({ transcripts }),
   });
   if (!res.ok) {
     const err = await res.json().catch(() => ({}));
-    throw new Error(err.detail || `Analysis failed: ${res.status}`);
+    throw new Error(err.detail || `Pattern check failed: ${res.status}`);
   }
-  return res.json();
+  return res.json(); // { found: bool, pattern_summary: string }
+}
+
+export async function generateRubric(patternSummary) {
+  const res = await fetch(`${BASE_URL}/generate-rubric`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ pattern_summary: patternSummary }),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.detail || `Rubric generation failed: ${res.status}`);
+  }
+  return res.json(); // { name, definition, good_example, bad_example, why_discovered }
 }
