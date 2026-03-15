@@ -1,121 +1,118 @@
-import { useState } from 'react'
-import reactLogo from './assets/react.svg'
-import viteLogo from './assets/vite.svg'
-import heroImg from './assets/hero.png'
-import './App.css'
+import { useEffect, useState } from "react";
+import { useSession } from "./hooks/useSession";
+import { analyzeTranscripts } from "./api";
+import ChatInterface from "./components/ChatInterface";
+import RunControls from "./components/RunControls";
+import EvalSuggestionPanel from "./components/EvalSuggestionPanel";
 
-function App() {
-  const [count, setCount] = useState(0)
+export default function App() {
+  const {
+    runCount,
+    transcripts,
+    currentTranscript,
+    evalTriggered,
+    evalDismissed,
+    evalRubric,
+    evalIntent,
+    shouldTriggerAnalysis,
+    threshold,
+    addMessage,
+    saveRun,
+    markTriggered,
+    dismissEval,
+    saveRubric,
+    saveIntent,
+  } = useSession();
+
+  const [analyzing, setAnalyzing] = useState(false);
+  const [analyzeError, setAnalyzeError] = useState(null);
+
+  // Trigger analysis when threshold is crossed
+  useEffect(() => {
+    if (!shouldTriggerAnalysis || analyzing) return;
+
+    async function runAnalysis() {
+      setAnalyzing(true);
+      setAnalyzeError(null);
+      markTriggered();
+      try {
+        const allTranscripts = transcripts.map((t) =>
+          t.map((m) => ({ role: m.role, content: m.content }))
+        );
+        const result = await analyzeTranscripts(allTranscripts, runCount);
+        saveIntent(result.intent);
+        saveRubric(result.rubric);
+      } catch (err) {
+        setAnalyzeError(err.message);
+      } finally {
+        setAnalyzing(false);
+      }
+    }
+
+    runAnalysis();
+  }, [shouldTriggerAnalysis, analyzing, transcripts, runCount, markTriggered, saveRubric, saveIntent]);
+
+  const showEvalPanel =
+    evalRubric && evalTriggered && !evalDismissed && !analyzing;
+
+  function handleSaveRubric(edited) {
+    saveRubric(edited);
+    const blob = new Blob([JSON.stringify(edited, null, 2)], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = "eval-rubric.json";
+    a.click();
+    URL.revokeObjectURL(url);
+  }
 
   return (
-    <>
-      <section id="center">
-        <div className="hero">
-          <img src={heroImg} className="base" width="170" height="179" alt="" />
-          <img src={reactLogo} className="framework" alt="React logo" />
-          <img src={viteLogo} className="vite" alt="Vite logo" />
-        </div>
+    <div className="flex flex-col h-screen bg-white">
+      {/* Header */}
+      <header className="px-6 py-4 border-b flex items-center justify-between">
         <div>
-          <h1>Get started</h1>
-          <p>
-            Edit <code>src/App.jsx</code> and save to test <code>HMR</code>
-          </p>
+          <h1 className="text-lg font-semibold text-gray-900">Eval Discovery</h1>
+          <p className="text-xs text-gray-500">Chat with Alex · CloudSync SDR</p>
         </div>
-        <button
-          className="counter"
-          onClick={() => setCount((count) => count + 1)}
-        >
-          Count is {count}
-        </button>
-      </section>
+        {analyzing && (
+          <span className="text-xs text-amber-600 animate-pulse font-medium">
+            Analyzing transcripts…
+          </span>
+        )}
+        {analyzeError && (
+          <span className="text-xs text-red-500">{analyzeError}</span>
+        )}
+      </header>
 
-      <div className="ticks"></div>
-
-      <section id="next-steps">
-        <div id="docs">
-          <svg className="icon" role="presentation" aria-hidden="true">
-            <use href="/icons.svg#documentation-icon"></use>
-          </svg>
-          <h2>Documentation</h2>
-          <p>Your questions, answered</p>
-          <ul>
-            <li>
-              <a href="https://vite.dev/" target="_blank">
-                <img className="logo" src={viteLogo} alt="" />
-                Explore Vite
-              </a>
-            </li>
-            <li>
-              <a href="https://react.dev/" target="_blank">
-                <img className="button-icon" src={reactLogo} alt="" />
-                Learn more
-              </a>
-            </li>
-          </ul>
+      {/* Body */}
+      <div className="flex flex-1 overflow-hidden">
+        {/* Left: chat */}
+        <div className="flex flex-col flex-1 overflow-hidden">
+          <RunControls
+            runCount={runCount}
+            threshold={threshold}
+            currentTranscriptLength={currentTranscript.length}
+            onSaveRun={saveRun}
+          />
+          <ChatInterface
+            currentTranscript={currentTranscript}
+            onMessage={addMessage}
+            disabled={false}
+          />
         </div>
-        <div id="social">
-          <svg className="icon" role="presentation" aria-hidden="true">
-            <use href="/icons.svg#social-icon"></use>
-          </svg>
-          <h2>Connect with us</h2>
-          <p>Join the Vite community</p>
-          <ul>
-            <li>
-              <a href="https://github.com/vitejs/vite" target="_blank">
-                <svg
-                  className="button-icon"
-                  role="presentation"
-                  aria-hidden="true"
-                >
-                  <use href="/icons.svg#github-icon"></use>
-                </svg>
-                GitHub
-              </a>
-            </li>
-            <li>
-              <a href="https://chat.vite.dev/" target="_blank">
-                <svg
-                  className="button-icon"
-                  role="presentation"
-                  aria-hidden="true"
-                >
-                  <use href="/icons.svg#discord-icon"></use>
-                </svg>
-                Discord
-              </a>
-            </li>
-            <li>
-              <a href="https://x.com/vite_js" target="_blank">
-                <svg
-                  className="button-icon"
-                  role="presentation"
-                  aria-hidden="true"
-                >
-                  <use href="/icons.svg#x-icon"></use>
-                </svg>
-                X.com
-              </a>
-            </li>
-            <li>
-              <a href="https://bsky.app/profile/vite.dev" target="_blank">
-                <svg
-                  className="button-icon"
-                  role="presentation"
-                  aria-hidden="true"
-                >
-                  <use href="/icons.svg#bluesky-icon"></use>
-                </svg>
-                Bluesky
-              </a>
-            </li>
-          </ul>
-        </div>
-      </section>
 
-      <div className="ticks"></div>
-      <section id="spacer"></section>
-    </>
-  )
+        {/* Right: eval panel (slides in when ready) */}
+        {showEvalPanel && (
+          <div className="w-96 flex-shrink-0 overflow-hidden">
+            <EvalSuggestionPanel
+              rubric={evalRubric}
+              intent={evalIntent}
+              onDismiss={dismissEval}
+              onSave={handleSaveRubric}
+            />
+          </div>
+        )}
+      </div>
+    </div>
+  );
 }
-
-export default App
