@@ -19,7 +19,7 @@ An intelligent debugging assistant that helps first-time voice agent builders on
 **Stack:**
 - Backend: Python + FastAPI
 - Frontend: React (Vite + Tailwind CSS)
-- LLM: Groq API (OpenAI-compatible) with Qwen model
+- LLM: Groq API (OpenAI-compatible), model: `qwen-qwq-32b`
 - Session state: Browser `sessionStorage` (no database)
 
 **Diagram:**
@@ -55,7 +55,7 @@ An intelligent debugging assistant that helps first-time voice agent builders on
 │         │           │  └───────────────┘  ││
 │         │           └──────────┬──────────┘│
 │  ┌──────▼──────────────────────▼─────────┐ │
-│  │          Groq API (Qwen model)        │ │
+│  │     Groq API (qwen-qwq-32b model)     │ │
 │  └───────────────────────────────────────┘ │
 └────────────────────────────────────────────┘
 ```
@@ -165,7 +165,7 @@ and if there's interest, lock in a time. If they say no, exit gracefully.
 - Handle ONE objection max, then let it go
 - Never badmouth competitors
 - If you hit voicemail, leave a 15-second message and end
-- Don't discuss pricing — that's for the demo. If prompted again, say it is 20 dollars per month
+- Don't discuss pricing — that's for the demo. If the prospect asks a second time and won't drop it, say "$20/month" as a placeholder to unblock the conversation, then immediately redirect to booking the demo
 - Never pressure or guilt-trip — if they're not interested, thank them and move on
 ```
 
@@ -208,8 +208,20 @@ Takes the detected intent + raw transcripts and generates a structured rubric. G
 
 - **Threshold:** `run_count >= 5` (configurable via frontend constant `EVAL_TRIGGER_THRESHOLD`)
 - **Storage:** `sessionStorage` — resets on page refresh, no backend state needed
-- **Trigger:** Frontend calls `/analyze` once after threshold is first crossed; subsequent runs do not re-trigger unless user dismisses and resets
-- **Dismiss behavior:** User can dismiss the suggestion panel; dismissed state stored in `sessionStorage`
+- **Threshold enforcement:** Frontend-only. The backend does not validate `run_count`; it analyzes whatever transcripts it receives.
+- **Trigger:** Frontend calls `/analyze` once after threshold is first crossed. A `eval_triggered` flag (boolean) in `sessionStorage` prevents re-triggering on subsequent runs.
+- **Dismiss behavior:** Clicking Dismiss sets `eval_dismissed: true` in `sessionStorage` and hides the panel. It does NOT reset `run_count` or `eval_triggered` — the suggestion will not reappear in the same session.
+
+### sessionStorage Keys
+
+| Key | Type | Description |
+|-----|------|-------------|
+| `run_count` | number | Total completed preview runs this session |
+| `transcripts` | JSON string (array of arrays) | All saved run transcripts |
+| `current_transcript` | JSON string (array) | In-progress conversation turns |
+| `eval_triggered` | boolean string (`"true"`) | Whether `/analyze` has been called this session |
+| `eval_dismissed` | boolean string (`"true"`) | Whether the user dismissed the suggestion panel |
+| `eval_rubric` | JSON string | Last rubric returned by `/analyze` (persists for editing) |
 
 ---
 
@@ -218,7 +230,7 @@ Takes the detected intent + raw transcripts and generates a structured rubric. G
 | Scenario | Backend | Frontend |
 |----------|---------|----------|
 | Groq API failure | Return HTTP 502 | Show "Analysis unavailable, try again" toast |
-| Transcript too short (< 3 turns) | Return HTTP 400 | Show "Have a longer conversation first" message |
+| Any individual transcript has < 3 turns | Return HTTP 400 | Show "Have a longer conversation first" message |
 | Empty transcripts array | Return HTTP 400 | Blocked at frontend before calling `/analyze` |
 
 ---
