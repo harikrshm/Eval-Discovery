@@ -28,43 +28,51 @@ and if there's interest, lock in a time. If they say no, exit gracefully.
 - Never pressure or guilt-trip — if they're not interested, thank them and move on"""
 
 
-INTENT_DETECTION_SYSTEM = """You are an AI that analyzes voice agent test transcripts to identify what behavior a developer is testing.
+PATTERN_CHECK_SYSTEM = """You are an expert at analyzing AI agent test transcripts to detect repeated testing patterns.
 
-Given multiple conversation transcripts between a prospect and an outbound SDR named Alex (who is trying to book demos for CloudSync), identify the single most dominant testing pattern.
+Given multiple conversation transcripts and the AI agent's system prompt, determine whether the person testing the agent is consistently probing the same behavior across multiple runs.
+
+A pattern exists when:
+- The prospect raises the same type of challenge (e.g. pricing, objection, scheduling) in multiple runs
+- The agent faces the same behavioral test repeatedly
+- There is clear evidence of deliberate, repeated probing of a specific capability
 
 Return a JSON object with exactly these keys:
-- "intent": one of: value_prop_clarity, objection_handling, qualification_questions, demo_booking_flow, graceful_exit, edge_cases
-- "reasoning": one sentence explaining why
+- "found": true if a clear repeated pattern is detected across at least 2 transcripts; false otherwise
+- "pattern_summary": if found=true, a rich description including (1) the behavior name, (2) what agent capability is being tested, (3) 1-2 direct quoted exchanges from the transcripts as evidence. Use exact quotes. If found=false, return an empty string "".
 
 Respond ONLY with valid JSON. No markdown fences, no explanation outside the JSON."""
 
 
-INTENT_DETECTION_USER_TEMPLATE = """Here are {n} preview run transcripts:
+PATTERN_CHECK_USER_TEMPLATE = """Agent system prompt:
+{system_prompt}
 
+Conversation transcripts:
 {transcripts}
 
-What is the developer primarily testing? Return JSON only."""
+Is there a repeated testing pattern across these transcripts? Return JSON only."""
 
 
-RUBRIC_GENERATION_SYSTEM = """You are an AI that generates evaluation rubrics for voice agent behavior.
+RUBRIC_GEN_SYSTEM = """You are an expert at creating evaluation rubrics for AI agents.
 
-Given a testing intent and sample transcripts, generate a specific, actionable evaluation rubric grounded in the actual transcript exchanges.
+Given a description of a testing pattern discovered from real conversation transcripts (including behavioral context and quoted evidence), generate one specific, actionable evaluation criterion grounded in those exact exchanges.
+
+Do NOT use generic AI evaluation language. The criterion must be specific to the exact behavior and context described.
 
 Return a JSON object with exactly these keys:
-- "name": descriptive rubric name (5-10 words)
-- "definition": clear explanation of what's being evaluated (2-3 sentences)
-- "good_example": a sample exchange showing ideal agent behavior, using dialogue from or inspired by the transcripts
-- "bad_example": a sample exchange showing problematic agent behavior, contrasting the good example
+- "name": a concise, specific rubric name (5-10 words, not generic — name the exact behavior)
+- "definition": what this criterion evaluates and why it matters for this specific agent (2-3 sentences)
+- "good_example": a short dialogue exchange showing ideal agent behavior, grounded in the described context
+- "bad_example": a short dialogue exchange showing the failure mode the pattern revealed, using context from the evidence
+- "why_discovered": one sentence explaining what the tester's repeated behavior revealed about which agent capability needed evaluation
 
 Respond ONLY with valid JSON. No markdown fences, no explanation outside the JSON."""
 
 
-RUBRIC_GENERATION_USER_TEMPLATE = """Intent being tested: {intent}
+RUBRIC_GEN_USER_TEMPLATE = """Testing pattern discovered from transcript analysis:
+{pattern_summary}
 
-Transcripts:
-{transcripts}
-
-Generate an evaluation rubric for this intent. Return JSON only."""
+Generate one evaluation rubric for this specific pattern. Return JSON only."""
 
 
 def format_transcripts(transcripts: list[list[dict]]) -> str:
