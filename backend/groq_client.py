@@ -1,22 +1,28 @@
 import os
+import re
 from groq import Groq
 from dotenv import load_dotenv
 
 load_dotenv()
 
-MODEL = "qwen/qwen3-32b"
+MODEL_CHAT    = "llama-3.1-8b-instant"
+MODEL_PATTERN = "openai/gpt-oss-120b"
+MODEL_RUBRIC  = "qwen/qwen3-32b"
 
-# Initialize with a default key if not set to avoid initialization errors in tests
 _api_key = os.getenv("GROQ_API_KEY") or "sk-test-placeholder"
 client = Groq(api_key=_api_key)
 
 
-def groq_chat(system: str, messages: list[dict]) -> str:
-    """Send messages to Groq and return the assistant reply text."""
+def _strip_thinking(text: str) -> str:
+    """Remove <think>...</think> blocks that reasoning models may leak into responses."""
+    return re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL).strip()
+
+
+def groq_chat(system: str, messages: list[dict], model: str = MODEL_CHAT) -> str:
+    """Send messages to Groq and return the assistant reply text, stripped of thinking blocks."""
     full_messages = [{"role": "system", "content": system}] + messages
-    response = client.chat.completions.create(
-        model=MODEL,
-        messages=full_messages,
-        reasoning_format="hidden",
-    )
-    return response.choices[0].message.content
+    kwargs = {"model": model, "messages": full_messages}
+    if model == MODEL_RUBRIC:
+        kwargs["reasoning_format"] = "hidden"
+    response = client.chat.completions.create(**kwargs)
+    return _strip_thinking(response.choices[0].message.content)
