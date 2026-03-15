@@ -75,14 +75,14 @@ def test_analyze_handles_groq_failure(client):
 
 
 def test_extract_json_strips_think_blocks():
-    from backend.analyzer import extract_json
+    from backend.utils import extract_json
     raw = "<think>Let me analyze this carefully...</think>\n{\"intent\": \"objection_handling\"}"
     result = extract_json(raw)
     assert result == '{"intent": "objection_handling"}'
 
 
 def test_extract_json_strips_markdown_fences():
-    from backend.analyzer import extract_json
+    from backend.utils import extract_json
     raw = "```json\n{\"intent\": \"graceful_exit\"}\n```"
     result = extract_json(raw)
     assert result == '{"intent": "graceful_exit"}'
