@@ -4,6 +4,7 @@ import { generateCriteria } from "./api";
 import ChatInterface from "./components/ChatInterface";
 import RunControls from "./components/RunControls";
 import EvalCriteriaPanel from "./components/EvalCriteriaPanel";
+import HistoryPanel from "./components/HistoryPanel";
 import { Badge } from "./components/ui/badge";
 
 // Status badge config keyed by patternState + evalCriteria.length
@@ -29,13 +30,6 @@ function PatternBadge({ patternState, criteriaError, evalCriteriaCount }) {
     return (
       <Badge variant="outline" className="bg-amber-50 text-amber-700 border border-amber-200 animate-pulse">
         Generating eval…
-      </Badge>
-    );
-  }
-  if (patternState === "complete") {
-    return (
-      <Badge variant="outline" className="bg-blue-50 text-blue-700 border border-blue-200">
-        Eval ready
       </Badge>
     );
   }
@@ -72,6 +66,7 @@ export default function App() {
   const [criteriaError, setCriteriaError] = useState(null);
   const [saving, setSaving] = useState(false);
   const [panelVisible, setPanelVisible] = useState(false);
+  const [historyVisible, setHistoryVisible] = useState(false);
 
   // On mount: if session was reloaded into "error" with a valid patternSummary, the error
   // came from criteria generation (criteriaError is not persisted). Reset to "pattern_found"
@@ -158,26 +153,44 @@ export default function App() {
 
       {/* ── Top Bar (44px) ── */}
       <header className="h-11 flex items-center px-5 border-b border-border flex-shrink-0 bg-white">
-        {/* Left: run counter */}
-        <div className="flex items-center gap-1 text-sm text-muted-foreground w-40">
-          <span>↺</span>
-          <span>Runs ({runCount})</span>
+        {/* Left: history button */}
+        <div className="flex items-center gap-1 text-sm w-40">
+          {transcripts.length > 0 ? (
+            <button
+              onClick={() => setHistoryVisible(true)}
+              className="text-sm font-medium text-foreground hover:text-foreground/70 cursor-pointer"
+            >
+              History
+            </button>
+          ) : (
+            <span className="text-sm font-medium text-muted-foreground/50">History</span>
+          )}
         </div>
 
         {/* Center: title */}
         <div className="flex-1 text-center">
-          <span className="text-sm font-semibold text-foreground">Eval Discovery</span>
+          <span className="text-sm font-semibold tracking-wide text-foreground">Eval Discovery</span>
           <span className="text-xs text-muted-foreground ml-2">· Alex / CloudSync SDR</span>
         </div>
 
-        {/* Right: badges + menu placeholder */}
+        {/* Right: badges + buttons */}
         <div className="flex items-center gap-2 w-40 justify-end">
           <PatternBadge patternState={patternState} criteriaError={criteriaError} evalCriteriaCount={evalCriteria.length} />
+
+          {showDiscoverButton && (
+            <button
+              onClick={handleDiscoverEvals}
+              disabled={patternState === "generating"}
+              className="bg-black text-white hover:bg-black/90 text-xs font-semibold px-3 py-1 rounded-md disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              Discover Evals
+            </button>
+          )}
 
           {evalCriteria.length > 0 && (
             <button
               onClick={() => setPanelVisible(true)}
-              className="inline-flex items-center rounded-full border border-blue-200 bg-blue-50 px-2.5 py-0.5 text-xs font-semibold text-blue-700 hover:bg-blue-100 transition-colors"
+              className="inline-flex items-center bg-black text-white hover:bg-black/90 rounded-full px-2.5 py-0.5 text-xs font-semibold"
             >
               Eval Criteria ({evalCriteria.length})
             </button>
@@ -196,6 +209,19 @@ export default function App() {
 
       {/* ── Body ── */}
       <div className="flex flex-1 overflow-hidden">
+
+        {/* History panel — always mounted, width-animated */}
+        <div
+          className="flex-shrink-0 overflow-hidden border-r border-border bg-[#fafafa] transition-[width] duration-200"
+          style={{ width: historyVisible && transcripts.length > 0 ? 384 : 0 }}
+        >
+          <div className="w-96 h-full">
+            <HistoryPanel
+              transcripts={transcripts}
+              onDismiss={() => setHistoryVisible(false)}
+            />
+          </div>
+        </div>
 
         {/* Chat column */}
         <div className="flex flex-col flex-1 overflow-hidden">
@@ -228,12 +254,8 @@ export default function App() {
 
       {/* ── Bottom Controls Bar (44px) ── */}
       <RunControls
-        runCount={runCount}
         currentTranscriptLength={currentTranscript.length}
-        patternState={patternState}
-        showDiscoverButton={showDiscoverButton}
         onSaveRun={handleSaveRun}
-        onDiscoverEvals={handleDiscoverEvals}
         saving={saving}
       />
     </div>

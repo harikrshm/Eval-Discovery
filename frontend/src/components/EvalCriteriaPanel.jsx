@@ -58,7 +58,7 @@ function CriterionCard({ criterion, index, isExpanded, onToggle, onUpdate }) {
               <Textarea
                 defaultValue={criterion[key]}
                 onBlur={(e) => handleBlur(key, e.target.value)}
-                rows={3}
+                className="min-h-[100px] resize-none"
               />
             </div>
           ))}
@@ -135,7 +135,7 @@ export default function EvalCriteriaPanel({
         <Button className="flex-1" onClick={onExportAll}>
           Export All
         </Button>
-        <Button variant="outline" onClick={onAdd}>
+        <Button className="flex-1" onClick={onAdd}>
           + Add Criterion
         </Button>
       </div>
