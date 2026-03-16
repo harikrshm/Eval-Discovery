@@ -114,10 +114,6 @@ export default function ChatInterface({ currentTranscript, onMessage, disabled }
             disabled={disabled || loading}
             className="flex-1 border-0 bg-transparent shadow-none focus-visible:ring-0 text-sm h-8 px-0"
           />
-          <span className="text-xs text-muted-foreground whitespace-nowrap flex-shrink-0">
-            {currentTranscript.length}{" "}
-            {currentTranscript.length === 1 ? "message" : "messages"}
-          </span>
           <Button
             onClick={handleSend}
             disabled={!canSend}

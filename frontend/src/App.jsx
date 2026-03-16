@@ -228,12 +228,8 @@ export default function App() {
 
       {/* ── Bottom Controls Bar (44px) ── */}
       <RunControls
-        runCount={runCount}
         currentTranscriptLength={currentTranscript.length}
-        patternState={patternState}
-        showDiscoverButton={showDiscoverButton}
         onSaveRun={handleSaveRun}
-        onDiscoverEvals={handleDiscoverEvals}
         saving={saving}
       />
     </div>
