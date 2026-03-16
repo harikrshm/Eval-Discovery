@@ -4,6 +4,7 @@ import { generateCriteria } from "./api";
 import ChatInterface from "./components/ChatInterface";
 import RunControls from "./components/RunControls";
 import EvalCriteriaPanel from "./components/EvalCriteriaPanel";
+import HistoryPanel from "./components/HistoryPanel";
 import { Badge } from "./components/ui/badge";
 
 // Status badge config keyed by patternState + evalCriteria.length
@@ -65,6 +66,7 @@ export default function App() {
   const [criteriaError, setCriteriaError] = useState(null);
   const [saving, setSaving] = useState(false);
   const [panelVisible, setPanelVisible] = useState(false);
+  const [historyVisible, setHistoryVisible] = useState(false);
 
   // On mount: if session was reloaded into "error" with a valid patternSummary, the error
   // came from criteria generation (criteriaError is not persisted). Reset to "pattern_found"
@@ -151,10 +153,18 @@ export default function App() {
 
       {/* ── Top Bar (44px) ── */}
       <header className="h-11 flex items-center px-5 border-b border-border flex-shrink-0 bg-white">
-        {/* Left: run counter */}
-        <div className="flex items-center gap-1 text-sm text-muted-foreground w-40">
-          <span>↺</span>
-          <span>Runs ({runCount})</span>
+        {/* Left: history button */}
+        <div className="flex items-center gap-1 text-sm w-40">
+          {transcripts.length > 0 ? (
+            <button
+              onClick={() => setHistoryVisible(true)}
+              className="text-sm font-medium text-foreground hover:text-foreground/70 cursor-pointer"
+            >
+              History
+            </button>
+          ) : (
+            <span className="text-sm font-medium text-muted-foreground/50">History</span>
+          )}
         </div>
 
         {/* Center: title */}
@@ -199,6 +209,19 @@ export default function App() {
 
       {/* ── Body ── */}
       <div className="flex flex-1 overflow-hidden">
+
+        {/* History panel — always mounted, width-animated */}
+        <div
+          className="flex-shrink-0 overflow-hidden border-r border-border bg-[#fafafa] transition-[width] duration-200"
+          style={{ width: historyVisible && transcripts.length > 0 ? 384 : 0 }}
+        >
+          <div className="w-96 h-full">
+            <HistoryPanel
+              transcripts={transcripts}
+              onDismiss={() => setHistoryVisible(false)}
+            />
+          </div>
+        </div>
 
         {/* Chat column */}
         <div className="flex flex-col flex-1 overflow-hidden">
