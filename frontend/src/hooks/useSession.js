@@ -162,14 +162,16 @@ export function useSession() {
     // "complete" re-triggers so new patterns are detected after criteria are already generated.
     // "pattern_found" re-triggers to update patternSummary before the user clicks Discover Evals.
     // See pattern-detection spec state machine table.
+    const deltaTranscripts = nextTranscripts.slice(currentLastCheckedAtRun);
+
     if (
       nextCount - currentLastCheckedAtRun >= 2 &&
       !["checking", "generating"].includes(currentPatternState) &&
-      hasKeywordOverlap(nextTranscripts)
+      hasKeywordOverlap(deltaTranscripts)
     ) {
       setPatternState("checking");
       try {
-        const apiTranscripts = nextTranscripts.map((t) =>
+        const apiTranscripts = deltaTranscripts.map((t) =>
           t.map((m) => ({ role: m.role, content: m.content }))
         );
         const result = await apiCheckPattern(apiTranscripts);
