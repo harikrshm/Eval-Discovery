@@ -159,7 +159,7 @@ export default function App() {
 
         {/* Center: title */}
         <div className="flex-1 text-center">
-          <span className="text-sm font-semibold text-foreground">Eval Discovery</span>
+          <span className="text-sm font-semibold tracking-wide text-foreground">Eval Discovery</span>
           <span className="text-xs text-muted-foreground ml-2">· Alex / CloudSync SDR</span>
         </div>
 

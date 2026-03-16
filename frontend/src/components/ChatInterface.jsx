@@ -60,7 +60,7 @@ export default function ChatInterface({ currentTranscript, onMessage, disabled }
       <div
         ref={scrollRef}
         onScroll={handleScroll}
-        className="flex-1 overflow-y-auto px-6 py-4 space-y-3"
+        className="flex-1 overflow-y-auto px-6 py-4 space-y-4"
       >
         {currentTranscript.length === 0 && (
           <p className="text-muted-foreground text-sm text-center mt-12">
@@ -74,7 +74,7 @@ export default function ChatInterface({ currentTranscript, onMessage, disabled }
             className={`flex ${msg.role === "user" ? "justify-end" : "justify-start"}`}
           >
             <div
-              className={`max-w-[65%] px-3 py-2 text-sm leading-relaxed ${
+              className={`max-w-[72%] px-4 py-3 text-base leading-relaxed ${
                 msg.role === "user"
                   ? "bg-[#f5f5f5] text-foreground rounded-xl rounded-br-sm"
                   : "bg-white border border-[#ebebeb] text-foreground rounded-xl rounded-bl-sm"
