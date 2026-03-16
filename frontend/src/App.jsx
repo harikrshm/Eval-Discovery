@@ -32,13 +32,6 @@ function PatternBadge({ patternState, criteriaError, evalCriteriaCount }) {
       </Badge>
     );
   }
-  if (patternState === "complete") {
-    return (
-      <Badge variant="outline" className="bg-blue-50 text-blue-700 border border-blue-200">
-        Eval ready
-      </Badge>
-    );
-  }
   if (patternState === "error") {
     const msg =
       criteriaError !== null
