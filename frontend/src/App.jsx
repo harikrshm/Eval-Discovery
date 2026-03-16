@@ -171,7 +171,7 @@ export default function App() {
             <button
               onClick={handleDiscoverEvals}
               disabled={patternState === "generating"}
-              className="bg-black text-white hover:bg-black/90 text-xs font-semibold px-3 py-1 rounded-md disabled:opacity-50"
+              className="bg-black text-white hover:bg-black/90 text-xs font-semibold px-3 py-1 rounded-md disabled:opacity-50 disabled:cursor-not-allowed"
             >
               Discover Evals
             </button>
