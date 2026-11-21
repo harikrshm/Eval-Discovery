@@ -361,10 +361,13 @@ A minimal product event log records `agent_created`, `run_saved`, `loop_detected
 | Agents per workspace | 5 (also re-checked inside the create transaction) |
 | Runs per workspace | 50 |
 | System prompt length | 4000 characters |
-| Message length / messages per request | 2000 characters / 40 |
-| LLM-backed calls | 30 per minute per client IP (in-memory sliding window, per process) |
+| Message length / messages per request | 2000 characters per user message, 16000 per assistant message / 40 (120000 characters total per request) |
+| Criteria per agent | 30 |
+| Runs sent to pattern detection | the most recent 10 unchecked |
+| LLM-backed calls | 30 per minute per client, plus a process-wide budget of 600 per minute (`LLM_GLOBAL_PER_MINUTE`) |
+| Workspace creation | 20 per minute per client |
 
-The rate limiter keys on the client IP, so behind a reverse proxy uvicorn must run with `--proxy-headers` and `--forwarded-allow-ips` (see [8](#8-development--deployment)). State is per process: it resets on restart and is not shared across instances.
+Limiters are in-memory sliding windows, per process: they reset on restart and are not shared across instances. The client key is derived from `X-Forwarded-For` by taking the Nth entry from the right, where N is `TRUSTED_PROXY_HOPS` (default 1; 0 uses the direct peer address; a missing or too-short header also falls back to the peer address). Entries to the left of that are client-supplied and ignored.
 
 ### 6.7 Model Assignments
 
@@ -467,10 +470,10 @@ cd frontend && npm test && npm run lint && npm run build
 - **Backend (Render web service):** add a Postgres instance (check the provider's current free-tier terms first), set `DATABASE_URL`, `ALLOWED_ORIGINS` and `GROQ_API_KEY`, and paste this into the service's Start Command setting in the Render dashboard (Render ignores `Procfile`; it is for Procfile-based hosts):
 
   ```
-  alembic upgrade head && uvicorn backend.main:app --host 0.0.0.0 --port $PORT --proxy-headers --forwarded-allow-ips="*"
+  alembic upgrade head && uvicorn backend.main:app --host 0.0.0.0 --port $PORT
   ```
 
-  Migrations run on every start. `--proxy-headers` makes uvicorn read `X-Forwarded-For`; without it every request appears to come from Render's proxy and the per-IP limiter would throttle all users together. `--forwarded-allow-ips="*"` is acceptable on Render because a single trusted proxy sits in front of the container and is the only way in. On a host where clients can reach uvicorn directly, `*` lets any client spoof its IP and bypass the limiter, so list the proxy's address instead.
+  Migrations run on every start. Do not pass `--proxy-headers --forwarded-allow-ips="*"`: uvicorn would then take the left-most `X-Forwarded-For` entry, which the client controls, and a forged value per request would defeat the per-IP limiter. The app derives the client key itself (see [6.6](#66-limits)): the Nth entry from the right of `X-Forwarded-For`, N being `TRUSTED_PROXY_HOPS` (default 1; 0 ignores the header). Render's real header chain was not observed. After deploying, send `POST /workspaces` 31 times with different forged left-most `X-Forwarded-For` values and expect a 429 by the 21st; if it never comes, raise `TRUSTED_PROXY_HOPS`, and if all users are throttled together, lower it.
 - **Frontend (Cloudflare Worker, static assets):** rebuild with `VITE_API_URL=<backend url> npm run build`, then deploy `frontend/dist`.
 - No CI/CD pipeline is configured.
 

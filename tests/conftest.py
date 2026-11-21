@@ -47,3 +47,12 @@ def auth_headers(db_session):
 
     _, token = create_workspace(db_session)
     return {"X-Workspace-Token": token}
+
+
+@pytest.fixture(autouse=True)
+def _reset_all_rate_limiters():
+    from backend.api import limits
+
+    limits.reset_limiters()
+    yield
+    limits.reset_limiters()

@@ -1,5 +1,6 @@
 """Request quotas and an in-memory sliding-window rate limiter for LLM-backed routes."""
 
+import os
 import threading
 import time
 from collections import deque
@@ -81,14 +82,62 @@ class RateLimiter:
             self._checks = 0
 
 
+DEFAULT_GLOBAL_LLM_PER_MINUTE = 600
+WORKSPACE_CREATES_PER_MINUTE = 20
+_TOO_MANY = "Too many requests. Wait a minute, then try again."
+
+
+def _int_env(name: str, default: int) -> int:
+    try:
+        return int(os.environ[name])
+    except (KeyError, ValueError):
+        return default
+
+
+def make_global_limiter() -> RateLimiter:
+    """Process-wide LLM request budget per minute (env LLM_GLOBAL_PER_MINUTE), a backstop to the per-IP limit."""
+    return RateLimiter(_int_env("LLM_GLOBAL_PER_MINUTE", DEFAULT_GLOBAL_LLM_PER_MINUTE), 60)
+
+
 llm_limiter = RateLimiter(30, 60)
+global_llm_limiter = make_global_limiter()
+workspace_limiter = RateLimiter(WORKSPACE_CREATES_PER_MINUTE, 60)
+
+
+def reset_limiters() -> None:
+    """Forget every limiter's recorded calls (used by tests)."""
+    for limiter in (llm_limiter, global_llm_limiter, workspace_limiter):
+        limiter.reset()
+
+
+def client_key(request: Request) -> str:
+    """Identify the caller for rate limiting without trusting a client-controlled address.
+
+    Behind N trusted proxies each appends the address it saw to X-Forwarded-For, so only the
+    Nth entry from the RIGHT is trustworthy; anything to its left was supplied by the client.
+    N is env TRUSTED_PROXY_HOPS (default 1). 0 ignores the header. A missing or too-short
+    header falls back to the direct peer address.
+    """
+    host = request.client.host if request.client else "unknown"
+    hops = _int_env("TRUSTED_PROXY_HOPS", 1)
+    if hops < 1:
+        return host
+    entries = [part.strip() for part in request.headers.get("x-forwarded-for", "").split(",") if part.strip()]
+    if len(entries) < hops:
+        return host
+    return entries[-hops]
 
 
 def rate_limit_llm(request: Request) -> None:
-    """Raise 429 when the caller exceeds the LLM call budget.
+    """Raise 429 when the caller (or the whole process) exceeds the LLM call budget.
 
     Plain function: works as a route dependency and when called inside a handler.
     """
-    key = request.client.host if request.client else "unknown"
-    if not llm_limiter.check(key):
-        raise HTTPException(status_code=429, detail="Too many requests. Wait a minute, then try again.")
+    if not llm_limiter.check(client_key(request)) or not global_llm_limiter.check("global"):
+        raise HTTPException(status_code=429, detail=_TOO_MANY)
+
+
+def rate_limit_workspace_create(request: Request) -> None:
+    """Raise 429 when one client creates workspaces too fast."""
+    if not workspace_limiter.check(client_key(request)):
+        raise HTTPException(status_code=429, detail=_TOO_MANY)

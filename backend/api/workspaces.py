@@ -2,6 +2,7 @@ from fastapi import APIRouter, Depends, Response
 from sqlalchemy.orm import Session
 
 from backend.api.deps import get_current_workspace
+from backend.api.limits import rate_limit_workspace_create
 from backend.db.models import Workspace
 from backend.db.session import get_db
 from backend.db.workspaces import create_workspace
@@ -9,7 +10,7 @@ from backend.db.workspaces import create_workspace
 router = APIRouter(prefix="/workspaces", tags=["workspaces"])
 
 
-@router.post("", status_code=201)
+@router.post("", status_code=201, dependencies=[Depends(rate_limit_workspace_create)])
 def create(db: Session = Depends(get_db)) -> dict[str, str]:
     _, token = create_workspace(db)
     return {"token": token}

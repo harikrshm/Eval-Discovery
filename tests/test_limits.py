@@ -1,3 +1,5 @@
+from unittest.mock import patch
+
 from types import SimpleNamespace
 
 import pytest
@@ -57,7 +59,7 @@ def test_constants():
 
 def test_rate_limit_llm_raises_429_after_limit(monkeypatch):
     monkeypatch.setattr(limits, "llm_limiter", RateLimiter(2, 60, clock=FakeClock()))
-    request = SimpleNamespace(client=SimpleNamespace(host="1.2.3.4"))
+    request = _req(host="1.2.3.4")
     rate_limit_llm(request)
     rate_limit_llm(request)
     with pytest.raises(HTTPException) as exc:
@@ -68,13 +70,13 @@ def test_rate_limit_llm_raises_429_after_limit(monkeypatch):
 
 def test_rate_limit_llm_keys_by_client_host(monkeypatch):
     monkeypatch.setattr(limits, "llm_limiter", RateLimiter(1, 60, clock=FakeClock()))
-    rate_limit_llm(SimpleNamespace(client=SimpleNamespace(host="1.1.1.1")))
-    rate_limit_llm(SimpleNamespace(client=SimpleNamespace(host="2.2.2.2")))
+    rate_limit_llm(_req(host="1.1.1.1"))
+    rate_limit_llm(_req(host="2.2.2.2"))
 
 
 def test_rate_limit_llm_handles_missing_client(monkeypatch):
     monkeypatch.setattr(limits, "llm_limiter", RateLimiter(1, 60, clock=FakeClock()))
-    request = SimpleNamespace(client=None)
+    request = SimpleNamespace(client=None, headers={})
     rate_limit_llm(request)
     with pytest.raises(HTTPException):
         rate_limit_llm(request)
@@ -148,3 +150,78 @@ def test_threaded_checks_never_exceed_max_calls():
     assert errors == []
     assert len(results) == 400
     assert sum(results) == 10
+
+
+def _req(host="9.9.9.9", xff=None):
+    headers = {} if xff is None else {"x-forwarded-for": xff}
+    return SimpleNamespace(client=SimpleNamespace(host=host), headers=headers)
+
+
+def test_client_key_uses_rightmost_forwarded_entry_by_default(monkeypatch):
+    monkeypatch.delenv("TRUSTED_PROXY_HOPS", raising=False)
+    assert limits.client_key(_req(xff="6.6.6.6, 1.2.3.4")) == "1.2.3.4"
+    assert limits.client_key(_req(xff="1.2.3.4")) == "1.2.3.4"
+
+
+def test_client_key_hops_counts_from_the_right(monkeypatch):
+    monkeypatch.setenv("TRUSTED_PROXY_HOPS", "2")
+    assert limits.client_key(_req(xff="6.6.6.6, 1.2.3.4, 10.0.0.1")) == "1.2.3.4"
+
+
+def test_client_key_zero_hops_ignores_header(monkeypatch):
+    monkeypatch.setenv("TRUSTED_PROXY_HOPS", "0")
+    assert limits.client_key(_req(host="9.9.9.9", xff="1.2.3.4")) == "9.9.9.9"
+
+
+def test_client_key_falls_back_to_client_host(monkeypatch):
+    monkeypatch.delenv("TRUSTED_PROXY_HOPS", raising=False)
+    assert limits.client_key(_req(host="9.9.9.9")) == "9.9.9.9"
+    assert limits.client_key(_req(host="9.9.9.9", xff="")) == "9.9.9.9"
+    monkeypatch.setenv("TRUSTED_PROXY_HOPS", "3")
+    assert limits.client_key(_req(host="9.9.9.9", xff="1.2.3.4, 5.6.7.8")) == "9.9.9.9"
+    assert limits.client_key(SimpleNamespace(client=None, headers={})) == "unknown"
+
+
+def test_client_key_bad_hops_value_uses_default(monkeypatch):
+    monkeypatch.setenv("TRUSTED_PROXY_HOPS", "lots")
+    assert limits.client_key(_req(xff="6.6.6.6, 1.2.3.4")) == "1.2.3.4"
+
+
+def test_forged_leftmost_xff_shares_one_bucket(client, auth_headers, monkeypatch):
+    monkeypatch.delenv("TRUSTED_PROXY_HOPS", raising=False)
+    agent = client.post("/agents", json={"preset_id": "support"}, headers=auth_headers).json()
+    url = f"/agents/{agent['id']}/chat"
+    body = {"messages": [{"role": "user", "content": "hi"}]}
+    statuses = []
+    with patch("backend.api.agents.groq_chat", return_value="ok"):
+        for i in range(31):
+            headers = {**auth_headers, "X-Forwarded-For": f"10.0.{i}.1, 203.0.113.7"}
+            statuses.append(client.post(url, json=body, headers=headers).status_code)
+    assert statuses[:30] == [200] * 30
+    assert statuses[30] == 429
+
+
+def test_workspace_creation_is_rate_limited_per_ip(client, monkeypatch):
+    monkeypatch.delenv("TRUSTED_PROXY_HOPS", raising=False)
+    codes = [client.post("/workspaces").status_code for _ in range(21)]
+    assert codes[:20] == [201] * 20
+    assert codes[20] == 429
+    other = client.post("/workspaces", headers={"X-Forwarded-For": "198.51.100.2"})
+    assert other.status_code == 201
+
+
+def test_global_llm_backstop_trips_across_ips(monkeypatch):
+    monkeypatch.setattr(limits, "llm_limiter", RateLimiter(100, 60, clock=FakeClock()))
+    monkeypatch.setattr(limits, "global_llm_limiter", RateLimiter(3, 60, clock=FakeClock()))
+    for i in range(3):
+        rate_limit_llm(_req(host=f"1.1.1.{i}"))
+    with pytest.raises(HTTPException) as exc:
+        rate_limit_llm(_req(host="1.1.1.99"))
+    assert exc.value.status_code == 429
+
+
+def test_global_budget_is_env_overridable(monkeypatch):
+    monkeypatch.setenv("LLM_GLOBAL_PER_MINUTE", "7")
+    assert limits.make_global_limiter().max_calls == 7
+    monkeypatch.setenv("LLM_GLOBAL_PER_MINUTE", "junk")
+    assert limits.make_global_limiter().max_calls == 600

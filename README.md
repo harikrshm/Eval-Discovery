@@ -85,9 +85,15 @@ Backend on Render (web service):
 2. Set environment variables: `DATABASE_URL` (the instance's connection string; `postgres://` and `postgresql://` both work), `ALLOWED_ORIGINS` (your frontend origin, comma-separated for several), `GROQ_API_KEY`.
 3. Paste this into the service's **Start Command** setting in the Render dashboard. Render ignores `Procfile` (it is there for Procfile-based hosts), so the command has to be set there:
 
-       alembic upgrade head && uvicorn backend.main:app --host 0.0.0.0 --port $PORT --proxy-headers --forwarded-allow-ips="*"
+       alembic upgrade head && uvicorn backend.main:app --host 0.0.0.0 --port $PORT
 
-   `--proxy-headers` with `--forwarded-allow-ips="*"` makes uvicorn trust `X-Forwarded-For`, so the per-IP rate limiter sees the real client instead of Render's proxy. That is acceptable on Render because its single proxy is the only way to reach the container. Anywhere clients can reach uvicorn directly, `*` lets them spoof their IP and dodge the limiter; list the proxy's address instead.
+   Do not add `--proxy-headers --forwarded-allow-ips="*"`: with `*` uvicorn takes the left-most `X-Forwarded-For` entry, which the client controls, so anyone could forge a fresh IP per request and dodge the rate limiter. The app reads `X-Forwarded-For` itself instead (`backend/api/limits.py`): it uses the Nth entry from the right, where N is `TRUSTED_PROXY_HOPS` (default `1`, meaning one trusted proxy in front; `0` ignores the header and uses the direct peer address). A missing or too-short header falls back to the peer address.
+
+   Render's real header chain has not been observed, so verify it after deploying. Send `POST /workspaces` 31 times, each with a different left-most forged entry, and expect a 429 by the 21st (that route allows 20 per minute per client):
+
+       for i in $(seq 31); do curl -s -o /dev/null -w "%{http_code} " -X POST -H "X-Forwarded-For: 10.0.0.$i" https://your-backend.onrender.com/workspaces; done
+
+   Seeing 429 means a forged header does not buy a fresh key. If it never returns 429, the header chain is longer than assumed: raise `TRUSTED_PROXY_HOPS`. If ordinary users start getting 429 together, everyone is sharing one key: lower it (or set `0` if the proxy adds no usable header). Each LLM route allows 30 calls per minute per client plus a process-wide `LLM_GLOBAL_PER_MINUTE` budget (default 600).
 
 Frontend (Cloudflare Worker with static assets): rebuild with the backend URL baked in, then deploy.
 
