@@ -78,3 +78,73 @@ def test_rate_limit_llm_handles_missing_client(monkeypatch):
     rate_limit_llm(request)
     with pytest.raises(HTTPException):
         rate_limit_llm(request)
+
+
+def test_call_exactly_window_old_is_outside_the_window():
+    clock = FakeClock()
+    limiter = RateLimiter(1, 60, clock=clock)
+    assert limiter.check("a")
+    clock.now = 59.999
+    assert not limiter.check("a")
+    clock.now = 60
+    assert limiter.check("a")
+
+
+def test_zero_max_calls_always_rejects_and_stores_nothing():
+    limiter = RateLimiter(0, 60, clock=FakeClock())
+    assert [limiter.check("a") for _ in range(3)] == [False, False, False]
+    assert limiter._calls == {}
+
+
+def test_empty_string_key_works():
+    limiter = RateLimiter(1, 60, clock=FakeClock())
+    assert limiter.check("")
+    assert not limiter.check("")
+    assert limiter.check("x")
+
+
+def test_expired_keys_are_pruned_by_sweep():
+    clock = FakeClock()
+    limiter = RateLimiter(2, 60, clock=clock, sweep_every=5)
+    for i in range(4):
+        assert limiter.check(f"ip-{i}")
+    assert len(limiter._calls) == 4
+    clock.now = 120  # every recorded call has expired
+    assert limiter.check("fresh")  # 5th check triggers the sweep
+    assert set(limiter._calls) == {"fresh"}
+
+
+def test_reset_clears_all_state():
+    limiter = RateLimiter(1, 60, clock=FakeClock())
+    assert limiter.check("a")
+    assert not limiter.check("a")
+    limiter.reset()
+    assert limiter._calls == {}
+    assert limiter.check("a")
+
+
+def test_threaded_checks_never_exceed_max_calls():
+    import threading
+
+    limiter = RateLimiter(10, 60, clock=FakeClock())
+    results: list[bool] = []
+    errors: list[BaseException] = []
+    barrier = threading.Barrier(8)
+
+    def worker():
+        try:
+            barrier.wait()
+            local = [limiter.check("shared") for _ in range(50)]
+            results.extend(local)
+        except BaseException as exc:  # noqa: BLE001
+            errors.append(exc)
+
+    threads = [threading.Thread(target=worker) for _ in range(8)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+
+    assert errors == []
+    assert len(results) == 400
+    assert sum(results) == 10

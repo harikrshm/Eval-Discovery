@@ -10,9 +10,9 @@ from backend.db.workspaces import create_workspace
 
 @pytest.fixture(autouse=True)
 def _reset_llm_limiter():
-    limits.llm_limiter._calls.clear()
+    limits.llm_limiter.reset()
     yield
-    limits.llm_limiter._calls.clear()
+    limits.llm_limiter.reset()
 
 
 def _agent(client, auth_headers, preset="alex-sales"):

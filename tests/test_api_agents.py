@@ -14,9 +14,9 @@ ANALYZE_FAILED = "Couldn't analyze that prompt. Try again."
 
 @pytest.fixture(autouse=True)
 def _reset_llm_limiter():
-    limits.llm_limiter._calls.clear()
+    limits.llm_limiter.reset()
     yield
-    limits.llm_limiter._calls.clear()
+    limits.llm_limiter.reset()
 
 
 def _analysis(label="Customer"):
