@@ -1,0 +1,90 @@
+# Phase 3 "Evolve" — Design
+
+Status: draft for approval · Date: 2026-11-21 · Size: project · Builds on: `2026-11-21-agent-ready-eval-flywheel-design.md` (the "main spec") and Phase 2 (branch `feat/phase2-tests`, not yet merged; this phase branches from it as `feat/phase3-evolve`).
+
+This document is an addendum. The main spec already fixes the Phase 3 behavior in §8 steps 6-8, §8a (change report), §9, §10, §11 and §16 and is **not repeated here**. This addendum records what the main spec leaves open, the decisions made with the user since, and the Phase 2 work that must be folded in. Where the two disagree, this addendum wins for Phase 3.
+
+## 1. Intent
+
+Phase 2 lets a builder see a test fail, edit the prompt by hand, replay, and see it pass. Phase 3 closes the loop the project exists to show: an **evaluator-driven prompt fix with a human gate**. From a failing test the system proposes a prompt edit and explains why; the builder reads a diff and approves; the system proves the edit on the fix test, on an independent held-out test and on every previously passing test before it becomes live; a report explains what happened; any version can be restored; a chip says how many criteria pass. The technical claim to project (main spec §1): Level 2 harness evolution where the evaluator is discovered from the builder's behavior, verified on held-out data so the prompt cannot overfit the one run it was tuned on.
+
+## 2. Decisions made with the user
+
+- **Held-out test comes from generation (option C).** When a criterion has a fix test but no held-out test, the builder can click "Generate a second test". An LLM writes a different scenario probing the same criterion; it is kept **only if it fails on the agent's current prompt**. Options A (pick a saved run) and B (write one by hand) are deferred. Rationale: every demo gets a held-out test, and the "must fail first" filter keeps weak scenarios out.
+- **Verification fans out (approach 2).** Approving queues one `replay` job per required test, each pointed at the candidate prompt version. A reconcile step (section 5) applies the deterministic promotion rule once every required test has a result. One big verify job and browser-orchestrated verification were rejected (stale-window fragility; logic in the client).
+- **Folded-in Phase 2 deferrals:** M4 (stale banner wording), M5 (Run all only reruns tests without a current replay), M6 (results judged against an outdated criterion; lazy sanity check), M7 (unique `(agent_id, number)` on prompt versions; keep only the latest replay result per test and version). M8 (a 401 mid-poll can create an empty workspace) stays deferred to Phase 4.
+- Main-spec decisions stand: approval is the human gate; promotion after passing verification is automatic; the promotion rule is code, never the judge; the report narrative is model-written but its numbers come from the database.
+
+## 3. Goals, non-goals, anti-goals
+
+Goals: suggest-fix, diff review, verification (fix + held-out + regression), promotion or failed verification, the two-stage change report, version history with restore, generated held-out test, readiness chip, "when testing is done" signal, the folded-in fixes.
+
+Non-goals: auto-applying a fix; editing a candidate by hand before approval (reject it and use the Phase 2 prompt editor); fine-tuning; CI gate and simulation (Phase 4); pick-a-run and hand-written tests (options A, B).
+
+Anti-goals (failure even if it works): the suggester seeing the held-out test (leakage); a promotion decided by an LLM; a report whose numbers the model can misreport; a candidate that goes live without a human approval; a fix flow that hides why the prompt changed.
+
+## 4. Data model (migration 0003, hand-written, populated-database safe)
+
+- `prompt_version`: add `change_report` JSON nullable (`why`, `outcome`), `verification` JSON nullable (the required-test set and strength, section 5), `source_test_id` String(36) nullable (no FK; the failing test that motivated a suggestion). New statuses in use: `proposed`, `approved_verifying`, `failed_verification`, `rejected` (plus existing `promoted`, `superseded`); new origins `suggested`, `restored`. Add a **unique constraint `(agent_id, number)`**. Numbers are assigned when the proposal is created ("Verifying v3 — chat still uses v2").
+- `eval_test`: add `origin` String(16) default `run` (`run` | `generated`); generated tests have `source_run_id` null.
+- `criterion`: add `revision` Integer default 0 (server default 0), bumped whenever `definition`, `good_example` or `bad_example` changes.
+- `eval_result`: when a replay result is stored for `(test, prompt_version)`, older replay results for the same pair are deleted (latest wins). Baselines are untouched.
+- New job types: `generate_heldout` `{criterion_id}`, `suggest_fix` `{test_id}`, `change_report` `{prompt_version_id}`; `replay` is reused with `prompt_version_id` set to the candidate. New event names: `fix_suggested`, `fix_approved`, `fix_rejected`, `fix_verified`, `fix_verification_failed`, `fix_promoted`, `version_restored`, `report_viewed` (main spec §11 list) and `test_generated`.
+- Follow Phase 1/2 conventions: uuid string ids, naive UTC, no new foreign keys that create a second delete path, `test_models_match_migration` stays green, verify the migration on a throwaway Postgres over populated Phase 2 data.
+
+## 5. Behavior the main spec leaves open
+
+**Generate held-out (`POST /criteria/{id}/generate-heldout` → job).** Allowed only when the criterion has a `fix` test and no `heldout` test (409 otherwise). Up to 3 attempts, each: the LLM returns 2-5 customer messages (JSON) for a scenario that probes the same criterion but differs from the fix test's messages (the fix test's messages and the criterion are passed as delimited data); replay them on the agent's **current** prompt; judge. Keep the first scenario the judge fails: store an `eval_test` (`role=heldout`, `origin=generated`) and the failing replay as a normal `replay` result (non-stale, against the current version), since it literally is one; the test therefore shows as failing immediately and needs no extra click. If none fails, the job succeeds with `created: false` and the UI says "Couldn't write a test your current prompt fails, so it may already handle this case." Generated text is untrusted: neutralized when embedded, capped (5 messages, 2000 chars each).
+
+**Suggest fix (`POST /tests/{id}/suggest-fix` → job).** The test's latest result on the current prompt must be a `fail` (409 otherwise); only one `proposed` or `approved_verifying` version may exist per agent (409); the version cap (20) applies. The suggester receives the current prompt, the criterion, the failing result's rationale and transcript, and **never** the held-out test. Output: a complete replacement prompt (at most 4000 characters, otherwise the job fails with a fixed message) stored as a `proposed` version (`origin=suggested`, `parent_id` = current). It also produces the stage-1 "Why this change" report (`change_report.why`): the criterion, the failing turn quoted **by code** from the stored transcript using a turn index the model returns (the model cannot fabricate the quote), the change in plain words and which part of the prompt it touches, the expected effect and the risk to other behaviors. The instructions tell the suggester to fix the behavior in general terms and not to copy the test's exact messages.
+
+**Approve (`POST /prompt-versions/{id}/approve`).** Only from `proposed` (409 otherwise). Required set, computed once and stored in `verification`: the criterion's `fix` test, its `heldout` test if present, and a **regression set** = every other test whose current replay on the *current* prompt is `pass` and not stale. Strength is `full` with a held-out test, otherwise `weaker`. Status becomes `approved_verifying`; one `replay` job per required test is enqueued for the candidate (all-or-nothing against the hourly and queue caps, deduped by `active_job_for`). Chat keeps using the current version throughout.
+
+**Reconcile (the verification trigger).** An idempotent function `reconcile_verifying(db)` runs after every `replay` job completes or fails and on every idle worker pass (so restarts and failed jobs cannot strand a candidate). For each `approved_verifying` version: if every required test has a non-stale replay result for that version, apply the rule: **promote iff the fix test passes, the held-out test passes when present, and no regression test has verdict `fail`**; a `not_applicable` fix or held-out result counts as not passing, a `not_applicable` regression result is ignored. On promote: status `promoted`, the previous current version `superseded`, `agent.current_prompt_version_id` moved, any other `proposed` version of the agent marked `superseded`. Otherwise `failed_verification` with a reason (which test, which verdict). If a required test has no result and no active job and one of its jobs ended `failed`, the version becomes `failed_verification` with reason "A test could not be run: <job error>". The before → after table (fix, held-out, each regression test; verdicts from stored rows) is computed in code and saved in `change_report.outcome.table`. Then a `change_report` job is queued.
+
+**Change report, stage 2 (`change_report` job).** The judge model writes the explanation of each changed or failing verdict and the outcome with the next step, citing result ids; code drops any citation that is not one of the candidate's result ids. If the model call fails the report is marked "explanation unavailable" and the table and diff still show. `GET /prompt-versions/{id}/report` returns `{why, outcome}`; viewing logs `report_viewed`.
+
+**Reject, restore, concurrency.** `POST /prompt-versions/{id}/reject` (from `proposed`) → `rejected`. `POST /prompt-versions/{id}/restore` creates a **new** version (`origin=restored`, text copied, `parent_id` = the restored version, `promoted`, new number) and supersedes the current one; allowed from `promoted`, `superseded` or `failed_verification`. While a version is `approved_verifying`, manual edit, restore, a new suggestion and a second approval are refused with 409 "A fix is being verified. Wait for it to finish." A manual edit or restore marks any `proposed` version `superseded`. Version history: `GET /agents/{id}/prompt-versions` (number, origin, status, strength, created_at) and `GET /prompt-versions/{id}` (text plus parent text for diffing).
+
+**Readiness.** The suite response gains the open candidate (`proposed` or `approved_verifying` with per-test progress) and per-criterion `can_generate_heldout`/`can_suggest_fix` flags. The chip reads "N of M criteria passing" (all criteria are in M; an untested criterion is not passing). When M > 0 and N = M it reads "All criteria passing" and says testing is done for the saved tests.
+
+**Folded-in fixes.** M5: `run-all` enqueues only tests with no current replay on the current version and no active job (an empty result is fine; the banner and the button then agree). M6: handlers record `criterion.revision` when they start and discard (store nothing, result `{discarded: true}`) if it changed; the replay and build handlers re-run the sanity check when `judge_check` is null. M7: the unique constraint, and latest-result-wins pruning. M4: banner copy becomes "N tests haven't run on prompt vX yet." (update tests and docs that pin the old string).
+
+## 6. UI (extends main spec §10; keep the accessibility rules)
+
+- Per failing test: "Suggest fix". Per criterion with only a fix test: "Generate a second test" (job states and slow-start message as in Phase 2).
+- **Change review** view in the Eval criteria panel for the open candidate: the diff (line diff of parent vs candidate text, with the changed lines readable without colour), the "Why this change" report, Approve and Reject. After approval it becomes "What happened": a Verifying state with per-test progress, then the before → after table, the explanation, and the outcome (promoted, or not promoted and why).
+- Active-version indicator: "Chat uses v2 · v3 verifying". Version history list with status, strength and Restore.
+- Readiness chip next to the "Eval criteria" control (and in the panel header). New async states use `role="status"` / `role="alert"` and live regions that exist before their text changes; buttons are disabled from the click until the job settles; failures show the server's message with Retry.
+
+## 7. Constraints
+
+Same as the main spec §5 plus Phase 2's limits: jobs count toward the 30-per-hour cap and the queue cap of 100; every new LLM call is a job with fixed user-safe failure messages (never provider text) and capped stored text; suggester, generator and report prompts treat all embedded content as delimited data and never contain user-chosen text outside delimiters; judge never sees the agent prompt; Groq timeout stays 45 s.
+
+## 8. Approaches considered
+
+Verification: (1) one verify job, (2) fan-out of replay jobs plus reconcile — **chosen**, (3) browser orchestration. Held-out source: (A) pick a saved run, (B) hand-written, (C) generated and validated by failing the current prompt — **chosen**.
+
+## 9. Left to the builder
+
+Which Groq model serves suggest/generate/report (default `openai/gpt-oss-120b`), prompt wording, the diff library (suggested: `diff`, pinned to a release at least two weeks old) and the diff rendering, exact copy for new states, how the reconcile function is triggered inside the worker, whether `passive_deletes=True` can be adopted without breaking the FK-off SQLite tests, test strategy per task.
+
+## 10. Verification plan
+
+Unit tests per module with every LLM call mocked; migration 0003 on a throwaway Postgres over populated Phase 2 data; a real-Postgres race test for approve/reconcile (two concurrent approvals, a restart between replay and reconcile); a live end-to-end with real Groq through the UI: weak agent → failing fix test → generate held-out → suggest fix → read the report → approve → verifying → promoted with the table and explanation → readiness chip → restore. Real Render proxy behavior and judge calibration across many agents remain unverified.
+
+## 11. Calls made after the builder check (author's calls, not the user's)
+
+A fresh reader found eight places where a wrong guess would matter. All are settled here; any may be overruled.
+
+1. **Suggest fix never starts from a held-out test.** The route refuses `role=heldout` tests with 409 "Suggest a fix from the fix test." and the UI hides the button on them. This keeps the held-out test out of the suggester by construction.
+2. **Criteria cannot change under a verifying candidate.** While a version is `approved_verifying`, `PATCH /criteria/{id}` rejects changes to `definition`, `good_example` or `bad_example` with 409 "A fix is being verified. Wait for it to finish."; `name` edits stay allowed. The M6 revision guard stays as a safety net: if a replay job ends `done` with `{discarded: true}` for a required test, reconcile marks the candidate `failed_verification` with reason "A criterion changed during verification." so no candidate can be stranded.
+3. **The readiness chip counts criteria that have tests.** M = criteria with at least one test; criteria with none are listed separately ("N criteria have no tests yet"). "All criteria passing" appears when M > 0 and N = M, and is the "testing is done" signal. No new column is needed.
+4. **"Failing result on the current prompt"** means the test's current replay (non-stale, current version) if one exists, otherwise its `baseline` result when that baseline's `prompt_version_id` is the current version; the verdict must be `fail`. That same result is the "before" column of the before → after table for the fix and held-out tests; regression tests show their current passing replay. Regression set, status and readiness still use only `replay` results.
+5. **Verification and the report are exempt from the hourly job cap.** The replay jobs queued by Approve, and the `change_report` job queued by reconcile, do not count toward the 30-per-hour cap, because they are bounded (one open candidate per agent, at most the number of tests plus one) and a system-queued job must never fail to queue. Approve is still refused with 429 when the queue-depth cap (100) would be exceeded; reconcile's single report job ignores both caps. If the report job fails, the report is "explanation unavailable".
+6. **Version-cap accounting.** The 20-version cap counts every version except `rejected` and `failed_verification`; a separate hard cap of 60 rows per agent returns 429 "Prompt version limit reached for this agent."
+7. **The report is self-contained.** Each row of `change_report.outcome.table` snapshots its verdict, the judge rationale (capped at 600 characters) and the replay transcript (truncated to 6000 characters total), and citations in the narrative refer to **test ids**, not result ids. Later "latest result wins" pruning therefore cannot break a stored report.
+8. **The stage-2 report writer may see the prompt diff.** "The judge never sees the agent prompt" governs the verdict judge only. The report writer is a separate call that receives the parent-to-candidate diff, the table and the rationales as delimited data (new tags `<prompt_diff>` and `<report_data>`, neutralized like the existing ones) and may not decide any verdict.
+9. **Data source for "What happened".** The suite response carries the open candidate, or the most recently resolved suggested version (so the outcome stays visible after promotion or failure until the next suggestion); the full report comes from `GET /prompt-versions/{id}/report`.
+
+Where this addendum and the main spec differ, this addendum wins: the suggest-fix route is `POST /tests/{id}/suggest-fix`; verification replays the fix test, the held-out test and the currently passing tests (not the whole suite); strength lives in `prompt_version.verification` rather than a `verification_strength` column; editing a candidate by hand is a non-goal.
