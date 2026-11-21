@@ -39,11 +39,16 @@ Full document with diagrams: **[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)**
 **Backend** (Python 3.11+):
 
     pip install -r requirements.txt
-    cp .env.example .env          # set GROQ_API_KEY
+    cp .env.example .env          # set GROQ_API_KEY (and ALLOWED_ORIGINS if needed)
     alembic upgrade head          # creates the tables
     uvicorn backend.main:app --reload
 
-`DATABASE_URL` is optional locally: unset, the backend uses SQLite at `./dev.db`. To use Postgres instead, run `docker compose up -d` and keep the `DATABASE_URL` from `.env.example` (it matches `docker-compose.yml`).
+`.env` only supplies `GROQ_API_KEY` and `ALLOWED_ORIGINS`. `DATABASE_URL` is read from the process environment, **not** from `.env` (a value there is silently ignored). Unset, the backend uses SQLite at `./dev.db`. To use Postgres instead, run `docker compose up -d`, then export the variable in the same shell before `alembic upgrade head` and `uvicorn`:
+
+    export DATABASE_URL=postgresql://postgres:postgres@localhost:5432/eval_discovery    # Git Bash / bash
+    $env:DATABASE_URL="postgresql://postgres:postgres@localhost:5432/eval_discovery"    # PowerShell
+
+(The URL matches `docker-compose.yml` and the commented example in `.env.example`.)
 
 **Frontend** (Node 18+):
 
@@ -78,7 +83,7 @@ Backend on Render (web service):
 
 1. Add a Postgres database. Check the provider's current free-tier terms first (expiry, size and connection limits change).
 2. Set environment variables: `DATABASE_URL` (the instance's connection string; `postgres://` and `postgresql://` both work), `ALLOWED_ORIGINS` (your frontend origin, comma-separated for several), `GROQ_API_KEY`.
-3. Set the start command (same as `Procfile`):
+3. Paste this into the service's **Start Command** setting in the Render dashboard. Render ignores `Procfile` (it is there for Procfile-based hosts), so the command has to be set there:
 
        alembic upgrade head && uvicorn backend.main:app --host 0.0.0.0 --port $PORT --proxy-headers --forwarded-allow-ips="*"
 

@@ -417,7 +417,7 @@ eval-discovery/
 ├── tests/                    # pytest suite
 ├── docs/                     # This document, specs and plans
 ├── docker-compose.yml        # Local Postgres 16
-├── Procfile                  # Render start command
+├── Procfile                  # Start command for Procfile-based hosts (Render ignores it)
 ├── requirements.txt
 └── README.md
 ```
@@ -427,12 +427,16 @@ eval-discovery/
 ```bash
 # Terminal 1 — Backend
 pip install -r requirements.txt
-cp .env.example .env       # set GROQ_API_KEY
-alembic upgrade head       # SQLite ./dev.db unless DATABASE_URL is set
+cp .env.example .env       # set GROQ_API_KEY (and ALLOWED_ORIGINS if needed); not DATABASE_URL
+alembic upgrade head       # SQLite ./dev.db unless DATABASE_URL is exported in this shell
 uvicorn backend.main:app --reload    # http://localhost:8000
 
-# Optional: local Postgres (credentials match .env.example)
+# Optional: local Postgres. DATABASE_URL is read from the process environment, NOT from .env
+# (a value in .env is silently ignored), so export it in the shell that runs alembic and uvicorn:
 docker compose up -d
+export DATABASE_URL=postgresql://postgres:postgres@localhost:5432/eval_discovery   # Git Bash / bash
+# $env:DATABASE_URL="postgresql://postgres:postgres@localhost:5432/eval_discovery"  # PowerShell
+alembic upgrade head && uvicorn backend.main:app --reload
 
 # Terminal 2 — Frontend
 cd frontend
@@ -444,9 +448,9 @@ npm run dev                # http://localhost:5173
 
 | Variable | Required | Description |
 |----------|---------|-------------|
-| `GROQ_API_KEY` | Yes | API key from console.groq.com |
-| `DATABASE_URL` | In production | `postgresql://…` (a `postgres://` URL is normalized to the psycopg driver). Unset means SQLite at `./dev.db` |
-| `ALLOWED_ORIGINS` | In production | Comma-separated CORS origins; default `http://localhost:5173` |
+| `GROQ_API_KEY` | Yes | API key from console.groq.com (may live in `.env`) |
+| `DATABASE_URL` | In production | `postgresql://…` (a `postgres://` URL is normalized to the psycopg driver). Unset means SQLite at `./dev.db`. Read from the process environment only, **not** from `.env` |
+| `ALLOWED_ORIGINS` | In production | Comma-separated CORS origins; default `http://localhost:5173` (may live in `.env`) |
 | `VITE_API_URL` | Frontend build | Backend base URL baked into the frontend; default `http://localhost:8000` |
 
 ### Running Tests
@@ -460,7 +464,7 @@ cd frontend && npm test && npm run lint && npm run build
 
 > **Live Postgres has not been exercised.** The schema was reviewed offline (`alembic upgrade head --sql` and the models compiled against the Postgres dialect, plus a foreign-key-enforced delete check on SQLite). Nothing has run against a real Postgres server. Verify first on deploy: `alembic upgrade head` succeeds, `POST /workspaces` returns a token, `GET /presets` returns 3 presets, and deleting a workspace with runs works.
 
-- **Backend (Render web service):** add a Postgres instance (check the provider's current free-tier terms first), set `DATABASE_URL`, `ALLOWED_ORIGINS` and `GROQ_API_KEY`, and use the start command from the `Procfile`:
+- **Backend (Render web service):** add a Postgres instance (check the provider's current free-tier terms first), set `DATABASE_URL`, `ALLOWED_ORIGINS` and `GROQ_API_KEY`, and paste this into the service's Start Command setting in the Render dashboard (Render ignores `Procfile`; it is for Procfile-based hosts):
 
   ```
   alembic upgrade head && uvicorn backend.main:app --host 0.0.0.0 --port $PORT --proxy-headers --forwarded-allow-ips="*"
