@@ -2,6 +2,7 @@ from unittest.mock import MagicMock
 
 import pytest
 from sqlalchemy import select
+from sqlalchemy.orm import sessionmaker
 
 from backend.core.judge import JudgeCheck, JudgeFailed, JudgeResult
 from backend.core.replay import ReplayFailed
@@ -19,6 +20,7 @@ from backend.db.models import (
 )
 from backend.jobs import handlers
 from backend.jobs.handlers import HANDLERS, JobFailed, handle_build_tests, handle_replay
+from backend.db.testsuite import mark_criterion_results_stale
 from backend.jobs.queue import enqueue
 
 GOOD_CHECK = JudgeCheck(passed=True, good_verdict="pass", bad_verdict="fail")
@@ -85,8 +87,9 @@ def _verdicts(monkeypatch, verdicts, rationale="because"):
     return mock
 
 
-@pytest.fixture
+@pytest.fixture(autouse=True)
 def sanity(monkeypatch):
+    # Autouse: handle_replay also runs the sanity check when the criterion has no stored one.
     mock = MagicMock(return_value=GOOD_CHECK)
     monkeypatch.setattr(handlers, "sanity_check", mock)
     return mock
@@ -585,3 +588,237 @@ def test_replay_judge_never_sees_the_agent_prompt(db_session, monkeypatch):
     judge_config = judge_mock.call_args.args[0]
     assert judge_config.system_prompt == ""
     assert judge_config.name == "Alex" and judge_config.user_role_label == "Customer"
+
+
+# ---------- replay: sanity check, latest result wins ----------
+
+
+def test_replay_runs_sanity_check_once_and_stores_judge_check(db_session, monkeypatch, sanity):
+    ws, agent, pv = _agent(db_session)
+    crit = _criterion(db_session, agent)
+    test = _test(db_session, crit)
+    _patch_replay(monkeypatch)
+    _verdicts(monkeypatch, ["pass"])
+    job = _job(db_session, ws, "replay", {"test_id": test.id, "prompt_version_id": pv.id})
+
+    handle_replay(db_session, job)
+
+    assert sanity.call_count == 1
+    config, spec = sanity.call_args.args
+    assert config.system_prompt == "" and config.name == "Alex" and config.user_role_label == "Customer"
+    assert spec.name == "Stays polite"
+    db_session.refresh(crit)
+    assert crit.judge_check == {"passed": True, "good_verdict": "pass", "bad_verdict": "fail"}
+
+
+def test_replay_skips_sanity_check_when_judge_check_is_stored(db_session, monkeypatch, sanity):
+    ws, agent, pv = _agent(db_session)
+    crit = _criterion(db_session, agent)
+    crit.judge_check = {"passed": True, "good_verdict": "pass", "bad_verdict": "fail"}
+    db_session.commit()
+    test = _test(db_session, crit)
+    _patch_replay(monkeypatch)
+    _verdicts(monkeypatch, ["pass"])
+    job = _job(db_session, ws, "replay", {"test_id": test.id, "prompt_version_id": pv.id})
+
+    handle_replay(db_session, job)
+
+    sanity.assert_not_called()
+    db_session.refresh(crit)
+    assert crit.judge_check == {"passed": True, "good_verdict": "pass", "bad_verdict": "fail"}
+
+
+def test_replay_sanity_check_failure_fails_job_and_writes_nothing(db_session, monkeypatch):
+    ws, agent, pv = _agent(db_session)
+    crit = _criterion(db_session, agent)
+    test = _test(db_session, crit)
+    _patch_replay(monkeypatch)
+    _verdicts(monkeypatch, ["pass"])
+    monkeypatch.setattr(handlers, "sanity_check", MagicMock(side_effect=JudgeFailed("boom")))
+    job = _job(db_session, ws, "replay", {"test_id": test.id, "prompt_version_id": pv.id})
+
+    with pytest.raises(JobFailed, match="The judge was unavailable"):
+        handle_replay(db_session, job)
+    assert db_session.scalars(select(EvalResult)).first() is None
+    db_session.refresh(crit)
+    assert crit.judge_check is None
+
+
+def test_replay_sanity_check_runs_outside_a_transaction(db_session, monkeypatch):
+    ws, agent, pv = _agent(db_session)
+    test = _test(db_session, _criterion(db_session, agent))
+    in_txn = []
+
+    def fake_sanity(config, spec):
+        in_txn.append(db_session.in_transaction())
+        return GOOD_CHECK
+
+    monkeypatch.setattr(handlers, "sanity_check", fake_sanity)
+    _patch_replay(monkeypatch)
+    _verdicts(monkeypatch, ["pass"])
+    job = _job(db_session, ws, "replay", {"test_id": test.id, "prompt_version_id": pv.id})
+
+    handle_replay(db_session, job)
+
+    assert in_txn == [False]
+
+
+def test_second_replay_for_same_test_and_version_replaces_the_first(db_session, monkeypatch):
+    ws, agent, pv = _agent(db_session)
+    test = _test(db_session, _criterion(db_session, agent))
+    db_session.add(
+        EvalResult(test_id=test.id, prompt_version_id=pv.id, kind="baseline", verdict="fail", rationale="b")
+    )
+    db_session.commit()
+    _patch_replay(monkeypatch)
+    _verdicts(monkeypatch, ["fail", "pass"])
+    payload = {"test_id": test.id, "prompt_version_id": pv.id}
+
+    first = handle_replay(db_session, _job(db_session, ws, "replay", payload))
+    second = handle_replay(db_session, _job(db_session, ws, "replay", payload))
+
+    rows = list(db_session.scalars(select(EvalResult)))
+    replays = [r for r in rows if r.kind == "replay"]
+    assert len(replays) == 1
+    assert replays[0].id == second["result_id"] and replays[0].id != first["result_id"]
+    assert replays[0].verdict == "pass"
+    assert [r.kind for r in rows if r.kind == "baseline"] == ["baseline"]
+
+
+def test_replay_for_a_different_version_keeps_the_earlier_result(db_session, monkeypatch):
+    ws, agent, pv = _agent(db_session)
+    test = _test(db_session, _criterion(db_session, agent))
+    v2 = PromptVersion(agent_id=agent.id, text="v2", origin="edit", status="promoted", number=2)
+    db_session.add(v2)
+    db_session.commit()
+    _patch_replay(monkeypatch)
+    _verdicts(monkeypatch, ["fail", "pass"])
+
+    handle_replay(db_session, _job(db_session, ws, "replay", {"test_id": test.id, "prompt_version_id": pv.id}))
+    handle_replay(db_session, _job(db_session, ws, "replay", {"test_id": test.id, "prompt_version_id": v2.id}))
+
+    versions = sorted(r.prompt_version_id for r in db_session.scalars(select(EvalResult)))
+    assert versions == sorted([pv.id, v2.id])
+
+
+def test_replay_replacement_also_removes_stale_results_of_the_same_version(db_session, monkeypatch):
+    ws, agent, pv = _agent(db_session)
+    test = _test(db_session, _criterion(db_session, agent))
+    db_session.add(
+        EvalResult(
+            test_id=test.id, prompt_version_id=pv.id, kind="replay", verdict="pass", rationale="old", stale=True
+        )
+    )
+    db_session.commit()
+    _patch_replay(monkeypatch)
+    _verdicts(monkeypatch, ["fail"])
+
+    handle_replay(db_session, _job(db_session, ws, "replay", {"test_id": test.id, "prompt_version_id": pv.id}))
+
+    row = db_session.scalars(select(EvalResult)).one()
+    assert row.verdict == "fail" and row.stale is False
+
+
+# ---------- revision guard: results judged against an edited criterion are discarded ----------
+
+
+def _edit_criterion_elsewhere(db_session, criterion_id, definition="A different definition."):
+    """Edit the criterion the way the PATCH route does, but through ANOTHER session."""
+    other = sessionmaker(bind=db_session.get_bind(), expire_on_commit=False)()
+    try:
+        row = other.get(Criterion, criterion_id)
+        row.definition = definition
+        mark_criterion_results_stale(other, row)
+        other.commit()
+    finally:
+        other.close()
+
+
+def test_replay_discards_result_when_criterion_is_edited_during_the_job(db_session, monkeypatch):
+    ws, agent, pv = _agent(db_session)
+    crit = _criterion(db_session, agent)
+    test = _test(db_session, crit)
+    crit_id = crit.id
+    _patch_replay(monkeypatch)
+
+    def judge_while_edited(config, spec, transcript):
+        _edit_criterion_elsewhere(db_session, crit_id)
+        return JudgeResult("pass", "r")
+
+    monkeypatch.setattr(handlers, "judge", judge_while_edited)
+    job = _job(db_session, ws, "replay", {"test_id": test.id, "prompt_version_id": pv.id})
+
+    result = handle_replay(db_session, job)
+
+    assert result == {"discarded": True}
+    assert db_session.scalars(select(EvalResult)).first() is None
+    assert _events(db_session, "replay_passed") == []
+    db_session.refresh(crit)
+    assert crit.revision == 1
+    assert crit.judge_check is None  # the obsolete sanity check is not written back
+
+
+def test_replay_discard_keeps_the_existing_result(db_session, monkeypatch):
+    ws, agent, pv = _agent(db_session)
+    crit = _criterion(db_session, agent)
+    test = _test(db_session, crit)
+    db_session.add(
+        EvalResult(test_id=test.id, prompt_version_id=pv.id, kind="replay", verdict="pass", rationale="old")
+    )
+    db_session.commit()
+    crit_id = crit.id
+    _patch_replay(monkeypatch)
+
+    def judge_while_edited(config, spec, transcript):
+        _edit_criterion_elsewhere(db_session, crit_id)
+        return JudgeResult("fail", "r")
+
+    monkeypatch.setattr(handlers, "judge", judge_while_edited)
+    job = _job(db_session, ws, "replay", {"test_id": test.id, "prompt_version_id": pv.id})
+
+    assert handle_replay(db_session, job) == {"discarded": True}
+    assert db_session.scalars(select(EvalResult)).one().rationale == "old"
+
+
+def test_replay_with_unchanged_revision_is_not_discarded(db_session, monkeypatch):
+    ws, agent, pv = _agent(db_session)
+    crit = _criterion(db_session, agent)
+    crit.revision = 3
+    db_session.commit()
+    test = _test(db_session, crit)
+    _patch_replay(monkeypatch)
+    _verdicts(monkeypatch, ["pass"])
+    job = _job(db_session, ws, "replay", {"test_id": test.id, "prompt_version_id": pv.id})
+
+    result = handle_replay(db_session, job)
+
+    assert "discarded" not in result
+    assert db_session.scalars(select(EvalResult)).one().verdict == "pass"
+
+
+def test_build_tests_discards_when_criterion_is_edited_during_the_job(db_session, monkeypatch):
+    ws, agent, pv = _agent(db_session)
+    crit = _criterion(db_session, agent)
+    _runs(db_session, agent, pv, 3)
+    crit_id = crit.id
+
+    edited = []
+
+    def judge_while_edited(config, spec, transcript):
+        if not edited:  # build judges several runs; edit only once
+            edited.append(True)
+            _edit_criterion_elsewhere(db_session, crit_id)
+        return JudgeResult("fail", "r")
+
+    monkeypatch.setattr(handlers, "judge", judge_while_edited)
+    job = _job(db_session, ws, "build_tests", {"criterion_id": crit_id})
+
+    result = handle_build_tests(db_session, job)
+
+    assert result == {"discarded": True, "tests_created": 0}
+    assert db_session.scalars(select(EvalTest)).first() is None
+    assert db_session.scalars(select(EvalResult)).first() is None
+    assert _events(db_session, "test_created") == []
+    db_session.refresh(crit)
+    assert crit.revision == 1
+    assert crit.judge_check is None

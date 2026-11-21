@@ -248,6 +248,46 @@ def test_run_all_enqueues_only_tests_without_active_jobs(client, auth_headers, d
     assert len(_jobs(db_session, "replay")) == 2
 
 
+def test_run_all_skips_tests_with_a_current_replay(client, auth_headers, db_session):
+    agent_id = _agent(client, auth_headers)
+    version = _version_id(db_session, agent_id)
+    cid = _criterion(client, auth_headers, agent_id)
+    done = _test(db_session, cid, "fix")
+    todo = _test(db_session, cid, "heldout")
+    _result(db_session, done, "replay", "pass", version)
+    r = client.post(f"/agents/{agent_id}/tests/run-all", headers=auth_headers)
+    assert r.status_code == 202
+    ids = r.json()["job_ids"]
+    assert len(ids) == 1
+    assert _jobs(db_session, "replay")[0].payload == {"test_id": todo.id, "prompt_version_id": version}
+
+
+def test_run_all_reruns_tests_whose_replay_is_stale_or_for_another_version(client, auth_headers, db_session):
+    agent_id = _agent(client, auth_headers)
+    version = _version_id(db_session, agent_id)
+    cid = _criterion(client, auth_headers, agent_id)
+    stale = _test(db_session, cid, "fix")
+    old_version = _test(db_session, cid, "heldout")
+    _result(db_session, stale, "replay", "pass", version, stale=True)
+    _result(db_session, old_version, "replay", "pass", "older-version")
+    r = client.post(f"/agents/{agent_id}/tests/run-all", headers=auth_headers)
+    assert r.status_code == 202
+    assert len(r.json()["job_ids"]) == 2
+
+
+def test_run_all_with_every_test_current_is_202_with_no_jobs_even_at_the_cap(client, auth_headers, db_session):
+    agent_id = _agent(client, auth_headers)
+    version = _version_id(db_session, agent_id)
+    cid = _criterion(client, auth_headers, agent_id)
+    for role in ("fix", "heldout"):
+        _result(db_session, _test(db_session, cid, role), "replay", "pass", version)
+    _fill_cap_for(db_session, _workspace_id(db_session, agent_id))
+    r = client.post(f"/agents/{agent_id}/tests/run-all", headers=auth_headers)
+    assert r.status_code == 202
+    assert r.json() == {"job_ids": []}
+    assert len(_jobs(db_session)) == JOBS_PER_WORKSPACE_PER_HOUR  # nothing new
+
+
 def test_run_all_with_no_tests_returns_empty(client, auth_headers, db_session):
     agent_id = _agent(client, auth_headers)
     r = client.post(f"/agents/{agent_id}/tests/run-all", headers=auth_headers)

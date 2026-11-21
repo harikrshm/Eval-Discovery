@@ -68,7 +68,10 @@ def stale_test_count(db: Session, agent: Agent) -> int:
 
 
 def mark_criterion_results_stale(db: Session, criterion: Criterion) -> None:
-    """Mark the criterion's replay results stale and clear its judge sanity check."""
+    """Mark the criterion's replay results stale, clear its judge sanity check and bump its revision.
+
+    The revision lets a job that loaded the criterion earlier notice it was edited and discard its results.
+    """
     test_ids = select(EvalTest.id).where(EvalTest.criterion_id == criterion.id)
     db.execute(
         update(EvalResult)
@@ -77,6 +80,7 @@ def mark_criterion_results_stale(db: Session, criterion: Criterion) -> None:
         .execution_options(synchronize_session="fetch")
     )
     criterion.judge_check = None
+    criterion.revision += 1
 
 
 def criterion_status_for(db: Session, criterion: Criterion, prompt_version_id: str) -> str:

@@ -168,7 +168,8 @@ def run_all(
     pending = [
         test
         for test in agent_tests(db, agent)
-        if active_job_for(db, workspace.id, "replay", _replay_payload(test, version_id)) is None
+        if current_replay(db, test, version_id) is None
+        and active_job_for(db, workspace.id, "replay", _replay_payload(test, version_id)) is None
     ]
     if len(pending) > _jobs_left_this_hour(db, workspace):
         raise HTTPException(status_code=429, detail=RUN_LIMIT)

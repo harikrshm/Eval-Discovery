@@ -314,6 +314,23 @@ def test_patch_with_unchanged_values_leaves_results_and_check_alone(client, auth
     assert _replay_stale_and_check(db_session, cid) == (False, {"ok": True})
 
 
+def _revision(db_session, cid):
+    db_session.expire_all()
+    return db_session.get(Criterion, cid).revision
+
+
+def test_patch_of_definition_bumps_revision_and_name_edit_does_not(client, auth_headers, db_session):
+    agent_id = _agent(client, auth_headers)
+    cid = _make(client, auth_headers, agent_id)
+    assert _revision(db_session, cid) == 0
+    client.patch(f"/criteria/{cid}", json={"name": "Renamed"}, headers=auth_headers)
+    assert _revision(db_session, cid) == 0
+    client.patch(f"/criteria/{cid}", json={"definition": "Something new."}, headers=auth_headers)
+    assert _revision(db_session, cid) == 1
+    client.patch(f"/criteria/{cid}", json={"definition": "Something new."}, headers=auth_headers)
+    assert _revision(db_session, cid) == 1  # unchanged value: no bump
+
+
 def test_patch_only_invalidates_the_edited_criterion(client, auth_headers, db_session):
     agent_id = _agent(client, auth_headers)
     edited = _make(client, auth_headers, agent_id)

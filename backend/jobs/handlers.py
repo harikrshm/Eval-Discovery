@@ -8,7 +8,7 @@ errors (which may carry request details) are logged, never copied into the messa
 import logging
 from collections.abc import Callable
 
-from sqlalchemy import select
+from sqlalchemy import delete, select
 from sqlalchemy.exc import InvalidRequestError
 from sqlalchemy.orm import Session
 
@@ -68,6 +68,12 @@ def _still_exists(db: Session, row: object, message: str) -> None:
         raise JobFailed(message) from exc
 
 
+def _revision_changed(db: Session, criterion: Criterion, revision: int) -> bool:
+    """True if the criterion was edited since `revision` was read (fresh query: sessions don't expire on commit)."""
+    current = db.scalar(select(Criterion.revision).where(Criterion.id == criterion.id))
+    return current != revision
+
+
 def _has_tests(db: Session, criterion: Criterion) -> bool:
     return db.scalar(select(EvalTest.id).where(EvalTest.criterion_id == criterion.id).limit(1)) is not None
 
@@ -87,6 +93,7 @@ def handle_build_tests(db: Session, job: Job) -> dict:
         return dict(_ALREADY_BUILT)
 
     spec = _spec(criterion)
+    revision = criterion.revision
     # The judge only reads the agent's name and role label; it never sees the system prompt.
     config = AgentConfig(agent.name, "", agent.user_role_label)
     recent = list(
@@ -115,6 +122,8 @@ def handle_build_tests(db: Session, job: Job) -> dict:
         raise JobFailed(_JUDGE_UNAVAILABLE) from exc
 
     _still_exists(db, criterion, _CRITERION_GONE)
+    if _revision_changed(db, criterion, revision):  # edited while judging: the verdicts are obsolete
+        return {"discarded": True, "tests_created": 0}
     if _has_tests(db, criterion):  # another worker finished first
         return dict(_ALREADY_BUILT)
 
@@ -180,6 +189,8 @@ def handle_replay(db: Session, job: Job) -> dict:
     # The judge never sees the agent's prompt: give it a config without one.
     judge_config = AgentConfig(agent.name, "", agent.user_role_label)
     spec = _spec(criterion)
+    revision = criterion.revision
+    needs_check = criterion.judge_check is None
     messages = list(test.scripted_user_messages)
     role = test.role
     workspace_id = job.workspace_id
@@ -188,6 +199,7 @@ def handle_replay(db: Session, job: Job) -> dict:
     try:
         transcript = replay(config, messages)
         verdict = judge(judge_config, spec, transcript)
+        check = sanity_check(judge_config, spec) if needs_check else None
     except ReplayFailed as exc:
         logger.warning("replay failure for job %s: %s", job.id, exc)
         raise JobFailed(_AGENT_UNAVAILABLE) from exc
@@ -196,6 +208,14 @@ def handle_replay(db: Session, job: Job) -> dict:
         raise JobFailed(_JUDGE_UNAVAILABLE) from exc
 
     _still_exists(db, test, _TEST_GONE)
+    if _revision_changed(db, criterion, revision):  # edited while running: the verdict is obsolete
+        return {"discarded": True}
+    if check is not None:
+        criterion.judge_check = {
+            "passed": check.passed,
+            "good_verdict": check.good_verdict,
+            "bad_verdict": check.bad_verdict,
+        }
     result = EvalResult(
         test_id=test.id,
         prompt_version_id=version.id,
@@ -206,6 +226,18 @@ def handle_replay(db: Session, job: Job) -> dict:
         stale=False,
     )
     db.add(result)
+    db.flush()
+    # Latest wins: drop earlier replay results (stale or not) for this test and version; baselines stay.
+    db.execute(
+        delete(EvalResult)
+        .where(
+            EvalResult.test_id == test.id,
+            EvalResult.prompt_version_id == version.id,
+            EvalResult.kind == "replay",
+            EvalResult.id != result.id,
+        )
+        .execution_options(synchronize_session="fetch")
+    )
     db.commit()
 
     summary = {"result_id": result.id, "verdict": verdict.verdict}

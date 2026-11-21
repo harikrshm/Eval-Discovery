@@ -168,6 +168,21 @@ def test_mark_criterion_results_stale_leaves_baselines_and_other_criteria(db_ses
     assert current_replay(db_session, test, pv.id) is None
 
 
+def test_mark_criterion_results_stale_bumps_only_that_criterions_revision(db_session):
+    _, agent, _ = _workspace(db_session)
+    crit = _criterion(db_session, agent, 1)
+    other = _criterion(db_session, agent, 2)
+    db_session.refresh(crit)
+    assert crit.revision == 0
+    mark_criterion_results_stale(db_session, crit)
+    mark_criterion_results_stale(db_session, crit)
+    db_session.flush()
+    db_session.refresh(crit)
+    db_session.refresh(other)
+    assert crit.revision == 2
+    assert other.revision == 0
+
+
 def test_criterion_status_for_end_to_end(db_session):
     _, agent, pv = _workspace(db_session)
     crit = _criterion(db_session, agent)
