@@ -5,9 +5,9 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-MODEL_CHAT    = "llama-3.1-8b-instant"
+MODEL_CHAT    = "openai/gpt-oss-20b"
 MODEL_PATTERN = "openai/gpt-oss-120b"
-MODEL_CRITERIA = "qwen/qwen3-32b"
+MODEL_CRITERIA = "qwen/qwen3.8-27b"
 
 _api_key = os.getenv("GROQ_API_KEY") or "sk-test-placeholder"
 client = Groq(api_key=_api_key)

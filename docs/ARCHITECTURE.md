@@ -94,9 +94,9 @@ flowchart TD
     end
 
     subgraph Backend["⚙️ FastAPI Backend (port 8000)"]
-        R["/chat → agent.py"] --> S["groq_client: llama-3.1-8b-instant"]
+        R["/chat → agent.py"] --> S["groq_client: gpt-oss-20b"]
         T["/check-pattern → checker.py"] --> U["groq_client: gpt-oss-120b"]
-        V["/generate-criteria → criteria.py"] --> W["groq_client: qwen3-32b"]
+        V["/generate-criteria → criteria.py"] --> W["groq_client: qwen3.8-27b"]
     end
 
     subgraph Groq["☁️ Groq API"]
@@ -202,9 +202,9 @@ graph TB
     end
 
     subgraph GroqAPI["☁️ Groq API"]
-        Llama["llama-3.1-8b-instant<br/>(Chat / Alex SDR)"]
+        Llama["openai/gpt-oss-20b<br/>(Chat / Alex SDR)"]
         GPT["openai/gpt-oss-120b<br/>(Pattern detection)"]
-        Qwen["qwen/qwen3-32b<br/>(Criteria generation)"]
+        Qwen["qwen/qwen3.8-27b<br/>(Criteria generation)"]
     end
 
     ApiClient -->|"HTTP / JSON"| FastAPI
@@ -223,9 +223,9 @@ Each task is assigned the most cost-effective model for its complexity:
 
 | Task | Model | Reasoning |
 |------|-------|-----------|
-| Conversational chat (Alex SDR) | llama-3.1-8b-instant | Low latency needed for interactive chat; 8B is sufficient for persona roleplay |
+| Conversational chat (Alex SDR) | openai/gpt-oss-20b | Low latency needed for interactive chat; 20B is sufficient for persona roleplay |
 | Pattern detection across transcripts | gpt-oss-120b | High-accuracy classification over long context; quality matters here |
-| Structured criteria generation | qwen/qwen3-32b | Reasoning-capable model needed to generate grounded, structured JSON rubrics |
+| Structured criteria generation | qwen/qwen3.8-27b | Reasoning-capable model needed to generate grounded, structured JSON rubrics |
 
 ### 4.2 Client-Side State (sessionStorage)
 

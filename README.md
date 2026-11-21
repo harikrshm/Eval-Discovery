@@ -25,7 +25,7 @@ Browser (React)  →  FastAPI (Python)  →  Groq API
 | UI | React 19 + Vite + Tailwind | Chat, history, criteria panels |
 | State | `useSession` hook + sessionStorage | FSM, runs, keyword pattern trigger |
 | API | FastAPI + Pydantic | `/chat`, `/check-pattern`, `/generate-criteria` |
-| LLM | Groq (llama-3.1-8b / gpt-oss-120b / qwen3-32b) | Chat · pattern detection · rubric gen |
+| LLM | Groq (gpt-oss-20b / gpt-oss-120b / qwen3.8-27b) | Chat · pattern detection · rubric gen |
 
 Full architecture document with diagrams: **[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)**
 
