@@ -315,3 +315,191 @@ describe("TestsSection announcements", () => {
     expect(lives.map((el) => el.textContent)).toEqual(["Latest replay: Pass", "Latest replay: Not run"]);
   });
 });
+
+describe("TestsSection suggest fix", () => {
+  const withSuggest = (overrides = {}) =>
+    suiteFor({ tests: [testRow("t1", "fix", { can_suggest_fix: true, ...overrides }), testRow("t2", "heldout")] });
+
+  it("shows Suggest fix only on a test the server says can be fixed", async () => {
+    await render({ criterionSuite: withSuggest(), onSuggestFix: vi.fn() });
+    const buttons = [...container.querySelectorAll("button")].filter((b) => b.textContent.startsWith("Suggest fix"));
+    expect(buttons).toHaveLength(1);
+    expect(buttons[0].textContent).toContain("Fix test");
+  });
+
+  it("never shows Suggest fix on a held-out test", async () => {
+    await render({
+      criterionSuite: suiteFor({ tests: [testRow("t2", "heldout", { can_suggest_fix: true })] }),
+      onSuggestFix: vi.fn(),
+    });
+    expect(buttonByText("Suggest fix")).toBeUndefined();
+  });
+
+  it("shows nothing when can_suggest_fix is false or missing", async () => {
+    await render({ criterionSuite: withSuggest({ can_suggest_fix: false }), onSuggestFix: vi.fn() });
+    expect(buttonByText("Suggest fix")).toBeUndefined();
+  });
+
+  it("calls onSuggestFix with the test id", async () => {
+    const onSuggestFix = vi.fn();
+    await render({ criterionSuite: withSuggest(), onSuggestFix });
+    await act(async () => {
+      buttonByText("Suggest fix").click();
+    });
+    expect(onSuggestFix).toHaveBeenCalledWith("t1");
+  });
+
+  it.each(["queued", "running"])("is disabled, busy and labelled Suggesting… while the job is %s", async (status) => {
+    await render({
+      criterionSuite: withSuggest(),
+      onSuggestFix: vi.fn(),
+      jobs: { "suggest:t1": { status, error: null, result: null } },
+    });
+    const pending = buttonByText("Suggesting…");
+    expect(pending.disabled).toBe(true);
+    expect(pending.getAttribute("aria-busy")).toBe("true");
+    expect(buttonByText("Suggest fix")).toBeUndefined();
+  });
+
+  it("treats a suggest job the suite lists as in flight", async () => {
+    await render({ criterionSuite: withSuggest({ suggest_job_id: "j5" }), onSuggestFix: vi.fn() });
+    expect(buttonByText("Suggesting…").disabled).toBe(true);
+  });
+
+  it("shows a failed suggestion as an alert with a Retry that suggests again", async () => {
+    const onSuggestFix = vi.fn();
+    const onReplay = vi.fn();
+    await render({
+      criterionSuite: withSuggest(),
+      onSuggestFix,
+      onReplay,
+      jobs: { "suggest:t1": { status: "failed", error: "Couldn't write a fix. Try again.", result: null } },
+    });
+    const alert = container.querySelector('[role="alert"]');
+    expect(alert.textContent).toContain("Couldn't write a fix. Try again.");
+    const retry = [...container.querySelectorAll("button")].find((b) => b.textContent.includes("suggest a fix"));
+    expect(retry.textContent.startsWith("Retry")).toBe(true);
+
+    await act(async () => {
+      retry.click();
+    });
+    expect(onSuggestFix).toHaveBeenCalledWith("t1");
+    expect(onReplay).not.toHaveBeenCalled();
+  });
+});
+
+describe("TestsSection generated held-out test", () => {
+  it("labels a generated held-out row", async () => {
+    await render({
+      criterionSuite: suiteFor({
+        tests: [testRow("t1", "fix"), testRow("t2", "heldout", { origin: "generated" })],
+      }),
+    });
+    expect(container.textContent).toContain("Held-out test (generated)");
+    expect(container.textContent).toContain("Fix test");
+  });
+
+  it("keeps the plain label for a held-out test built from a saved run", async () => {
+    await render({
+      criterionSuite: suiteFor({ tests: [testRow("t2", "heldout", { origin: "run" })] }),
+    });
+    expect(container.textContent).toContain("Held-out test");
+    expect(container.textContent).not.toContain("(generated)");
+  });
+});
+
+describe("TestsSection generate a second test", () => {
+  const fixOnly = (overrides = {}) =>
+    suiteFor({ can_generate_heldout: true, tests: [testRow("t1", "fix")], ...overrides });
+
+  it("shows the button only when the criterion can generate one, and calls it with the criterion id", async () => {
+    const onGenerateHeldout = vi.fn();
+    await render({ criterionSuite: fixOnly(), onGenerateHeldout });
+    await act(async () => {
+      buttonByText("Generate a second test").click();
+    });
+    expect(onGenerateHeldout).toHaveBeenCalledWith("c1");
+    await act(async () => root.unmount());
+    container.remove();
+
+    await render({ criterionSuite: fixOnly({ can_generate_heldout: false }), onGenerateHeldout });
+    expect(buttonByText("Generate a second test")).toBeUndefined();
+  });
+
+  it("says it is working in a status region and disables the button while the job runs", async () => {
+    await render({
+      criterionSuite: fixOnly(),
+      onGenerateHeldout: vi.fn(),
+      jobs: { "heldout:c1": { status: "running", error: null, result: null } },
+    });
+    const pending = buttonByText("Generating…");
+    expect(pending.disabled).toBe(true);
+    expect(pending.getAttribute("aria-busy")).toBe("true");
+    expect(container.querySelector('[role="status"]').textContent).toContain("Writing a second test…");
+  });
+
+  it("treats a queued job and a suite-listed job as in flight", async () => {
+    await render({
+      criterionSuite: fixOnly(),
+      onGenerateHeldout: vi.fn(),
+      jobs: { "heldout:c1": { status: "queued", error: null, result: null } },
+    });
+    expect(buttonByText("Generating…").disabled).toBe(true);
+    await act(async () => root.unmount());
+    container.remove();
+
+    await render({ criterionSuite: fixOnly({ heldout_job_id: "j7" }), onGenerateHeldout: vi.fn() });
+    expect(buttonByText("Generating…").disabled).toBe(true);
+  });
+
+  it("adds a slow notice after 4 s", async () => {
+    vi.useFakeTimers();
+    await render({
+      criterionSuite: fixOnly(),
+      onGenerateHeldout: vi.fn(),
+      jobs: { "heldout:c1": { status: "running", error: null, result: null } },
+    });
+    expect(container.textContent).not.toContain("Still working");
+    await act(async () => {
+      vi.advanceTimersByTime(4000);
+    });
+    expect(container.querySelector('[role="status"]').textContent).toContain(
+      "Still working. The server may be waking up."
+    );
+  });
+
+  it("explains a finished job that wrote no test, and keeps the button for another try", async () => {
+    await render({
+      criterionSuite: fixOnly(),
+      onGenerateHeldout: vi.fn(),
+      jobs: { "heldout:c1": { status: "done", error: null, result: { created: false, reason: "agent_handles_it" } } },
+    });
+    expect(container.textContent).toContain(
+      "Couldn't write a test your current prompt fails, so it may already handle this case."
+    );
+    expect(buttonByText("Generate a second test").disabled).toBe(false);
+  });
+
+  it("does not show that message after a test was created", async () => {
+    await render({
+      criterionSuite: fixOnly(),
+      onGenerateHeldout: vi.fn(),
+      jobs: { "heldout:c1": { status: "done", error: null, result: { created: true, test_id: "t9" } } },
+    });
+    expect(container.textContent).not.toContain("Couldn't write a test");
+  });
+
+  it("shows a failure as an alert with a Retry that generates again", async () => {
+    const onGenerateHeldout = vi.fn();
+    await render({
+      criterionSuite: fixOnly(),
+      onGenerateHeldout,
+      jobs: { "heldout:c1": { status: "failed", error: "Couldn't reach the model.", result: null } },
+    });
+    expect(container.querySelector('[role="alert"]').textContent).toContain("Couldn't reach the model.");
+    await act(async () => {
+      buttonByText("Retry").click();
+    });
+    expect(onGenerateHeldout).toHaveBeenCalledWith("c1");
+  });
+});

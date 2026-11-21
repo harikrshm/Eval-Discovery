@@ -69,7 +69,7 @@ Phase 2 closes the loop from a discovered criterion to a verdict on a prompt cha
 
 1. **Discover evals** creates the criterion and queues a background job (`build_tests`). The job has a judge read your most recent saved runs (up to 8, oldest first) and stops after two failures. The first failing run becomes the **fix** test, the next failing run the **held-out** test. With only one failing run the panel says a fix would be verified more weakly; with none, no tests are made and it says there is nothing to test yet. Manual criteria use the **Build tests** button instead.
 2. **Edit the prompt** in the Eval criteria panel. Saving creates a new numbered prompt version (v2, v3, ...) that chat uses immediately. At most 20 versions per agent.
-3. A banner says how many tests are out of date (no replay on the current prompt version, or the criterion's definition or examples changed since). Editing only a criterion's name does not invalidate results.
+3. A banner says how many tests haven't run on the current prompt version yet (no replay on it, or the criterion's definition or examples changed since). Editing only a criterion's name does not invalidate results.
 4. **Run all tests** replays each test's saved user messages (the first 20 of them) against the current prompt, then the judge returns **pass**, **fail** or **not applicable** with a rationale. A single test can also be replayed on its own.
 5. Each criterion shows a status: **Failing** if any test fails, else **Untested** if any test has no current replay, else **Passing** if at least one passes. The status is computed in code, not by the LLM.
 

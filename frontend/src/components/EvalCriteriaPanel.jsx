@@ -1,4 +1,4 @@
-import { useState, useEffect, useId, useRef } from "react";
+import { useState, useEffect, useId, useRef, useCallback } from "react";
 import { Button } from "./ui/button";
 import { Input } from "./ui/input";
 import { Textarea } from "./ui/textarea";
@@ -8,8 +8,10 @@ import { ScrollArea } from "./ui/scroll-area";
 import { ChevronDown, ChevronUp, Plus, X } from "lucide-react";
 import PromptEditor from "./PromptEditor";
 import TestsSection from "./TestsSection";
+import ReadinessChip from "./ReadinessChip";
 import { ChangeReviewContainer } from "./ChangeReview";
 import { staleMessage } from "../lib/testStatus";
+import { readiness } from "../lib/readiness";
 
 const TEXT_FIELDS = [
   { key: "definition", label: "Definition" },
@@ -29,6 +31,8 @@ function CriterionCard({
   userRoleLabel,
   onReplay,
   onBuildTests,
+  onSuggestFix,
+  onGenerateHeldout,
 }) {
   const uid = useId();
   const bodyId = `${uid}-body`;
@@ -106,6 +110,8 @@ function CriterionCard({
             userRoleLabel={userRoleLabel}
             onReplay={onReplay}
             onBuildTests={onBuildTests}
+            onSuggestFix={onSuggestFix}
+            onGenerateHeldout={onGenerateHeldout}
           />
         </div>
       )}
@@ -114,6 +120,10 @@ function CriterionCard({
 }
 
 const NO_JOBS = {};
+
+// A pending focus request is dropped after this long, so a change that arrives late cannot move
+// focus for a user who has long since gone elsewhere.
+const FOCUS_REQUEST_MS = 15000;
 
 export default function EvalCriteriaPanel({
   evalCriteria,
@@ -131,6 +141,8 @@ export default function EvalCriteriaPanel({
   onReplay,
   onBuildTests,
   onRunAll,
+  onSuggestFix,
+  onGenerateHeldout,
   onApprove,
   onReject,
   promptEditor,
@@ -167,6 +179,30 @@ export default function EvalCriteriaPanel({
   const focusRequest = useRef(null);
   const reviewRef = useRef(null);
   const titleRef = useRef(null);
+  const requestTimer = useRef(null);
+
+  // A request lives until it is acted on, focus goes anywhere else (the user moved on), or the
+  // time limit passes, whichever comes first.
+  const setFocusRequest = useCallback((request) => {
+    clearTimeout(requestTimer.current);
+    focusRequest.current = request;
+    requestTimer.current = request
+      ? setTimeout(() => {
+          focusRequest.current = null;
+        }, FOCUS_REQUEST_MS)
+      : null;
+  }, []);
+
+  useEffect(() => {
+    const onFocusIn = () => {
+      if (focusRequest.current) setFocusRequest(null);
+    };
+    document.addEventListener("focusin", onFocusIn);
+    return () => {
+      document.removeEventListener("focusin", onFocusIn);
+      clearTimeout(requestTimer.current);
+    };
+  }, [setFocusRequest]);
 
   useEffect(() => {
     const request = focusRequest.current;
@@ -181,14 +217,14 @@ export default function EvalCriteriaPanel({
       if (candidateId === request.versionId) return; // still shown: wait for the refreshed suite
       titleRef.current?.focus();
     }
-    focusRequest.current = null;
-  }, [focusTick, attempt, candidateId, candidateStatus]);
+    setFocusRequest(null);
+  }, [focusTick, attempt, candidateId, candidateStatus, setFocusRequest]);
 
   async function handleApprove(versionId) {
     if (!onApprove) return;
     const fromStatus = candidateStatus;
     if ((await onApprove(versionId)) === false) return;
-    focusRequest.current = { kind: "approve", versionId, fromStatus };
+    setFocusRequest({ kind: "approve", versionId, fromStatus });
     setFocusTick((t) => t + 1);
   }
 
@@ -197,12 +233,12 @@ export default function EvalCriteriaPanel({
     const number = candidate?.number;
     if ((await onReject(versionId)) === false) return;
     setAnnouncement(`Suggested fix v${number} rejected.`);
-    focusRequest.current = { kind: "reject", versionId };
+    setFocusRequest({ kind: "reject", versionId });
     setFocusTick((t) => t + 1);
   }
 
   function handleRetry() {
-    focusRequest.current = { kind: "retry" };
+    setFocusRequest({ kind: "retry" });
     setAttempt((a) => a + 1);
   }
 
@@ -213,23 +249,28 @@ export default function EvalCriteriaPanel({
   return (
     <div className="flex flex-col h-full bg-[#fafafa]">
       {/* Header */}
-      <div className="h-11 flex items-center justify-between px-4 border-b border-border flex-shrink-0">
-        <h2
-          ref={titleRef}
-          tabIndex={-1}
-          className="text-xs font-semibold uppercase tracking-wide text-muted-foreground focus:outline-none"
-        >
-          Eval criteria
-        </h2>
-        <Button
-          variant="ghost"
-          size="icon"
-          onClick={onDismiss}
-          className="h-8 w-8 text-muted-foreground"
-          aria-label="Close eval criteria panel"
-        >
-          <X className="h-4 w-4" aria-hidden="true" />
-        </Button>
+      <div className="flex flex-col items-start border-b border-border flex-shrink-0">
+        <div className="h-11 w-full flex items-center justify-between px-4">
+          <h2
+            ref={titleRef}
+            tabIndex={-1}
+            className="text-xs font-semibold uppercase tracking-wide text-muted-foreground focus:outline-none"
+          >
+            Eval criteria
+          </h2>
+          <Button
+            variant="ghost"
+            size="icon"
+            onClick={onDismiss}
+            className="h-8 w-8 text-muted-foreground"
+            aria-label="Close eval criteria panel"
+          >
+            <X className="h-4 w-4" aria-hidden="true" />
+          </Button>
+        </div>
+        {/* The live chip: always mounted, empty until the suite is known. The app header shows the
+            same numbers as plain text so a change is announced once. */}
+        <ReadinessChip readiness={suite ? readiness(suite) : null} className="mx-4 mb-2" />
       </div>
 
       {/* The one live region for the change review. It stays mounted while the review remounts. */}
@@ -275,7 +316,7 @@ export default function EvalCriteriaPanel({
               role="status"
               className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900"
             >
-              <p>{staleMessage(suite.stale_count)}</p>
+              <p>{staleMessage(suite.stale_count, suite.prompt_version_number)}</p>
               <Button type="button" variant="outline" size="sm" onClick={onRunAll} disabled={replayActive}>
                 Run all tests
               </Button>
@@ -314,6 +355,8 @@ export default function EvalCriteriaPanel({
               userRoleLabel={userRoleLabel}
               onReplay={onReplay}
               onBuildTests={onBuildTests}
+              onSuggestFix={onSuggestFix}
+              onGenerateHeldout={onGenerateHeldout}
             />
           ))}
         </div>

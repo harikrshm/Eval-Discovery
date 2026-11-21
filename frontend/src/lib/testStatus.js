@@ -21,9 +21,10 @@ export function statusLabel(status) {
   return STATUS_LABELS[status] ?? "Untested";
 }
 
-export function staleMessage(count) {
-  const noun = count === 1 ? "1 test is" : `${count} tests are`;
-  return `${noun} out of date. Run all tests.`;
+// A test is stale when it has no replay on the current prompt version (or its criterion changed).
+export function staleMessage(count, versionNumber) {
+  const noun = count === 1 ? "1 test hasn't" : `${count} tests haven't`;
+  return `${noun} run on prompt v${versionNumber} yet.`;
 }
 
 // judge_check is null until the judge has been sanity-checked; `passed` is false when

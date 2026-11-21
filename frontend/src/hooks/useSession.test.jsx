@@ -290,10 +290,12 @@ describe("useSession refreshAgent", () => {
     expect(view.holder.current.patternState).toBe("pattern_found");
     api.getAgentState.mockResolvedValue(PROMOTED);
 
+    let ok;
     await act(async () => {
-      await view.holder.current.refreshAgent();
+      ok = await view.holder.current.refreshAgent();
     });
 
+    expect(ok).toBe(true);
     expect(api.getAgentState).toHaveBeenLastCalledWith("a1");
     const { agent } = view.holder.current;
     expect(agent.system_prompt).toBe("You are Alex, careful.");
@@ -313,10 +315,12 @@ describe("useSession refreshAgent", () => {
     await view.render();
     api.getAgentState.mockRejectedValue(new TypeError("Failed to fetch"));
 
+    let ok;
     await act(async () => {
-      await view.holder.current.refreshAgent();
+      ok = await view.holder.current.refreshAgent();
     });
 
+    expect(ok).toBe(false);
     expect(view.holder.current.agent.prompt_version_number).toBe(1);
     expect(view.holder.current.loadError).toBeNull();
     await view.unmount();
@@ -334,11 +338,13 @@ describe("useSession refreshAgent", () => {
 
     api.getAgentState.mockResolvedValue({ ...STATE, agent: { ...STATE.agent, id: "a2", name: "Bea" } });
     await view.rerender("a2");
+    let ok;
     await act(async () => {
       resolveLate(PROMOTED);
-      await call;
+      ok = await call;
     });
 
+    expect(ok).toBe(false);
     expect(view.holder.current.agent.id).toBe("a2");
     expect(view.holder.current.agent.prompt_version_number).toBeUndefined();
     expect(view.holder.current.agent.system_prompt).toBeUndefined();

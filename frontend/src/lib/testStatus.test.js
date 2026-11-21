@@ -26,13 +26,13 @@ describe("statusLabel", () => {
 });
 
 describe("staleMessage", () => {
-  it("uses the singular for one test", () => {
-    expect(staleMessage(1)).toBe("1 test is out of date. Run all tests.");
+  it("uses the singular for one test and names the prompt version", () => {
+    expect(staleMessage(1, 3)).toBe("1 test hasn't run on prompt v3 yet.");
   });
 
   it("uses the plural otherwise", () => {
-    expect(staleMessage(2)).toBe("2 tests are out of date. Run all tests.");
-    expect(staleMessage(0)).toBe("0 tests are out of date. Run all tests.");
+    expect(staleMessage(2, 3)).toBe("2 tests haven't run on prompt v3 yet.");
+    expect(staleMessage(0, 1)).toBe("0 tests haven't run on prompt v1 yet.");
   });
 });
 

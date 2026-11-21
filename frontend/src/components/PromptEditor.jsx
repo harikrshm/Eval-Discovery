@@ -4,16 +4,29 @@ import { Textarea } from "./ui/textarea";
 import { Label } from "./ui/label";
 
 const PROMPT_MAX = 4000;
+const STALE_PROMPT_ERROR = "Couldn't load the latest prompt. Try again.";
+const VERIFYING_TEXT = "A fix is being verified. Wait for it to finish.";
 
 // Edits the agent's system prompt. Saving creates a new prompt version; the parent's
 // onSave(text) is async and throws an Error whose message is shown here.
-export default function PromptEditor({ promptText, versionNumber, onSave }) {
+// `verifyingNumber` is the number of a suggested fix that is being verified (null otherwise):
+// the server refuses edits meanwhile, so the editor does too. `onBeforeEdit` reloads the live
+// prompt and resolves true when it is current; the editor never opens on a prompt it could not
+// confirm, because saving from an old text would overwrite a newer version.
+export default function PromptEditor({ promptText, versionNumber, verifyingNumber = null, onSave, onBeforeEdit }) {
   const [editing, setEditing] = useState(false);
-  const [text, setText] = useState(promptText);
+  // null until the user types, so the text always starts from (and follows) the live prompt.
+  const [draft, setDraft] = useState(null);
   const [saving, setSaving] = useState(false);
+  const [opening, setOpening] = useState(false);
+  const [openError, setOpenError] = useState(null);
   const [error, setError] = useState(null);
   const [justSaved, setJustSaved] = useState(false);
 
+  const text = draft ?? promptText;
+  const verifying = verifyingNumber != null;
+  const openingRef = useRef(false);
+  const refocusAfterOpen = useRef(false);
   const editRef = useRef(null);
   const mounted = useRef(true);
   const refocus = useRef(false);
@@ -37,15 +50,43 @@ export default function PromptEditor({ promptText, versionNumber, onSave }) {
     }
   }, [editing]);
 
-  const trimmed = text.trim();
-  const canSave = !saving && trimmed.length > 0 && trimmed !== promptText.trim() && text.length <= PROMPT_MAX;
+  // The button is disabled while the latest prompt loads, which drops its focus; give it back.
+  useEffect(() => {
+    if (!opening && refocusAfterOpen.current) {
+      refocusAfterOpen.current = false;
+      editRef.current?.focus();
+    }
+  }, [opening]);
 
-  function open() {
+  const trimmed = text.trim();
+  const canSave = !saving && !verifying && trimmed.length > 0 && trimmed !== promptText.trim() && text.length <= PROMPT_MAX;
+
+  async function open() {
     if (editing) {
       cancel();
       return;
     }
-    setText(promptText);
+    if (openingRef.current || verifying) return;
+    setOpenError(null);
+    if (onBeforeEdit) {
+      openingRef.current = true;
+      refocusAfterOpen.current = document.activeElement === editRef.current;
+      setOpening(true);
+      let current = false;
+      try {
+        current = (await onBeforeEdit()) === true;
+      } catch {
+        current = false;
+      }
+      openingRef.current = false;
+      if (!mounted.current) return;
+      setOpening(false);
+      if (!current) {
+        setOpenError(STALE_PROMPT_ERROR);
+        return;
+      }
+    }
+    setDraft(null);
     setError(null);
     setJustSaved(false);
     setEditing(true);
@@ -82,7 +123,10 @@ export default function PromptEditor({ promptText, versionNumber, onSave }) {
     <section aria-label="Agent prompt" className="space-y-2">
       <div className="flex items-center justify-between gap-2">
         <div>
-          <p className="text-sm text-foreground">Chat uses prompt v{versionNumber}</p>
+          <p className="text-sm text-foreground">
+            Chat uses v{versionNumber}
+            {verifying && ` · v${verifyingNumber} verifying`}
+          </p>
           {/* Always rendered so the announcement of a save is picked up when its text appears. */}
           <p role="status" className="sr-only">
             {justSaved ? `Saved as v${versionNumber}.` : ""}
@@ -94,12 +138,22 @@ export default function PromptEditor({ promptText, versionNumber, onSave }) {
           variant="outline"
           size="sm"
           onClick={open}
+          disabled={verifying || opening}
+          aria-busy={opening}
           aria-expanded={editing}
           aria-controls={formId}
         >
           Edit prompt
         </Button>
       </div>
+
+      {verifying && <p className="text-xs text-muted-foreground">{VERIFYING_TEXT}</p>}
+
+      {openError && (
+        <div role="alert" className="text-sm text-red-700">
+          {openError}
+        </div>
+      )}
 
       {editing && (
         <form id={formId} onSubmit={handleSave} className="space-y-2">
@@ -108,7 +162,7 @@ export default function PromptEditor({ promptText, versionNumber, onSave }) {
             <Textarea
               id={textId}
               value={text}
-              onChange={(e) => setText(e.target.value)}
+              onChange={(e) => setDraft(e.target.value)}
               readOnly={saving}
               aria-describedby={counterId}
               rows={9}

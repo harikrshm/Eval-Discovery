@@ -296,21 +296,23 @@ export function useSession(agentId) {
 
   // Reloads only the prompt fields of the agent (after a fix is promoted or a version restored)
   // so the prompt editor never shows stale text. The draft, criteria and pattern state are not
-  // touched. A failed reload is ignored: the next load or edit brings the fields up to date.
+  // touched. Resolves true when the fields are current and false when they could not be reloaded
+  // (a failed request, or the agent changed meanwhile); it never throws.
   const refreshAgent = useCallback(async () => {
     const id = agentIdRef.current;
-    if (id == null) return;
+    if (id == null) return false;
     let state;
     try {
       state = await getAgentState(id);
     } catch {
-      return;
+      return false;
     }
-    if (agentIdRef.current !== id || !state?.agent) return;
+    if (agentIdRef.current !== id || !state?.agent) return false;
     const { system_prompt, prompt_version_id, prompt_version_number } = state.agent;
     setAgent((prev) =>
       prev && prev.id === id ? { ...prev, system_prompt, prompt_version_id, prompt_version_number } : prev
     );
+    return true;
   }, []);
 
   // Until the state for the current agent has loaded, expose nothing.

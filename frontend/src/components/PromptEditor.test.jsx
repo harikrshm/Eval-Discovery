@@ -55,7 +55,7 @@ afterEach(async () => {
 describe("PromptEditor", () => {
   it("shows which prompt version the chat uses and hides the editor until asked", async () => {
     await render({});
-    expect(container.textContent).toContain("Chat uses prompt v2");
+    expect(container.textContent).toContain("Chat uses v2");
     expect(container.querySelector("textarea")).toBeNull();
     expect(buttonByText("Edit prompt").getAttribute("aria-expanded")).toBe("false");
   });
@@ -211,5 +211,100 @@ describe("PromptEditor announcements", () => {
       buttonByText("Save").click();
     });
     expect(status().textContent).toBe("");
+  });
+});
+
+describe("PromptEditor active version", () => {
+  it("shows only the live version when nothing is being verified", async () => {
+    await render({ versionNumber: 2 });
+    expect(container.textContent).toContain("Chat uses v2");
+    expect(container.textContent).not.toContain("verifying");
+    expect(container.textContent).not.toContain("A fix is being verified.");
+  });
+
+  it("names the candidate while it is verified, and blocks editing with plain-text help", async () => {
+    await render({ versionNumber: 2, verifyingNumber: 3 });
+    expect(container.textContent).toContain("Chat uses v2 · v3 verifying");
+    expect(buttonByText("Edit prompt").disabled).toBe(true);
+    const help = [...container.querySelectorAll("p")].find((p) =>
+      p.textContent.includes("A fix is being verified. Wait for it to finish.")
+    );
+    expect(help).toBeDefined();
+    expect(help.getAttribute("role")).toBeNull();
+  });
+
+  it("disables Save while a fix is being verified, even with an edit in progress", async () => {
+    await render({ versionNumber: 2, verifyingNumber: null });
+    await openEditor();
+    await type("A different prompt.");
+    expect(buttonByText("Save").disabled).toBe(false);
+
+    await act(async () => {
+      root.render(createElement(PromptEditor, { promptText: "You are Alex.", versionNumber: 2, verifyingNumber: 3, onSave: vi.fn() }));
+    });
+    expect(buttonByText("Save").disabled).toBe(true);
+    expect(container.textContent).toContain("A fix is being verified. Wait for it to finish.");
+    expect(buttonByText("Cancel").disabled).toBe(false);
+  });
+});
+
+describe("PromptEditor stale prompt protection", () => {
+  const FAILED = "Couldn't load the latest prompt. Try again.";
+
+  it("refreshes first and opens the editor on the refreshed prompt", async () => {
+    let finish;
+    const onBeforeEdit = vi.fn(() => new Promise((resolve) => (finish = resolve)));
+    await render({ onBeforeEdit });
+    await openEditor();
+    expect(onBeforeEdit).toHaveBeenCalledTimes(1);
+    expect(container.querySelector("textarea")).toBeNull();
+    expect(buttonByText("Edit prompt").disabled).toBe(true);
+    expect(buttonByText("Edit prompt").getAttribute("aria-busy")).toBe("true");
+
+    await act(async () => {
+      root.render(createElement(PromptEditor, { promptText: "You are Alex, careful.", versionNumber: 3, onSave: vi.fn(), onBeforeEdit }));
+      finish(true);
+    });
+    expect(container.querySelector("textarea").value).toBe("You are Alex, careful.");
+    expect(container.textContent).toContain("Chat uses v3");
+  });
+
+  it("refuses to open when the refresh failed and says so in an alert", async () => {
+    const onBeforeEdit = vi.fn(async () => false);
+    await render({ onBeforeEdit });
+    await openEditor();
+    expect(container.querySelector("textarea")).toBeNull();
+    expect(container.querySelector('[role="alert"]').textContent).toBe(FAILED);
+    expect(buttonByText("Edit prompt").disabled).toBe(false);
+    expect(buttonByText("Edit prompt").getAttribute("aria-expanded")).toBe("false");
+  });
+
+  it("tries again on the next click and clears the alert when it works", async () => {
+    const onBeforeEdit = vi.fn().mockResolvedValueOnce(false).mockResolvedValueOnce(true);
+    await render({ onBeforeEdit });
+    await openEditor();
+    expect(container.querySelector('[role="alert"]')).not.toBeNull();
+    await openEditor();
+    expect(onBeforeEdit).toHaveBeenCalledTimes(2);
+    expect(container.querySelector('[role="alert"]')).toBeNull();
+    expect(container.querySelector("textarea")).not.toBeNull();
+  });
+
+  it("opens straight away when no refresh is wired", async () => {
+    await render({});
+    await openEditor();
+    expect(container.querySelector("textarea")).not.toBeNull();
+  });
+
+  it("ignores a second click while the refresh is in flight", async () => {
+    let finish;
+    const onBeforeEdit = vi.fn(() => new Promise((resolve) => (finish = resolve)));
+    await render({ onBeforeEdit });
+    await act(async () => {
+      buttonByText("Edit prompt").click();
+      buttonByText("Edit prompt").click();
+    });
+    expect(onBeforeEdit).toHaveBeenCalledTimes(1);
+    await act(async () => finish(true));
   });
 });

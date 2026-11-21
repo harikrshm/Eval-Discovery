@@ -1,14 +1,16 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { Bot, History, ListChecks } from "lucide-react";
 import { useSession } from "./hooks/useSession";
 import { useTests } from "./hooks/useTests";
 import { getAgentId } from "./lib/workspace";
+import { readiness } from "./lib/readiness";
 import { cn } from "./lib/utils";
 import AgentSetup from "./components/AgentSetup";
 import ChatInterface from "./components/ChatInterface";
 import RunControls from "./components/RunControls";
 import EvalCriteriaPanel from "./components/EvalCriteriaPanel";
 import HistoryPanel from "./components/HistoryPanel";
+import ReadinessChip from "./components/ReadinessChip";
 import { Badge } from "./components/ui/badge";
 import { Button } from "./components/ui/button";
 
@@ -80,6 +82,7 @@ export default function App() {
     addCriteria,
     updateCriteria,
     savePrompt,
+    refreshAgent,
   } = useSession(agentId);
   const tests = useTests(agentId);
 
@@ -90,6 +93,26 @@ export default function App() {
 
   const historyOpen = historyVisible && transcripts.length > 0;
   const evalOpen = panelVisible && evalCriteria.length > 0;
+
+  // After a promotion or a restore the suite is on a newer prompt version than the agent the chat
+  // screen loaded. Reload the agent's prompt fields once per difference; a failed reload is not
+  // retried until the suite reports another version (the editor also reloads before it opens).
+  const suiteVersionId = tests.suite?.prompt_version_id ?? null;
+  const agentVersionId = agent?.prompt_version_id ?? null;
+  const agentRefreshing = useRef(false);
+  const agentRefreshFailedFor = useRef(null);
+  useEffect(() => {
+    if (!suiteVersionId || !agentVersionId || suiteVersionId === agentVersionId) {
+      agentRefreshFailedFor.current = null;
+      return;
+    }
+    if (agentRefreshing.current || agentRefreshFailedFor.current === suiteVersionId) return;
+    agentRefreshing.current = true;
+    refreshAgent().then((ok) => {
+      agentRefreshing.current = false;
+      if (!ok) agentRefreshFailedFor.current = suiteVersionId;
+    });
+  }, [suiteVersionId, agentVersionId, refreshAgent]);
 
   // Reset criteriaError whenever a new pattern check starts
   useEffect(() => {
@@ -307,6 +330,10 @@ export default function App() {
           )}
 
           {evalCriteria.length > 0 && (
+            <ReadinessChip readiness={tests.suite ? readiness(tests.suite) : null} live={false} />
+          )}
+
+          {evalCriteria.length > 0 && (
             <Button
               variant="outline"
               size="sm"
@@ -406,10 +433,17 @@ export default function App() {
                 onReplay={tests.replay}
                 onBuildTests={tests.buildTests}
                 onRunAll={tests.runAll}
+                onSuggestFix={tests.suggestFix}
+                onGenerateHeldout={tests.generateHeldout}
+                onApprove={tests.approve}
+                onReject={tests.reject}
                 promptEditor={{
                   promptText: agent.system_prompt,
                   versionNumber: agent.prompt_version_number,
+                  verifyingNumber:
+                    tests.suite?.candidate?.status === "approved_verifying" ? tests.suite.candidate.number : null,
                   onSave: handleSavePrompt,
+                  onBeforeEdit: refreshAgent,
                 }}
               />
             </div>

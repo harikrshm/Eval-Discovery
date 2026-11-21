@@ -96,7 +96,7 @@ afterEach(async () => {
 describe("EvalCriteriaPanel prompt editor and tests", () => {
   it("renders the prompt editor with the current version", async () => {
     await render({});
-    expect(container.textContent).toContain("Chat uses prompt v2");
+    expect(container.textContent).toContain("Chat uses v2");
   });
 
   it("renders each criterion's tests inside its card", async () => {
@@ -120,12 +120,17 @@ describe("EvalCriteriaPanel stale banner", () => {
   it("shows the stale message and a Run all tests button that calls onRunAll", async () => {
     const onRunAll = vi.fn();
     await render({ suite: suiteWith({ stale: 2 }), onRunAll });
-    expect(container.textContent).toContain("2 tests are out of date. Run all tests.");
+    expect(container.textContent).toContain("2 tests haven't run on prompt v2 yet.");
 
     await act(async () => {
       buttonByText("Run all tests").click();
     });
     expect(onRunAll).toHaveBeenCalledTimes(1);
+  });
+
+  it("uses the singular and the suite's prompt version", async () => {
+    await render({ suite: { ...suiteWith({ stale: 1 }), prompt_version_number: 5 } });
+    expect(container.textContent).toContain("1 test hasn't run on prompt v5 yet.");
   });
 
   it("disables Run all tests while any replay job is queued or running", async () => {
@@ -152,7 +157,7 @@ describe("EvalCriteriaPanel before the suite has loaded", () => {
   it("still renders the criteria and the prompt editor", async () => {
     await render({ suite: null });
     expect(container.textContent).toContain("Stays on topic");
-    expect(container.textContent).toContain("Chat uses prompt v2");
+    expect(container.textContent).toContain("Chat uses v2");
     expect(buttonByText("Run all tests")).toBeUndefined();
   });
 });
@@ -195,7 +200,7 @@ describe("EvalCriteriaPanel announcements", () => {
   it("makes the stale banner a status region", async () => {
     await render({ suite: suiteWith({ stale: 2 }) });
     const banner = [...container.querySelectorAll('[role="status"]')].find((el) =>
-      el.textContent.includes("out of date")
+      el.textContent.includes("haven't run on prompt")
     );
     expect(banner).toBeDefined();
     expect(banner.textContent).toContain("Run all tests");
@@ -451,5 +456,159 @@ describe("EvalCriteriaPanel change review", () => {
       expect(container.querySelector('[aria-label="Change review"]')).not.toBe(before);
       expect(document.activeElement.tagName).toBe("H3");
     });
+  });
+});
+
+describe("EvalCriteriaPanel readiness chip", () => {
+  const chip = () => container.querySelector('[data-testid="readiness-chip"]');
+
+  it("shows the readiness of the suite in a live region in the header", async () => {
+    await render({});
+    expect(chip().textContent).toBe("0 of 1 criteria passing");
+    expect(chip().getAttribute("role")).toBe("status");
+  });
+
+  it("keeps an empty live region before the suite has loaded, then fills the same element", async () => {
+    await render({ suite: null });
+    const live = chip();
+    expect(live).not.toBeNull();
+    expect(live.textContent).toBe("");
+    await rerender({ suite: { ...suiteWith(), criteria: [{ ...suiteWith().criteria[0], status: "passing" }] } });
+    expect(chip()).toBe(live);
+    expect(live.textContent).toContain("All criteria passing.");
+  });
+});
+
+describe("EvalCriteriaPanel test actions", () => {
+  it("passes Suggest fix and Generate a second test through to the tests", async () => {
+    const onSuggestFix = vi.fn();
+    const onGenerateHeldout = vi.fn();
+    const base = suiteWith({
+      tests: [{ id: "t1", role: "fix", baseline: null, current: null, active_job_id: null, can_suggest_fix: true }],
+    });
+    base.criteria[0].can_generate_heldout = true;
+    await render({ suite: base, onSuggestFix, onGenerateHeldout });
+    await act(async () => {
+      buttonByText("Suggest fix").click();
+    });
+    await act(async () => {
+      buttonByText("Generate a second test").click();
+    });
+    expect(onSuggestFix).toHaveBeenCalledWith("t1");
+    expect(onGenerateHeldout).toHaveBeenCalledWith("c1");
+  });
+});
+
+describe("EvalCriteriaPanel focus request hardening", () => {
+  const CANDIDATE = {
+    version_id: "v3",
+    number: 3,
+    status: "proposed",
+    origin: "suggested",
+    strength: "full",
+    created_at: "2026-11-22T10:00:00",
+    progress: null,
+    parent_number: 2,
+  };
+  const VERIFYING = { ...CANDIDATE, status: "approved_verifying", progress: { done: 0, total: 2 } };
+  const LOADED = {
+    report: {
+      version_id: "v3",
+      number: 3,
+      status: "proposed",
+      strength: "full",
+      why: { criterion_name: "Stays on topic", failing_quote: "q", change_summary: "s", touched_section: "t", expected_effect: "e", risk: "r" },
+      outcome: null,
+    },
+    version: { id: "v3", number: 3, text: "new", parent_text: "old" },
+    loading: false,
+    error: null,
+  };
+
+  beforeEach(() => {
+    vi.mocked(useReport).mockReturnValue(LOADED);
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  async function approveThenSettle() {
+    const onApprove = vi.fn(async () => true);
+    await render({ suite: { ...suiteWith(), candidate: CANDIDATE }, onApprove });
+    await act(async () => {
+      buttonByText("Approve and verify").click();
+    });
+    return onApprove;
+  }
+
+  it("still moves focus when the change arrives promptly and nothing else was focused", async () => {
+    const onApprove = await approveThenSettle();
+    await rerender({ suite: { ...suiteWith(), candidate: VERIFYING }, onApprove });
+    expect(document.activeElement.textContent).toBe("What happened with v3");
+  });
+
+  it("drops the request when focus moves to another element of the panel", async () => {
+    const onApprove = await approveThenSettle();
+    const edit = buttonByText("Edit prompt");
+    await act(async () => {
+      edit.focus();
+    });
+    await rerender({ suite: { ...suiteWith(), candidate: VERIFYING }, onApprove });
+    expect(document.activeElement).toBe(edit);
+  });
+
+  it("drops the request when focus moves outside the panel", async () => {
+    const onApprove = await approveThenSettle();
+    const outside = document.createElement("input");
+    document.body.appendChild(outside);
+    await act(async () => {
+      outside.focus();
+    });
+    await rerender({ suite: { ...suiteWith(), candidate: VERIFYING }, onApprove });
+    expect(document.activeElement).toBe(outside);
+    outside.remove();
+  });
+
+  it("drops the request after 15 seconds so a late change cannot steal focus", async () => {
+    vi.useFakeTimers();
+    const onApprove = await approveThenSettle();
+    await act(async () => {
+      vi.advanceTimersByTime(15000);
+    });
+    await rerender({ suite: { ...suiteWith(), candidate: VERIFYING }, onApprove });
+    expect(document.activeElement.tagName).not.toBe("H3");
+  });
+
+  it("keeps the request alive just under 15 seconds", async () => {
+    vi.useFakeTimers();
+    const onApprove = await approveThenSettle();
+    await act(async () => {
+      vi.advanceTimersByTime(14000);
+    });
+    await rerender({ suite: { ...suiteWith(), candidate: VERIFYING }, onApprove });
+    expect(document.activeElement.textContent).toBe("What happened with v3");
+  });
+
+  it("does not let the timer of an earlier request clear a newer one", async () => {
+    vi.useFakeTimers();
+    const onReject = vi.fn(async () => false);
+    const onApprove = vi.fn(async () => true);
+    await render({ suite: { ...suiteWith(), candidate: CANDIDATE }, onApprove, onReject });
+    await act(async () => {
+      buttonByText("Approve and verify").click();
+    });
+    await act(async () => {
+      vi.advanceTimersByTime(10000);
+    });
+    await rerender({ suite: { ...suiteWith(), candidate: CANDIDATE }, onApprove, onReject });
+    await act(async () => {
+      buttonByText("Approve and verify").click();
+    });
+    await act(async () => {
+      vi.advanceTimersByTime(10000);
+    });
+    await rerender({ suite: { ...suiteWith(), candidate: VERIFYING }, onApprove, onReject });
+    expect(document.activeElement.textContent).toBe("What happened with v3");
   });
 });
