@@ -3,7 +3,7 @@ import { Button } from "./ui/button";
 import { ScrollArea } from "./ui/scroll-area";
 import { ChevronDown, ChevronUp, X } from "lucide-react";
 
-function RunCard({ transcript, index }) {
+function RunCard({ transcript, index, agent }) {
   const [expanded, setExpanded] = useState(false);
   const bodyId = useId();
 
@@ -29,7 +29,7 @@ function RunCard({ transcript, index }) {
           {transcript.map((msg, i) => (
             <div key={i} className="text-sm leading-relaxed">
               <span className="font-medium text-foreground">
-                {msg.role === "user" ? "Prospect" : "Alex"}:
+                {msg.role === "user" ? agent.user_role_label : agent.name}:
               </span>{" "}
               <span className="text-muted-foreground">{msg.content}</span>
             </div>
@@ -40,7 +40,7 @@ function RunCard({ transcript, index }) {
   );
 }
 
-export default function HistoryPanel({ transcripts, onDismiss }) {
+export default function HistoryPanel({ agent, transcripts, onDismiss }) {
   return (
     <div className="flex flex-col h-full bg-[#fafafa]">
       {/* Header */}
@@ -68,7 +68,7 @@ export default function HistoryPanel({ transcripts, onDismiss }) {
         <ScrollArea className="flex-1">
           <div className="p-4 space-y-3">
             {transcripts.map((transcript, index) => (
-              <RunCard key={index} transcript={transcript} index={index} />
+              <RunCard key={index} transcript={transcript} index={index} agent={agent} />
             ))}
           </div>
         </ScrollArea>

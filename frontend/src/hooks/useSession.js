@@ -8,7 +8,7 @@ import {
   addCriterion as apiAddCriterion,
   updateCriterion as apiUpdateCriterion,
 } from "../api";
-import { clearWorkspace } from "../lib/workspace";
+import { clearAgentId, clearWorkspace } from "../lib/workspace";
 import { derivePatternState } from "../lib/patternState";
 import { remainingDraft } from "../lib/draft";
 
@@ -60,6 +60,7 @@ export function useSession(agentId) {
   const [patternState, setPatternStateRaw] = useState("idle");
   const [patternSummary, setPatternSummary] = useState(EMPTY.patternSummary);
   const [criteriaSaveError, setCriteriaSaveError] = useState(null);
+  const [runSaveFailed, setRunSaveFailed] = useState(false);
 
   // Refs let async callbacks read the latest values after an await.
   const patternStateRef = useRef("idle");
@@ -106,13 +107,17 @@ export function useSession(agentId) {
         );
         applyDraft(readDraft(agentId));
         setCriteriaSaveError(null);
+        setRunSaveFailed(false);
         setLoaded({ agentId, error: null });
       })
       .catch((err) => {
         if (cancelled) return;
-        if (err instanceof ApiError && (err.status === 401 || err.status === 404)) {
-          // The stored workspace or agent is gone; forget it so the app does not loop.
+        if (err instanceof ApiError && err.status === 401) {
+          // The stored workspace is gone; forget it (and its agent) so the app does not loop.
           clearWorkspace();
+        } else if (err instanceof ApiError && err.status === 404) {
+          // Only the agent is gone; the workspace is still valid.
+          clearAgentId();
         }
         setLoaded({ agentId, error: errorMessage(err) });
       });
@@ -142,11 +147,15 @@ export function useSession(agentId) {
     if (id == null) return;
     const messages = draftRef.current;
 
+    setRunSaveFailed(false);
     let saved;
     try {
       saved = await apiSaveRun(id, messages);
     } catch {
-      setPatternState("error");
+      if (agentIdRef.current === id) {
+        setRunSaveFailed(true);
+        setPatternState("error");
+      }
       return;
     }
     if (agentIdRef.current !== id) return;
@@ -251,6 +260,7 @@ export function useSession(agentId) {
     patternState: ready && !loadError ? patternState : "idle",
     patternSummary: view.patternSummary,
     criteriaSaveError,
+    runSaveFailed: ready && !loadError ? runSaveFailed : false,
     addMessage,
     saveRun,
     discover,

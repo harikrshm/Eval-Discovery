@@ -80,4 +80,33 @@ describe("workspace storage", () => {
     expect(ws.getToken()).toBeNull();
     expect(ws.getAgentId()).toBeNull();
   });
+
+  it("clearAgentId removes only the agent id and keeps the token", async () => {
+    const ws = await load();
+    ws.setToken("tok");
+    ws.setAgentId("agent-1");
+    ws.clearAgentId();
+    expect(localStorage.getItem("ed_agent_id")).toBeNull();
+    expect(localStorage.getItem("ed_token")).toBe("tok");
+    expect(ws.getAgentId()).toBeNull();
+    expect(ws.getToken()).toBe("tok");
+  });
+
+  it("clearAgentId clears the in-memory fallback when localStorage throws", async () => {
+    const ws = await load();
+    vi.spyOn(Storage.prototype, "getItem").mockImplementation(() => {
+      throw new Error("blocked");
+    });
+    vi.spyOn(Storage.prototype, "setItem").mockImplementation(() => {
+      throw new Error("blocked");
+    });
+    vi.spyOn(Storage.prototype, "removeItem").mockImplementation(() => {
+      throw new Error("blocked");
+    });
+    ws.setToken("mem-token");
+    ws.setAgentId("mem-agent");
+    ws.clearAgentId();
+    expect(ws.getAgentId()).toBeNull();
+    expect(ws.getToken()).toBe("mem-token");
+  });
 });

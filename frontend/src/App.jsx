@@ -1,8 +1,9 @@
 import { useState, useEffect } from "react";
-import { History, ListChecks } from "lucide-react";
+import { Bot, History, ListChecks } from "lucide-react";
 import { useSession } from "./hooks/useSession";
 import { getAgentId } from "./lib/workspace";
 import { cn } from "./lib/utils";
+import AgentSetup from "./components/AgentSetup";
 import ChatInterface from "./components/ChatInterface";
 import RunControls from "./components/RunControls";
 import EvalCriteriaPanel from "./components/EvalCriteriaPanel";
@@ -15,7 +16,7 @@ const isNarrow = () => window.matchMedia("(max-width: 1279px)").matches;
 
 // Status badge config keyed by patternState + evalCriteria.length
 // "New pattern found" when criteria already exist (evalCriteriaCount > 0), "Pattern found" on first discovery
-function PatternBadge({ patternState, criteriaError, evalCriteriaCount }) {
+function PatternBadge({ patternState, criteriaError, runSaveFailed, evalCriteriaCount }) {
   if (patternState === "idle" || patternState === "pattern_not_found") return null;
 
   if (patternState === "checking") {
@@ -40,10 +41,9 @@ function PatternBadge({ patternState, criteriaError, evalCriteriaCount }) {
     );
   }
   if (patternState === "error") {
-    const msg =
-      criteriaError !== null
-        ? "Eval generation failed — retry"
-        : "Pattern check failed — retrying automatically";
+    let msg = "Pattern check failed — retrying automatically";
+    if (criteriaError !== null) msg = "Eval generation failed — retry";
+    else if (runSaveFailed) msg = "Couldn't save the run. Try again.";
     return (
       <Badge variant="outline" className="bg-red-50 text-red-700 border border-red-200 whitespace-nowrap">
         {msg}
@@ -54,18 +54,22 @@ function PatternBadge({ patternState, criteriaError, evalCriteriaCount }) {
 }
 
 export default function App() {
-  // Read once: a stale or deleted agent is cleared from storage by the hook,
-  // and re-reading here would otherwise retrigger the load.
-  const [agentId] = useState(() => getAgentId());
+  // Read once at startup; after that it only changes when an agent is created.
+  // A deleted agent is cleared from storage by the hook, so re-reading storage
+  // here would retrigger the load.
+  const [agentId, setActiveAgentId] = useState(() => getAgentId());
+  const [changingAgent, setChangingAgent] = useState(false);
   const {
     loading,
     loadError,
+    agent,
     transcripts,
     currentTranscript,
     evalCriteria,
     patternState,
     patternSummary,
     criteriaSaveError,
+    runSaveFailed,
     addMessage,
     saveRun,
     discover,
@@ -156,21 +160,35 @@ export default function App() {
     openEvalPanel();
   }
 
+  function handleAgentCreated(created) {
+    // Start the new agent from a clean UI; the hook hydrates its server state.
+    setHistoryVisible(false);
+    setPanelVisible(false);
+    setCriteriaError(null);
+    setSaving(false);
+    setChangingAgent(false);
+    setActiveAgentId(created.id);
+  }
+
   if (agentId == null) {
-    return (
-      <div className="flex h-dvh items-center justify-center bg-background px-4">
-        <p className="text-muted-foreground">No agent selected yet.</p>
-      </div>
-    );
+    return <AgentSetup onCreated={handleAgentCreated} />;
   }
 
   if (loadError) {
     return (
-      <div className="flex h-dvh items-center justify-center bg-background px-4">
-        <div role="alert" className="max-w-md text-center text-sm text-red-700">
-          Couldn&apos;t load your agent: {loadError}
-        </div>
-      </div>
+      <AgentSetup
+        onCreated={handleAgentCreated}
+        notice={`Couldn't load your agent: ${loadError}`}
+      />
+    );
+  }
+
+  if (changingAgent) {
+    return (
+      <AgentSetup
+        onCreated={handleAgentCreated}
+        onCancel={() => setChangingAgent(false)}
+      />
     );
   }
 
@@ -209,12 +227,17 @@ export default function App() {
 
         <div className="min-w-0 flex items-baseline gap-2">
           <h1 className="text-base font-semibold tracking-wide text-foreground whitespace-nowrap">Eval Discovery</h1>
-          <span className="hidden sm:inline text-xs text-muted-foreground whitespace-nowrap">· Alex / CloudSync SDR</span>
+          <span className="hidden sm:inline min-w-0 truncate text-xs text-muted-foreground whitespace-nowrap">· {agent.name}</span>
         </div>
+
+        <Button variant="outline" size="sm" onClick={() => setChangingAgent(true)} aria-label="Change agent">
+          <Bot className="h-4 w-4" aria-hidden="true" />
+          <span className="sr-only sm:not-sr-only">Agent</span>
+        </Button>
 
         <div className="ml-auto flex flex-wrap items-center justify-end gap-2">
           <div role="status">
-            <PatternBadge patternState={patternState} criteriaError={criteriaError} evalCriteriaCount={evalCriteria.length} />
+            <PatternBadge patternState={patternState} criteriaError={criteriaError} runSaveFailed={runSaveFailed} evalCriteriaCount={evalCriteria.length} />
           </div>
 
           {showDiscoverButton && (
@@ -275,6 +298,7 @@ export default function App() {
         >
           <div className="h-full" style={{ width: PANEL_WIDTH }}>
             <HistoryPanel
+              agent={agent}
               transcripts={transcripts}
               onDismiss={() => setHistoryVisible(false)}
             />
@@ -284,6 +308,8 @@ export default function App() {
         {/* Chat column */}
         <main className="flex flex-col flex-1 min-w-0 overflow-hidden">
           <ChatInterface
+            key={agentId}
+            agent={agent}
             agentId={agentId}
             currentTranscript={currentTranscript}
             onMessage={addMessage}

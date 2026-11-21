@@ -3,53 +3,52 @@ import { sendMessage } from "../api";
 import { Button } from "./ui/button";
 import { Input } from "./ui/input";
 
-const SUGGESTIONS = [
-  "How much does CloudSync cost?",
-  "I'm not interested right now.",
-  "How are you different from Snowflake?",
-];
-
 // Matches a free-tier backend waking from sleep.
 const SLOW_REPLY_MS = 4000;
 
-function EmptyState({ onPick }) {
+function EmptyState({ agent, onPick }) {
+  const starters = agent.starter_messages ?? [];
   return (
     <section
       aria-labelledby="intro-heading"
       className="mx-auto w-full max-w-2xl px-4 sm:px-6 pt-10 sm:pt-14"
     >
       <h2 id="intro-heading" className="text-base font-semibold text-foreground">
-        Test Alex, then turn your chats into evals
+        Test {agent.name}, then turn your chats into evals
       </h2>
       <p className="mt-2 text-muted-foreground">
-        Alex is an AI sales rep for CloudSync. You play the prospect.
+        {agent.name} follows the system prompt you gave it. You play the {agent.user_role_label}.
       </p>
 
       <ol className="mt-5 list-decimal space-y-2 pl-5 text-foreground marker:text-muted-foreground">
-        <li>Chat with Alex for at least 3 messages, then select End run.</li>
+        <li>Chat with the agent for at least 3 messages, then select End run.</li>
         <li>Do a second run on the same topic, such as pricing or objections.</li>
         <li>When a pattern is found, select Discover evals, then export the criteria as JSON.</li>
       </ol>
 
-      <p className="mt-6 text-sm font-medium text-foreground">Try asking</p>
-      <div className="mt-2 flex flex-wrap gap-2">
-        {SUGGESTIONS.map((text) => (
-          <Button
-            key={text}
-            variant="outline"
-            size="sm"
-            className="h-auto whitespace-normal py-1.5 text-left"
-            onClick={() => onPick(text)}
-          >
-            {text}
-          </Button>
-        ))}
-      </div>
+      {starters.length > 0 && (
+        <>
+          <p className="mt-6 text-sm font-medium text-foreground">Try asking</p>
+          <div className="mt-2 flex flex-wrap gap-2">
+            {starters.map((text) => (
+              <Button
+                key={text}
+                variant="outline"
+                size="sm"
+                className="h-auto whitespace-normal py-1.5 text-left"
+                onClick={() => onPick(text)}
+              >
+                {text}
+              </Button>
+            ))}
+          </div>
+        </>
+      )}
     </section>
   );
 }
 
-export default function ChatInterface({ agentId, currentTranscript, onMessage, disabled }) {
+export default function ChatInterface({ agent, agentId, currentTranscript, onMessage, disabled }) {
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
   const [slow, setSlow] = useState(false);
@@ -88,7 +87,7 @@ export default function ChatInterface({ agentId, currentTranscript, onMessage, d
       const { reply } = await sendMessage(agentId, messages);
       onMessage({ role: "assistant", content: reply });
     } catch {
-      setError("Alex didn't respond. Check your connection, then try again.");
+      setError(`${agent.name} didn't respond. Check your connection, then try again.`);
     } finally {
       setLoading(false);
     }
@@ -121,6 +120,8 @@ export default function ChatInterface({ agentId, currentTranscript, onMessage, d
     }
   }
 
+  const firstStarter = agent.starter_messages?.[0];
+  const placeholder = firstStarter ? `e.g. ${firstStarter}` : "Type a message";
   const canSend = !disabled && !loading && input.trim().length > 0;
   const canRetry = error !== null && currentTranscript.at(-1)?.role === "user";
 
@@ -132,11 +133,11 @@ export default function ChatInterface({ agentId, currentTranscript, onMessage, d
         onScroll={handleScroll}
         className="flex-1 overflow-y-auto overscroll-contain"
       >
-        {currentTranscript.length === 0 && <EmptyState onPick={applySuggestion} />}
+        {currentTranscript.length === 0 && <EmptyState agent={agent} onPick={applySuggestion} />}
 
         <div
           role="log"
-          aria-label="Conversation with Alex"
+          aria-label={`Conversation with ${agent.name}`}
           aria-live="polite"
           className="mx-auto w-full max-w-2xl space-y-4 px-4 sm:px-6 py-4"
         >
@@ -152,17 +153,17 @@ export default function ChatInterface({ agentId, currentTranscript, onMessage, d
                     : "bg-white border border-[#ebebeb] text-foreground rounded-xl rounded-bl-sm"
                 }`}
               >
-                <span className="sr-only">{msg.role === "user" ? "You: " : "Alex: "}</span>
+                <span className="sr-only">{msg.role === "user" ? "You: " : `${agent.name}: `}</span>
                 {msg.content}
               </div>
             </div>
           ))}
 
-          {/* "Alex is typing…" indicator */}
+          {/* Typing indicator */}
           {loading && (
             <div className="flex justify-start">
               <div className="bg-white border border-[#ebebeb] text-muted-foreground px-4 py-3 rounded-xl rounded-bl-sm text-sm">
-                <span className="sr-only">Alex is typing</span>
+                <span className="sr-only">{agent.name} is typing</span>
                 <span aria-hidden="true" className="inline-flex gap-1">
                   {[0, 150, 300].map((delay) => (
                     <span
@@ -208,8 +209,8 @@ export default function ChatInterface({ agentId, currentTranscript, onMessage, d
               value={input}
               onChange={(e) => setInput(e.target.value)}
               onKeyDown={handleKeyDown}
-              aria-label="Message Alex"
-              placeholder={disabled ? "Generating eval — please wait…" : "e.g. How much does CloudSync cost?"}
+              aria-label={`Message ${agent.name}`}
+              placeholder={disabled ? "Generating eval — please wait…" : placeholder}
               disabled={disabled || loading}
               className="flex-1 border-0 bg-transparent shadow-none focus-visible:ring-0 h-8 px-0"
             />

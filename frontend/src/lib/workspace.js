@@ -55,6 +55,10 @@ export function setAgentId(agentId) {
   write(AGENT_KEY, agentId);
 }
 
+export function clearAgentId() {
+  remove(AGENT_KEY);
+}
+
 export function clearWorkspace() {
   remove(TOKEN_KEY);
   remove(AGENT_KEY);
