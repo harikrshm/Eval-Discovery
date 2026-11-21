@@ -7,6 +7,7 @@ from datetime import datetime
 from sqlalchemy.orm import Session
 
 from backend.db.models import Job
+from backend.db.reconcile import reconcile_verifying
 from backend.db.session import SessionLocal
 from backend.jobs.handlers import HANDLERS, JobFailed
 from backend.jobs.queue import MAX_JOB_ATTEMPTS, claim_next, complete, fail, requeue_stale
@@ -22,7 +23,7 @@ def _reload(db: Session, job_id: str) -> Job | None:
     return db.get(Job, job_id)
 
 
-def run_one(db: Session, now: datetime | None = None) -> bool:
+def _run_job(db: Session, now: datetime | None) -> bool:
     """Recover stale jobs, then claim and run one job. Returns False when there was nothing to do."""
     requeue_stale(db, now)
     job = claim_next(db, now)
@@ -56,6 +57,26 @@ def run_one(db: Session, now: datetime | None = None) -> bool:
         else:
             fail(db, job, _UNEXPECTED_ERROR)
     return True
+
+
+def _reconcile(db: Session, now: datetime | None) -> None:
+    """Resolve verifying candidates; never raises, so it cannot change the outcome of the job it follows."""
+    try:
+        reconcile_verifying(db, now)
+    except Exception:
+        logger.exception("Reconcile of verifying candidates failed")
+
+
+def run_one(db: Session, now: datetime | None = None) -> bool:
+    """Run one job if there is one, then reconcile verifying candidates (on every pass, also when idle).
+
+    Returns True only when a job was processed. Reconcile runs even if the job step raises, and
+    its own errors are logged, never raised, so a candidate is never stranded by a failed pass.
+    """
+    try:
+        return _run_job(db, now)
+    finally:
+        _reconcile(db, now)
 
 
 def _run_pass() -> bool:
