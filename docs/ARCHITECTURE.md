@@ -77,7 +77,7 @@ flowchart TD
     subgraph Frontend["🖥️ React Frontend (port 5173)"]
         C["api.js POST /chat"] --> D["ChatInterface renders reply"]
         D --> B
-        B --> E["END button pressed"]
+        B --> E["End run button pressed"]
         E --> F["useSession.saveRun()"]
         F --> G["sessionStorage<br/>(transcripts array)"]
         G --> H{"Keyword overlap<br/>in ≥2 runs?"}
@@ -85,12 +85,12 @@ flowchart TD
         H -->|Yes, every 2 runs| J["api.js POST /check-pattern<br/>(delta transcripts only)"]
         J --> K{"pattern found?"}
         K -->|No| I
-        K -->|Yes| L["patternState = pattern_found<br/>Show 'Discover Evals' button"]
-        L --> M["User clicks Discover Evals"]
+        K -->|Yes| L["patternState = pattern_found<br/>Show 'Discover evals' button"]
+        L --> M["User clicks Discover evals"]
         M --> N["api.js POST /generate-criteria"]
         N --> O["EvalCriteriaPanel<br/>(editable cards)"]
         O --> P["User edits criteria"]
-        P --> Q["Export All → JSON file"]
+        P --> Q["Export all → JSON file"]
     end
 
     subgraph Backend["⚙️ FastAPI Backend (port 8000)"]
@@ -117,7 +117,7 @@ flowchart TD
 
 | Key | Contents | Lifetime |
 |-----|---------|---------|
-| `currentTranscript` | Messages in current run | Cleared on END |
+| `currentTranscript` | Messages in current run | Cleared on End run |
 | `transcripts` | All completed run arrays | Full session |
 | `evalCriteria` | Generated + edited criteria | Full session |
 | `patternState` | FSM state string | Full session |
@@ -140,11 +140,11 @@ graph TB
         ApiClient["api.js<br/>(Fetch-based HTTP client)"]
 
         subgraph Components["UI Components"]
-            Header["Header<br/>PatternBadge · Discover Evals btn · menu"]
+            Header["Header<br/>PatternBadge · Discover evals btn · History + Eval criteria toggles"]
             Chat["ChatInterface.jsx<br/>Message list · Input bar · Typing animation"]
             Eval["EvalCriteriaPanel.jsx<br/>Editable criterion cards · Export · Add"]
             History["HistoryPanel.jsx<br/>Completed run transcripts · slide-in drawer"]
-            Controls["RunControls.jsx<br/>END button · save state"]
+            Controls["RunControls.jsx<br/>End run button · progress hint"]
         end
 
         subgraph RadixUI["Radix UI Primitives"]
@@ -258,10 +258,10 @@ stateDiagram-v2
     checking --> error : API fails
     error --> idle : allows retry next save
     pattern_not_found --> idle
-    pattern_found --> generating : user clicks Discover Evals
+    pattern_found --> generating : user clicks Discover evals
     generating --> complete : criteria returned
     generating --> error : API fails
-    complete --> generating : user clicks Discover Evals again
+    complete --> generating : user clicks Discover evals again
 ```
 
 ---
@@ -304,7 +304,7 @@ eval-discovery/
 │           ├── ChatInterface.jsx      # Message thread + input bar
 │           ├── EvalCriteriaPanel.jsx  # Editable criteria cards (right)
 │           ├── HistoryPanel.jsx       # Completed run drawer (left)
-│           ├── RunControls.jsx        # END button footer
+│           ├── RunControls.jsx        # End run button footer
 │           └── ui/                    # Radix primitive wrappers
 │
 ├── tests/                    # pytest test suite (7 files)

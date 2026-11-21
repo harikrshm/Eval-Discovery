@@ -1,27 +1,31 @@
-import { useState } from "react";
+import { useState, useId } from "react";
 import { Button } from "./ui/button";
 import { ScrollArea } from "./ui/scroll-area";
-import { ChevronDown, ChevronUp } from "lucide-react";
+import { ChevronDown, ChevronUp, X } from "lucide-react";
 
 function RunCard({ transcript, index }) {
   const [expanded, setExpanded] = useState(false);
+  const bodyId = useId();
 
   return (
     <div className="border border-border rounded-lg overflow-hidden bg-white">
       <button
+        type="button"
         onClick={() => setExpanded((prev) => !prev)}
-        className="w-full flex items-center justify-between px-4 py-2.5 text-left hover:bg-muted/30"
+        aria-expanded={expanded}
+        aria-controls={bodyId}
+        className="w-full flex items-center justify-between px-4 py-2.5 text-left hover:bg-muted"
       >
         <span className="text-sm font-medium text-foreground">Run {index + 1}</span>
         {expanded ? (
-          <ChevronUp className="h-4 w-4 text-muted-foreground flex-shrink-0" />
+          <ChevronUp className="h-4 w-4 text-muted-foreground flex-shrink-0" aria-hidden="true" />
         ) : (
-          <ChevronDown className="h-4 w-4 text-muted-foreground flex-shrink-0" />
+          <ChevronDown className="h-4 w-4 text-muted-foreground flex-shrink-0" aria-hidden="true" />
         )}
       </button>
 
       {expanded && (
-        <div className="px-4 pb-4 pt-2 space-y-2 border-t border-border">
+        <div id={bodyId} className="px-4 pb-4 pt-2 space-y-2 border-t border-border">
           {transcript.map((msg, i) => (
             <div key={i} className="text-sm leading-relaxed">
               <span className="font-medium text-foreground">
@@ -41,17 +45,17 @@ export default function HistoryPanel({ transcripts, onDismiss }) {
     <div className="flex flex-col h-full bg-[#fafafa]">
       {/* Header */}
       <div className="h-11 flex items-center justify-between px-4 border-b border-border flex-shrink-0">
-        <span className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+        <h2 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
           History
-        </span>
+        </h2>
         <Button
           variant="ghost"
           size="icon"
           onClick={onDismiss}
-          className="h-7 w-7 text-muted-foreground"
+          className="h-8 w-8 text-muted-foreground"
           aria-label="Close history panel"
         >
-          ×
+          <X className="h-4 w-4" aria-hidden="true" />
         </Button>
       </div>
 

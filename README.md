@@ -5,10 +5,10 @@ Helps voice agent builders break out of the preview run loop by auto-generating 
 ## What It Does
 
 1. You play a prospect and chat with **Alex** — a CloudSync SDR AI agent
-2. Click **END** after each conversation to save the run
+2. Click **End run** after each conversation to save the run
 3. The system automatically detects repeated testing patterns across your runs
-4. Click **Discover Evals** to generate a structured evaluation rubric
-5. Edit the criteria and **Export All** as JSON for your test pipeline
+4. Click **Discover evals** to generate a structured evaluation rubric
+5. Edit the criteria and **Export all** as JSON for your test pipeline
 
 ## Architecture Overview
 

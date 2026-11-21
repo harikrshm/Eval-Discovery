@@ -6,8 +6,12 @@
   --background: #ffffff;
   --foreground: #111111;
   --muted: #fafafa;
-  --muted-foreground: #999999;
+  --muted-foreground: #6b6b6b;
   --border: #e8e8e8;
+  --border-input: #8a8a8a;
   --card: #ffffff;
-  --ring: #111111;
+  --accent: #4338ca;
+  --accent-hover: #3730a3;
+  --accent-foreground: #ffffff;
+  --ring: #4338ca;
 }
