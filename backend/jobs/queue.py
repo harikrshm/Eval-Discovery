@@ -19,22 +19,33 @@ _ACTIVE_STATUSES = ("queued", "running")
 _INTERRUPTED_ERROR = "The job was interrupted too many times. Try again."
 
 
-def enqueue(db: Session, workspace_id: str, job_type: str, payload: dict) -> Job:
-    """Add a queued job and commit."""
+def enqueue(db: Session, workspace_id: str, job_type: str, payload: dict, commit: bool = True) -> Job:
+    """Add a queued job and commit it (`commit=False` only flushes: the caller commits with other writes)."""
     job = Job(workspace_id=workspace_id, type=job_type, payload=payload)
     db.add(job)
-    db.commit()
-    db.refresh(job)
+    if commit:
+        db.commit()
+        db.refresh(job)
+    else:
+        db.flush()
     return job
 
 
+def _counts_toward_hourly_cap(job: Job) -> bool:
+    """System-queued work (Approve's replays, the change report) is exempt from the hourly cap."""
+    if job.type == "change_report":
+        return False
+    return not (isinstance(job.payload, dict) and job.payload.get("system") is True)
+
+
 def jobs_started_since(db: Session, workspace_id: str, since: datetime) -> int:
-    """Jobs the workspace created at or after `since`, whatever their status (for rate limiting)."""
-    return db.scalar(
-        select(func.count())
-        .select_from(Job)
-        .where(Job.workspace_id == workspace_id, Job.created_at >= since)
-    )
+    """Jobs the workspace created at or after `since`, whatever their status (for rate limiting).
+
+    Jobs the system queued itself (payload `"system": true`) and `change_report` jobs are skipped.
+    The filter runs in Python: JSON column operators are not portable across databases.
+    """
+    jobs = db.scalars(select(Job).where(Job.workspace_id == workspace_id, Job.created_at >= since))
+    return sum(1 for job in jobs if _counts_toward_hourly_cap(job))
 
 
 def queued_job_count(db: Session) -> int:

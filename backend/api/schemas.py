@@ -306,6 +306,31 @@ class VersionDetailOut(VersionOut):
     parent_text: str | None
 
 
+class ApprovedJob(BaseModel):
+    test_id: str
+    job_id: str
+
+
+class ApproveOut(BaseModel):
+    version_id: str
+    status: str
+    jobs: list[ApprovedJob]
+
+
+class RejectOut(BaseModel):
+    version_id: str
+    status: str
+
+
+class ReportOut(BaseModel):
+    version_id: str
+    number: int
+    status: str
+    strength: str | None
+    why: dict | None
+    outcome: dict | None
+
+
 class JobOut(BaseModel):
     id: str
     type: str

@@ -7,12 +7,19 @@ from collections import deque
 from collections.abc import Callable
 
 from fastapi import HTTPException, Request
+from sqlalchemy.orm import Session
 
 from backend.core.config import (  # noqa: F401  (single source; re-exported)
     MAX_AGENTS_PER_WORKSPACE,
     MAX_PROMPT_CHARS,
 )
-from backend.db.agents import MAX_PROMPT_VERSIONS_PER_AGENT  # noqa: F401  (single source; re-exported)
+from backend.db.agents import (
+    MAX_PROMPT_VERSIONS_PER_AGENT,
+    MAX_VERSION_ROWS_PER_AGENT,
+    prompt_version_count,
+    prompt_version_row_count,
+)
+from backend.db.models import Agent
 
 MAX_RUNS_PER_WORKSPACE = 50
 MAX_MESSAGES_PER_REQUEST = 40
@@ -21,6 +28,9 @@ MAX_ASSISTANT_MESSAGE_CHARS = 16000  # model replies, which the user cannot shor
 MAX_REQUEST_CHARS = 120000  # sum over all messages in one request
 MAX_CRITERIA_PER_AGENT = 30
 MAX_PATTERN_RUNS = 10
+
+PROMPT_VERSION_LIMIT = "Prompt version limit reached for this agent."
+FIX_VERIFYING = "A fix is being verified. Wait for it to finish."
 
 
 class RateLimiter:
@@ -142,3 +152,12 @@ def rate_limit_workspace_create(request: Request) -> None:
     """Raise 429 when one client creates workspaces too fast."""
     if not workspace_limiter.check(client_key(request)):
         raise HTTPException(status_code=429, detail=_TOO_MANY)
+
+
+def check_version_caps(db: Session, agent: Agent) -> None:
+    """429 when the agent is at the counted-version cap or the hard row cap (call after locking the agent)."""
+    if (
+        prompt_version_count(db, agent) >= MAX_PROMPT_VERSIONS_PER_AGENT
+        or prompt_version_row_count(db, agent) >= MAX_VERSION_ROWS_PER_AGENT
+    ):
+        raise HTTPException(status_code=429, detail=PROMPT_VERSION_LIMIT)

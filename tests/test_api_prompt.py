@@ -173,3 +173,76 @@ def test_two_sequential_puts_of_the_same_text_make_one_version(client, auth_head
     assert second.json()["changed"] is False
     assert second.json()["version_id"] == first.json()["version_id"]
     assert db_session.query(PromptVersion).filter_by(agent_id=agent_id).count() == 2
+
+
+# ---- verifying guard, row cap and chat during verification
+
+VERIFYING = "A fix is being verified. Wait for it to finish."
+
+
+def _add(db_session, agent_id, number, status, parent_id=None):
+    version = PromptVersion(
+        agent_id=agent_id,
+        text=f"text {number}",
+        parent_id=parent_id,
+        origin="suggested",
+        status=status,
+        number=number,
+    )
+    db_session.add(version)
+    db_session.commit()
+    return version
+
+
+def test_put_is_409_while_a_fix_is_being_verified(client, auth_headers, db_session):
+    agent_id = _agent(client, auth_headers)
+    current = db_session.get(Agent, agent_id).current_prompt_version_id
+    candidate = _add(db_session, agent_id, 2, "approved_verifying", parent_id=current)
+    r = _put(client, auth_headers, agent_id, "A new prompt.")
+    assert r.status_code == 409
+    assert r.json()["detail"] == VERIFYING
+    db_session.expire_all()
+    assert db_session.get(PromptVersion, candidate.id).status == "approved_verifying"
+    assert db_session.get(Agent, agent_id).current_prompt_version_id == current
+    assert db_session.query(PromptVersion).filter_by(agent_id=agent_id).count() == 2
+
+
+def test_put_with_a_proposed_candidate_still_works_and_supersedes_it(client, auth_headers, db_session):
+    agent_id = _agent(client, auth_headers)
+    candidate = _add(db_session, agent_id, 2, "proposed")
+    assert _put(client, auth_headers, agent_id, "A new prompt.").status_code == 200
+    db_session.expire_all()
+    assert db_session.get(PromptVersion, candidate.id).status == "superseded"
+
+
+def test_put_is_429_at_the_hard_row_cap_even_when_few_versions_count(client, auth_headers, db_session):
+    agent_id = _agent(client, auth_headers)
+    for number in range(2, 61):
+        _add(db_session, agent_id, number, "rejected")
+    assert db_session.query(PromptVersion).filter_by(agent_id=agent_id).count() == 60
+    r = _put(client, auth_headers, agent_id, "Prompt 61")
+    assert r.status_code == 429
+    assert r.json()["detail"] == CAP_MESSAGE
+    assert db_session.query(PromptVersion).filter_by(agent_id=agent_id).count() == 60
+
+
+def test_put_counts_only_non_rejected_versions_toward_the_twenty_cap(client, auth_headers, db_session):
+    agent_id = _agent(client, auth_headers)
+    for number in range(2, 22):
+        _add(db_session, agent_id, number, "rejected")
+    assert _put(client, auth_headers, agent_id, "Still fine").status_code == 200
+
+
+def test_chat_keeps_using_the_current_prompt_while_a_candidate_is_verifying(client, auth_headers, db_session):
+    agent_id = _agent(client, auth_headers)
+    current = db_session.get(Agent, agent_id).current_prompt_version_id
+    _add(db_session, agent_id, 2, "approved_verifying", parent_id=current)
+    with patch("backend.api.agents.groq_chat", return_value="Yes.") as chat:
+        r = client.post(
+            f"/agents/{agent_id}/chat",
+            json={"messages": [{"role": "user", "content": "hi"}]},
+            headers=auth_headers,
+        )
+    assert r.status_code == 200
+    assert chat.call_args.args[0] == PRESETS["alex-sales"].config.system_prompt
+    assert chat.call_args.args[0] != "text 2"

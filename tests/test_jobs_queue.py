@@ -198,6 +198,35 @@ def test_jobs_started_since_counts_all_statuses_in_window_for_workspace(db_sessi
     assert jobs_started_since(db_session, other, since) == 1
 
 
+def test_jobs_started_since_skips_system_jobs_and_change_reports(db_session):
+    ws = _ws(db_session)
+    since = T0
+    _enqueue_at(db_session, ws, T0 + timedelta(minutes=1), payload={"a": 1})
+    _enqueue_at(db_session, ws, T0 + timedelta(minutes=2), payload={"a": 2, "system": True})
+    _enqueue_at(db_session, ws, T0 + timedelta(minutes=3), job_type="change_report", payload={"version_id": "v"})
+    _enqueue_at(db_session, ws, T0 + timedelta(minutes=4), job_type="suggest_fix", payload={"test_id": "t"})
+    # "system" must be exactly true to exempt a job; other values and a missing key still count.
+    _enqueue_at(db_session, ws, T0 + timedelta(minutes=5), payload={"a": 5, "system": False})
+    _enqueue_at(db_session, ws, T0 + timedelta(minutes=6), payload={"a": 6, "system": "yes"})
+    assert jobs_started_since(db_session, ws, since) == 4
+
+
+def test_jobs_started_since_ignores_system_jobs_whatever_their_status(db_session):
+    ws = _ws(db_session)
+    job = _enqueue_at(db_session, ws, T0 + timedelta(minutes=1), payload={"system": True})
+    job.status = "done"
+    db_session.commit()
+    assert jobs_started_since(db_session, ws, T0) == 0
+
+
+def test_enqueue_without_commit_leaves_the_job_pending_in_the_session(db_session):
+    ws = _ws(db_session)
+    job = enqueue(db_session, ws, "replay", {"a": 1}, commit=False)
+    assert job.id is not None
+    db_session.rollback()
+    assert db_session.get(Job, job.id) is None
+
+
 def test_active_job_for_matches_payload_and_type(db_session):
     ws = _ws(db_session)
     queued = enqueue(db_session, ws, "replay", {"test_id": "t1", "v": 2})

@@ -323,6 +323,16 @@ def test_compute_required_regressions_are_only_currently_passing_other_tests(db_
     assert {r.test_id for r in required if r.role == "regression"} == {passing.id, other_passing_heldout.id}
 
 
+def test_compute_required_never_lists_the_fix_test_twice(db_session):
+    _, agent = _agent(db_session)
+    crit = _criterion(db_session, agent)
+    odd = _test(db_session, crit, "heldout")  # the held-out lookup would find the fix test itself
+    _result(db_session, odd, agent.current_prompt_version_id, kind="baseline", verdict="fail")
+    required = compute_required(db_session, agent, odd)
+    assert required == [RequiredTest(odd.id, "fix", "fail")]
+    assert len({r.test_id for r in required}) == len(required)
+
+
 def test_compute_required_ignores_other_agents_tests(db_session):
     _, agent = _agent(db_session)
     _, other = _agent(db_session)

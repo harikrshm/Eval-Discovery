@@ -8,7 +8,7 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from backend.api.deps import get_current_workspace
-from backend.api.limits import MAX_CRITERIA_PER_AGENT, rate_limit_llm
+from backend.api.limits import FIX_VERIFYING, MAX_CRITERIA_PER_AGENT, rate_limit_llm
 from backend.api.schemas import (
     MAX_CRITERION_NAME_CHARS,
     CriterionCreate,
@@ -18,7 +18,8 @@ from backend.api.schemas import (
 )
 from backend.core.config import AgentConfig
 from backend.core.criteria import CriterionGenerationFailed, generate_criterion
-from backend.db.agents import current_prompt, get_owned_agent
+from backend.db.agents import current_prompt, get_owned_agent, lock_agent
+from backend.db.candidates import verifying_version
 from backend.db.events import try_log_event
 from backend.db.models import Agent, Criterion, Workspace, utcnow
 from backend.db.session import get_db
@@ -163,8 +164,15 @@ def update(
     if criterion is None:
         raise HTTPException(status_code=404, detail="Criterion not found.")
     changes = body.model_dump(exclude_unset=True)
+    if any(f in changes for f in JUDGED_FIELDS):
+        # Serialize with Approve (it locks the same row): a judged-field edit must not slip in
+        # between the approval and the replays that verify the candidate against these definitions.
+        lock_agent(db, criterion.agent)
+        db.refresh(criterion)
     # Compare before setattr: only a real change to a judged field invalidates results.
     judged_changed = any(getattr(criterion, f) != changes[f] for f in JUDGED_FIELDS if f in changes)
+    if judged_changed and verifying_version(db, criterion.agent) is not None:
+        raise HTTPException(status_code=409, detail=FIX_VERIFYING)
     for field, value in changes.items():
         setattr(criterion, field, value)
     if judged_changed:

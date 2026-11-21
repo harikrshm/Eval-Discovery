@@ -130,7 +130,7 @@ def compute_required(db: Session, agent: Agent, fix_test: EvalTest) -> list[Requ
         select(EvalTest).where(EvalTest.criterion_id == fix_test.criterion_id, EvalTest.role == "heldout")
     ).first()
     taken = {fix_test.id}
-    if heldout is not None:
+    if heldout is not None and heldout.id != fix_test.id:
         required.append(RequiredTest(heldout.id, "heldout", before(heldout)))
         taken.add(heldout.id)
     for test in agent_tests(db, agent):

@@ -398,3 +398,84 @@ def test_discover_is_capped_before_any_llm_call(client, auth_headers, db_session
         r = _discover(client, auth_headers, agent_id)
     assert r.status_code == 429
     gen.assert_not_called()
+
+
+# ---- verifying guard
+
+
+VERIFYING = "A fix is being verified. Wait for it to finish."
+
+
+def _start_verifying(db_session, agent_id):
+    from backend.db.models import PromptVersion
+
+    agent = db_session.get(Agent, agent_id)
+    version = PromptVersion(
+        agent_id=agent_id,
+        text="candidate",
+        parent_id=agent.current_prompt_version_id,
+        origin="suggested",
+        status="approved_verifying",
+        number=2,
+    )
+    db_session.add(version)
+    db_session.commit()
+    return version
+
+
+@pytest.mark.parametrize("field", ["definition", "good_example", "bad_example"])
+def test_patch_of_a_judged_field_is_409_while_a_fix_is_being_verified(client, auth_headers, db_session, field):
+    agent_id = _agent(client, auth_headers)
+    cid = _make(client, auth_headers, agent_id)
+    _with_replay_result(db_session, cid)
+    _start_verifying(db_session, agent_id)
+    r = client.patch(f"/criteria/{cid}", json={field: "Something new."}, headers=auth_headers)
+    assert r.status_code == 409
+    assert r.json()["detail"] == VERIFYING
+    db_session.expire_all()
+    assert getattr(db_session.get(Criterion, cid), field) == MANUAL[field]
+    assert db_session.get(Criterion, cid).revision == 0
+    assert _replay_stale_and_check(db_session, cid) == (False, {"ok": True})
+
+
+def test_patch_of_name_only_still_works_while_a_fix_is_being_verified(client, auth_headers, db_session):
+    agent_id = _agent(client, auth_headers)
+    cid = _make(client, auth_headers, agent_id)
+    _start_verifying(db_session, agent_id)
+    r = client.patch(f"/criteria/{cid}", json={"name": "Renamed", "why_discovered": "Because."}, headers=auth_headers)
+    assert r.status_code == 200
+    assert r.json()["name"] == "Renamed"
+
+
+def test_patch_with_an_unchanged_judged_value_still_works_while_a_fix_is_being_verified(
+    client, auth_headers, db_session
+):
+    agent_id = _agent(client, auth_headers)
+    cid = _make(client, auth_headers, agent_id)
+    _start_verifying(db_session, agent_id)
+    r = client.patch(
+        f"/criteria/{cid}", json={"definition": MANUAL["definition"], "name": "Renamed"}, headers=auth_headers
+    )
+    assert r.status_code == 200
+    assert r.json()["name"] == "Renamed"
+
+
+def test_patch_of_a_judged_field_works_when_only_a_proposal_is_open(client, auth_headers, db_session):
+    from backend.db.models import PromptVersion
+
+    agent_id = _agent(client, auth_headers)
+    cid = _make(client, auth_headers, agent_id)
+    version = _start_verifying(db_session, agent_id)
+    version.status = "proposed"
+    db_session.commit()
+    assert db_session.query(PromptVersion).filter_by(status="proposed").count() == 1
+    r = client.patch(f"/criteria/{cid}", json={"definition": "New."}, headers=auth_headers)
+    assert r.status_code == 200
+
+
+def test_patch_guard_only_looks_at_the_criterions_own_agent(client, auth_headers, db_session):
+    agent_id = _agent(client, auth_headers)
+    other_agent = _agent(client, auth_headers)
+    cid = _make(client, auth_headers, agent_id)
+    _start_verifying(db_session, other_agent)
+    assert client.patch(f"/criteria/{cid}", json={"definition": "New."}, headers=auth_headers).status_code == 200
