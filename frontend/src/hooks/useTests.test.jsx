@@ -348,6 +348,41 @@ describe("useTests", () => {
       });
       await view.unmount();
     });
+
+    it("shows friendly copy instead of the raw browser message when polling cannot reach the server", async () => {
+      api.replayTest.mockResolvedValue({ job_id: "j7" });
+      const view = mount("a1");
+      await view.render();
+      await act(async () => {
+        await view.holder.current.replay("t1");
+      });
+
+      await act(async () => {
+        polls.j7.reject(new TypeError("Failed to fetch"));
+      });
+
+      expect(view.holder.current.jobs["replay:t1"]).toMatchObject({
+        status: "failed",
+        error: "Couldn't reach the server. Check your connection, then try again.",
+      });
+      await view.unmount();
+    });
+
+    it("keeps a server ApiError message when polling gives up on it", async () => {
+      api.replayTest.mockResolvedValue({ job_id: "j7" });
+      const view = mount("a1");
+      await view.render();
+      await act(async () => {
+        await view.holder.current.replay("t1");
+      });
+
+      await act(async () => {
+        polls.j7.reject(new api.ApiError("Job not found.", 404));
+      });
+
+      expect(view.holder.current.jobs["replay:t1"]).toMatchObject({ error: "Job not found." });
+      await view.unmount();
+    });
   });
 
   describe("runAll", () => {

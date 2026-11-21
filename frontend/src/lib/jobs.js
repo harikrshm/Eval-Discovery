@@ -20,16 +20,21 @@ function isFatal(err) {
 // Polls fetchJob(jobId) until the job is done or failed. A failed job resolves (it is a
 // result, not an error); only trouble in polling itself rejects. Any other error is
 // tolerated twice in a row (a network blip), then rejects with the last one.
+//
+// Two time limits, both restarted whenever the observed status changes: `timeoutMs` for a
+// job that is running, `queuedTimeoutMs` for one still waiting its turn (the queue is
+// shared, so waiting is not the job's fault). Before the first answer the job counts as queued.
 export function pollJob(
   fetchJob,
   jobId,
-  { intervalMs = 2000, timeoutMs = 180000, signal, onUpdate } = {},
+  { intervalMs = 2000, timeoutMs = 180000, queuedTimeoutMs = 900000, signal, onUpdate } = {},
 ) {
   return new Promise((resolve, reject) => {
     let settled = false;
     let failures = 0;
     let pollTimer = null;
     let deadline = null;
+    let observed = null;
 
     function finish(settle, value) {
       if (settled) return;
@@ -38,6 +43,12 @@ export function pollJob(
       clearTimeout(deadline);
       if (signal) signal.removeEventListener("abort", onAbort);
       settle(value);
+    }
+
+    function armDeadline() {
+      clearTimeout(deadline);
+      const limit = observed === "running" ? timeoutMs : queuedTimeoutMs;
+      deadline = setTimeout(() => finish(reject, new Error("Timed out waiting for the job.")), limit);
     }
 
     function onAbort() {
@@ -60,6 +71,10 @@ export function pollJob(
       }
       if (settled) return;
       failures = 0;
+      if (job.status !== observed) {
+        observed = job.status;
+        armDeadline();
+      }
       if (onUpdate) onUpdate(job);
       if (isFinished(job)) {
         finish(resolve, job);
@@ -75,10 +90,7 @@ export function pollJob(
       }
       signal.addEventListener("abort", onAbort);
     }
-    deadline = setTimeout(
-      () => finish(reject, new Error("Timed out waiting for the job.")),
-      timeoutMs,
-    );
+    armDeadline();
     poll();
   });
 }

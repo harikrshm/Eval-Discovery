@@ -1,3 +1,5 @@
+import { ApiError } from "../api";
+
 const VERDICT_LABELS = {
   pass: "Pass",
   fail: "Fail",
@@ -29,4 +31,14 @@ export function staleMessage(count) {
 export function lowConfidenceNote(judgeCheck) {
   if (!judgeCheck || judgeCheck.passed) return null;
   return "Low confidence: the judge did not correctly grade this criterion's own examples, so treat these verdicts with care.";
+}
+
+const UNREACHABLE = "Couldn't reach the server. Check your connection, then try again.";
+
+// Text for a failure shown next to a job. Messages the server (ApiError) or the app wrote are
+// kept; a raw browser network error ("Failed to fetch", a TypeError) is replaced with plain copy.
+export function friendlyError(err) {
+  if (err instanceof ApiError) return err.message || "Something went wrong.";
+  if (err instanceof TypeError) return UNREACHABLE;
+  return err instanceof Error && err.message ? err.message : "Something went wrong.";
 }

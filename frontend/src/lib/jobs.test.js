@@ -152,4 +152,91 @@ describe("pollJob", () => {
 
     await expect(promise).resolves.toMatchObject({ status: "done" });
   });
+
+  describe("timeouts", () => {
+    const sequence = (statuses) => {
+      // statuses: [[fromMs, status]] ordered; the fake clock decides which one applies.
+      return vi.fn(async () => {
+        const now = Date.now() - start;
+        let current = statuses[0][1];
+        for (const [from, status] of statuses) if (now >= from) current = status;
+        return job(current);
+      });
+    };
+    let start;
+    beforeEach(() => {
+      start = Date.now();
+    });
+
+    it("does not time out a job that sat queued for 10 minutes before running and finishing", async () => {
+      const fetchJob = sequence([
+        [0, "queued"],
+        [10 * 60 * 1000, "running"],
+        [10 * 60 * 1000 + 60 * 1000, "done"],
+      ]);
+      const settled = pollJob(fetchJob, "j1", { intervalMs: 2000 }).then(
+        (j) => j,
+        (e) => e,
+      );
+      await vi.advanceTimersByTimeAsync(11 * 60 * 1000 + 2000);
+      expect(await settled).toMatchObject({ status: "done" });
+    });
+
+    it("times out after the running limit while the job is running", async () => {
+      const fetchJob = vi.fn().mockResolvedValue(job("running"));
+      let done = false;
+      const settled = pollJob(fetchJob, "j1", { intervalMs: 2000 })
+        .catch((e) => e)
+        .finally(() => (done = true));
+      await vi.advanceTimersByTimeAsync(179000);
+      expect(done).toBe(false);
+      await vi.advanceTimersByTimeAsync(2000);
+      const err = await settled;
+      expect(err.message).toBe("Timed out waiting for the job.");
+    });
+
+    it("restarts the running clock when the status changes", async () => {
+      // queued for 100 s, then running for 150 s (250 s in total, past 180 s), then done.
+      const fetchJob = sequence([
+        [0, "queued"],
+        [100000, "running"],
+        [250000, "done"],
+      ]);
+      const settled = pollJob(fetchJob, "j1", { intervalMs: 2000 }).then(
+        (j) => j,
+        (e) => e,
+      );
+      await vi.advanceTimersByTimeAsync(252000);
+      expect(await settled).toMatchObject({ status: "done" });
+    });
+
+    it("times out a job queued beyond the queued limit", async () => {
+      const fetchJob = vi.fn().mockResolvedValue(job("queued"));
+      let done = false;
+      const settled = pollJob(fetchJob, "j1", { intervalMs: 2000 })
+        .catch((e) => e)
+        .finally(() => (done = true));
+      await vi.advanceTimersByTimeAsync(899000);
+      expect(done).toBe(false);
+      await vi.advanceTimersByTimeAsync(2000);
+      const err = await settled;
+      expect(err.message).toBe("Timed out waiting for the job.");
+    });
+
+    it("honours custom timeoutMs and queuedTimeoutMs", async () => {
+      const fetchJob = vi.fn().mockResolvedValue(job("queued"));
+      let done = false;
+      const settled = pollJob(fetchJob, "j1", {
+        intervalMs: 1000,
+        timeoutMs: 3000,
+        queuedTimeoutMs: 8000,
+      })
+        .catch((e) => e)
+        .finally(() => (done = true));
+      await vi.advanceTimersByTimeAsync(7000);
+      expect(done).toBe(false);
+      await vi.advanceTimersByTimeAsync(1500);
+      expect((await settled).message).toBe("Timed out waiting for the job.");
+    });
+  });
 });

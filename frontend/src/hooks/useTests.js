@@ -7,6 +7,7 @@ import {
   buildTests as apiBuildTests,
 } from "../api";
 import { pollJob } from "../lib/jobs";
+import { friendlyError } from "../lib/testStatus";
 
 // The server owns the suite; this hook mirrors it and follows background jobs.
 // `jobs` maps "replay:<testId>" / "build:<criterionId>" to { status, error, result }.
@@ -115,7 +116,7 @@ export function useTests(agentId) {
           // Polling gave up, but the job may still be running: forget it so a later
           // reload can pick it up again.
           ctx.tracked.delete(key);
-          patchJob(ctx, key, { status: "failed", error: errorMessage(err), result: null });
+          patchJob(ctx, key, { status: "failed", error: friendlyError(err), result: null });
         }
       );
     }
@@ -162,7 +163,7 @@ export function useTests(agentId) {
         const { job_id: jobId } = await request();
         engine.track(ctx, key, jobId);
       } catch (err) {
-        engine.patchJob(ctx, key, { status: "failed", error: errorMessage(err), result: null });
+        engine.patchJob(ctx, key, { status: "failed", error: friendlyError(err), result: null });
       }
     },
     [engine]
@@ -193,7 +194,7 @@ export function useTests(agentId) {
       await apiRunAllTests(ctx.agentId);
     } catch (err) {
       for (const key of keys) {
-        engine.patchJob(ctx, key, { status: "failed", error: errorMessage(err), result: null });
+        engine.patchJob(ctx, key, { status: "failed", error: friendlyError(err), result: null });
       }
       return;
     }

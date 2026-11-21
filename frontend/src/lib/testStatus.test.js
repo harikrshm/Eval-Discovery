@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { lowConfidenceNote, staleMessage, statusLabel, verdictLabel } from "./testStatus";
+import { ApiError } from "../api";
+import { friendlyError, lowConfidenceNote, staleMessage, statusLabel, verdictLabel } from "./testStatus";
 
 describe("verdictLabel", () => {
   it("names each verdict and treats a missing one as not run", () => {
@@ -47,5 +48,28 @@ describe("lowConfidenceNote", () => {
     expect(typeof note).toBe("string");
     expect(note).toMatch(/low confidence/i);
     expect(note.match(/\./g)).toHaveLength(1);
+  });
+});
+
+describe("friendlyError", () => {
+  it("replaces a raw network failure with plain copy", () => {
+    expect(friendlyError(new TypeError("Failed to fetch"))).toBe(
+      "Couldn't reach the server. Check your connection, then try again.",
+    );
+    expect(friendlyError(new TypeError("NetworkError when attempting to fetch resource."))).toBe(
+      "Couldn't reach the server. Check your connection, then try again.",
+    );
+  });
+
+  it("keeps messages the server or the app wrote", () => {
+    expect(friendlyError(new ApiError("Test run limit reached for this hour. Try again later.", 429))).toBe(
+      "Test run limit reached for this hour. Try again later.",
+    );
+    expect(friendlyError(new Error("Timed out waiting for the job."))).toBe("Timed out waiting for the job.");
+  });
+
+  it("falls back for anything without a message", () => {
+    expect(friendlyError(undefined)).toBe("Something went wrong.");
+    expect(friendlyError(new Error(""))).toBe("Something went wrong.");
   });
 });
