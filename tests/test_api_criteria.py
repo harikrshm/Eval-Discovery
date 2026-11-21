@@ -4,8 +4,9 @@ import pytest
 
 from backend.api import limits
 from backend.core.criteria import CriterionDraft, CriterionGenerationFailed
-from backend.db.models import Agent, Criterion, EvalResult, EvalTest, Event
+from backend.db.models import Agent, Criterion, EvalResult, EvalTest, Event, Job
 from backend.db.workspaces import create_workspace
+from backend.jobs.queue import JOBS_PER_WORKSPACE_PER_HOUR
 
 DRAFT = CriterionDraft(
     name="Answers the pricing question",
@@ -63,6 +64,12 @@ def test_discover_stores_criterion_clears_summary_and_logs(client, auth_headers,
     assert body["bad_example"] == DRAFT.bad_example
     assert body["why_discovered"] == DRAFT.why_discovered
     assert body["source"] == "discovered"
+    job = db_session.query(Job).one()
+    assert body["job_id"] == job.id
+    assert job.type == "build_tests"
+    assert job.status == "queued"
+    assert job.payload == {"criterion_id": body["id"]}
+    assert job.workspace_id == row.workspace_id
     config, summary = gen.call_args.args
     assert summary == "You keep asking about price."
     assert config.name == row.name
@@ -77,6 +84,22 @@ def test_discover_stores_criterion_clears_summary_and_logs(client, auth_headers,
     assert row.pattern_summary is None
     events = db_session.query(Event).filter(Event.name == "criterion_created").all()
     assert [e.properties for e in events] == [{"source": "discovered"}]
+
+
+def test_discover_at_the_hourly_job_cap_still_creates_the_criterion_without_a_job(
+    client, auth_headers, db_session
+):
+    agent_id = _agent(client, auth_headers)
+    row = _set_summary(db_session, agent_id)
+    for _ in range(JOBS_PER_WORKSPACE_PER_HOUR):
+        db_session.add(Job(workspace_id=row.workspace_id, type="replay", payload={}, status="done"))
+    db_session.commit()
+    with patch("backend.api.criteria.generate_criterion", return_value=DRAFT):
+        r = _discover(client, auth_headers, agent_id)
+    assert r.status_code == 201
+    assert r.json()["job_id"] is None
+    assert db_session.query(Criterion).count() == 1
+    assert db_session.query(Job).filter(Job.type == "build_tests").count() == 0
 
 
 def test_discover_without_summary_is_409(client, auth_headers, db_session):

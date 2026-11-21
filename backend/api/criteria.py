@@ -1,6 +1,7 @@
 """Criteria API: discover a criterion from the detected pattern, add one manually, edit one."""
 
 import logging
+from datetime import timedelta
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy import func, select
@@ -13,14 +14,16 @@ from backend.api.schemas import (
     CriterionCreate,
     CriterionOut,
     CriterionUpdate,
+    DiscoveredCriterionOut,
 )
 from backend.core.config import AgentConfig
 from backend.core.criteria import CriterionGenerationFailed, generate_criterion
 from backend.db.agents import current_prompt, get_owned_agent
 from backend.db.events import try_log_event
-from backend.db.models import Agent, Criterion, Workspace
+from backend.db.models import Agent, Criterion, Workspace, utcnow
 from backend.db.session import get_db
 from backend.db.testsuite import mark_criterion_results_stale
+from backend.jobs.queue import JOBS_PER_WORKSPACE_PER_HOUR, enqueue, jobs_started_since
 
 logger = logging.getLogger(__name__)
 
@@ -62,13 +65,21 @@ def _out(criterion: Criterion) -> CriterionOut:
     )
 
 
-@router.post("/agents/{agent_id}/criteria/discover", status_code=201, response_model=CriterionOut)
+def _enqueue_build_tests(db: Session, workspace: Workspace, criterion: Criterion) -> str | None:
+    """Queue the test-building job; None when the hourly cap is reached (the criterion still stands)."""
+    used = jobs_started_since(db, workspace.id, utcnow() - timedelta(hours=1))
+    if used >= JOBS_PER_WORKSPACE_PER_HOUR:
+        return None
+    return enqueue(db, workspace.id, "build_tests", {"criterion_id": criterion.id}).id
+
+
+@router.post("/agents/{agent_id}/criteria/discover", status_code=201, response_model=DiscoveredCriterionOut)
 def discover(
     agent_id: str,
     request: Request,
     workspace: Workspace = Depends(get_current_workspace),
     db: Session = Depends(get_db),
-) -> CriterionOut:
+) -> DiscoveredCriterionOut:
     agent = _owned_or_404(db, workspace, agent_id)
     _check_criteria_cap(db, agent)
     rate_limit_llm(request)
@@ -97,7 +108,8 @@ def discover(
     agent.pattern_summary = None
     db.commit()
     try_log_event(db, workspace.id, "criterion_created", {"source": "discovered"})
-    return _out(criterion)
+    job_id = _enqueue_build_tests(db, workspace, criterion)
+    return DiscoveredCriterionOut(**_out(criterion).model_dump(), job_id=job_id)
 
 
 @router.post("/agents/{agent_id}/criteria", status_code=201, response_model=CriterionOut)

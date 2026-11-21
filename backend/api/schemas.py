@@ -172,6 +172,12 @@ class CriterionOut(BaseModel):
     source: str
 
 
+class DiscoveredCriterionOut(CriterionOut):
+    """A freshly discovered criterion plus the test-building job (null when the hourly cap blocked it)."""
+
+    job_id: str | None
+
+
 MAX_CRITERION_NAME_CHARS = 200
 MAX_CRITERION_TEXT_CHARS = 2000
 
@@ -222,3 +228,54 @@ class ChatRequest(_Strict):
 
 class ChatResponse(BaseModel):
     reply: str
+
+
+class EvalResultOut(BaseModel):
+    id: str
+    kind: str
+    verdict: str
+    rationale: str
+    transcript: list[StoredMessage] | None
+    stale: bool
+    prompt_version_id: str
+    created_at: datetime
+
+
+class EvalTestOut(BaseModel):
+    id: str
+    role: str
+    source_run_id: str | None
+    baseline: EvalResultOut | None
+    current: EvalResultOut | None
+    active_job_id: str | None
+
+
+class CriterionSuiteOut(BaseModel):
+    criterion_id: str
+    status: str
+    judge_check: dict | None
+    active_job_id: str | None
+    tests: list[EvalTestOut]
+
+
+class SuiteOut(BaseModel):
+    prompt_version_id: str
+    prompt_version_number: int
+    stale_count: int
+    criteria: list[CriterionSuiteOut]
+
+
+class JobOut(BaseModel):
+    id: str
+    type: str
+    status: str
+    result: dict | None
+    error: str | None
+
+
+class JobAccepted(BaseModel):
+    job_id: str
+
+
+class RunAllOut(BaseModel):
+    job_ids: list[str]
