@@ -26,3 +26,6 @@ htmlcov/
 frontend/node_modules/
 frontend/dist/
 .superpowers/
+
+# Local database
+dev.db
