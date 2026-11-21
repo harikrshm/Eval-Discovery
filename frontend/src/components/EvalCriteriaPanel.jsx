@@ -61,6 +61,7 @@ function CriterionCard({ criterion, index, isExpanded, onToggle, onUpdate }) {
           <div>
             <Label htmlFor={`${uid}-name`} className="mb-1 block">Name</Label>
             <Input
+              key={criterion.name}
               id={`${uid}-name`}
               defaultValue={criterion.name}
               onBlur={(e) => handleBlur("name", e.target.value)}
@@ -71,6 +72,7 @@ function CriterionCard({ criterion, index, isExpanded, onToggle, onUpdate }) {
             <div key={key}>
               <Label htmlFor={`${uid}-${key}`} className="mb-1 block">{label}</Label>
               <Textarea
+                key={criterion[key]}
                 id={`${uid}-${key}`}
                 defaultValue={criterion[key]}
                 onBlur={(e) => handleBlur(key, e.target.value)}
@@ -92,6 +94,7 @@ export default function EvalCriteriaPanel({
   onUpdate,
   onAdd,
   onExportAll,
+  saveError,
 }) {
   // expandedIndex: only the last card is expanded by default
   const [expandedIndex, setExpandedIndex] = useState(evalCriteria.length - 1);
@@ -127,6 +130,15 @@ export default function EvalCriteriaPanel({
       {patternState === "pattern_found" && evalCriteria.length > 0 && (
         <div className="px-4 py-2 bg-green-50 border-b border-green-200 text-xs text-green-800 flex-shrink-0">
           New pattern detected. Select Discover evals to add another criterion.
+        </div>
+      )}
+
+      {saveError && (
+        <div
+          role="alert"
+          className="px-4 py-2 bg-red-50 border-b border-red-200 text-xs text-red-700 flex-shrink-0"
+        >
+          Couldn&apos;t save your change: {saveError}. The last saved value was kept.
         </div>
       )}
 

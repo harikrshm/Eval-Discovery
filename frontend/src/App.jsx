@@ -1,7 +1,7 @@
 import { useState, useEffect } from "react";
 import { History, ListChecks } from "lucide-react";
 import { useSession } from "./hooks/useSession";
-import { generateCriteria } from "./api";
+import { getAgentId } from "./lib/workspace";
 import { cn } from "./lib/utils";
 import ChatInterface from "./components/ChatInterface";
 import RunControls from "./components/RunControls";
@@ -54,20 +54,24 @@ function PatternBadge({ patternState, criteriaError, evalCriteriaCount }) {
 }
 
 export default function App() {
+  // Read once: a stale or deleted agent is cleared from storage by the hook,
+  // and re-reading here would otherwise retrigger the load.
+  const [agentId] = useState(() => getAgentId());
   const {
-    runCount,
+    loading,
+    loadError,
     transcripts,
     currentTranscript,
     evalCriteria,
     patternState,
     patternSummary,
-    lastCheckedAtRun,
+    criteriaSaveError,
     addMessage,
     saveRun,
+    discover,
     addCriteria,
     updateCriteria,
-    setPatternState,
-  } = useSession();
+  } = useSession(agentId);
 
   const [criteriaError, setCriteriaError] = useState(null);
   const [saving, setSaving] = useState(false);
@@ -76,17 +80,6 @@ export default function App() {
 
   const historyOpen = historyVisible && transcripts.length > 0;
   const evalOpen = panelVisible && evalCriteria.length > 0;
-
-  // On mount: if session was reloaded into "error" with a valid patternSummary, the error
-  // came from criteria generation (criteriaError is not persisted). Reset to "pattern_found"
-  // so the "Discover evals" button reappears instead of showing the misleading
-  // "Pattern check failed" message.
-  useEffect(() => {
-    if (patternState === "error" && patternSummary) {
-      setPatternState("pattern_found");
-    }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []); // intentionally runs once on mount only
 
   // Reset criteriaError whenever a new pattern check starts
   useEffect(() => {
@@ -122,13 +115,7 @@ export default function App() {
     if (saving) return;
     setSaving(true);
     try {
-      await saveRun({
-        currentPatternState: patternState,
-        currentTranscripts: transcripts,
-        currentRunCount: runCount,
-        currentCurrentTranscript: currentTranscript,
-        currentLastCheckedAtRun: lastCheckedAtRun,
-      });
+      await saveRun();
     } finally {
       setSaving(false);
     }
@@ -137,15 +124,11 @@ export default function App() {
   async function handleDiscoverEvals() {
     if (!patternSummary) return;
     setCriteriaError(null);
-    setPatternState("generating");
     try {
-      const result = await generateCriteria(patternSummary);
-      addCriteria({ id: crypto.randomUUID(), ...result });
+      await discover();
       openEvalPanel();
-      setPatternState("complete");
     } catch (err) {
       setCriteriaError(err.message);
-      setPatternState("error");
     }
   }
 
@@ -165,14 +148,38 @@ export default function App() {
 
   function handleAddCriteria() {
     addCriteria({
-      id: crypto.randomUUID(),
       name: "New criterion",
       definition: "",
       good_example: "",
       bad_example: "",
-      why_discovered: "(manually added)",
     });
     openEvalPanel();
+  }
+
+  if (agentId == null) {
+    return (
+      <div className="flex h-dvh items-center justify-center bg-background px-4">
+        <p className="text-muted-foreground">No agent selected yet.</p>
+      </div>
+    );
+  }
+
+  if (loadError) {
+    return (
+      <div className="flex h-dvh items-center justify-center bg-background px-4">
+        <div role="alert" className="max-w-md text-center text-sm text-red-700">
+          Couldn&apos;t load your agent: {loadError}
+        </div>
+      </div>
+    );
+  }
+
+  if (loading) {
+    return (
+      <div className="flex h-dvh items-center justify-center bg-background px-4">
+        <p role="status" className="text-muted-foreground">Loading…</p>
+      </div>
+    );
   }
 
   const isGenerating = patternState === "generating";
@@ -277,6 +284,7 @@ export default function App() {
         {/* Chat column */}
         <main className="flex flex-col flex-1 min-w-0 overflow-hidden">
           <ChatInterface
+            agentId={agentId}
             currentTranscript={currentTranscript}
             onMessage={addMessage}
             disabled={isGenerating}
@@ -304,6 +312,7 @@ export default function App() {
                 onDismiss={() => setPanelVisible(false)}
                 onUpdate={updateCriteria}
                 onAdd={handleAddCriteria}
+                saveError={criteriaSaveError}
                 onExportAll={handleExportAll}
               />
             </div>

@@ -1,204 +1,256 @@
-import { useState, useCallback } from "react";
-import { checkPattern as apiCheckPattern } from "../api";
+import { useState, useEffect, useCallback, useRef } from "react";
+import {
+  ApiError,
+  getAgentState,
+  saveRun as apiSaveRun,
+  checkPattern as apiCheckPattern,
+  discoverCriterion as apiDiscoverCriterion,
+  addCriterion as apiAddCriterion,
+  updateCriterion as apiUpdateCriterion,
+} from "../api";
+import { clearWorkspace } from "../lib/workspace";
+import { derivePatternState } from "../lib/patternState";
 
-const KEYS = {
-  RUN_COUNT: "run_count",
-  TRANSCRIPTS: "transcripts",
-  CURRENT_TRANSCRIPT: "current_transcript",
-  EVAL_CRITERIA: "eval_criteria",
-  PATTERN_STATE: "pattern_state",
-  PATTERN_SUMMARY: "pattern_summary",
-  LAST_CHECKED_AT_RUN: "last_checked_at_run",
-};
+// The server owns everything except the in-progress run, which is a draft kept
+// per agent in sessionStorage so a reload mid-conversation does not lose it.
+const draftKey = (agentId) => `current_transcript:${agentId}`;
 
-// Keywords covering all Alex/CloudSync behaviors from the system prompt.
-// If any keyword appears in user messages across ≥2 runs, fire the LLM pattern check.
-const PATTERN_KEYWORDS = [
-  // Pricing guardrail (don't discuss pricing)
-  "price", "pricing", "cost", "costs", "budget", "expensive", "cheap",
-  "afford", "pay", "payment", "fee", "how much", "monthly", "annual",
-
-  // Demo booking (primary goal)
-  "demo", "meeting", "schedule", "calendar", "book", "appointment",
-  "20 minutes", "30 minutes", "time slot",
-
-  // Objection handling (one max, then let go)
-  "not interested", "busy", "no thanks", "bad time", "pass",
-
-  // Competitors (never badmouth)
-  "competitor", "alternative", "already using", "other solution",
-  "snowflake", "databricks",
-
-  // Voicemail
-  "voicemail", "leave a message",
-
-  // Qualification
-  "qualify", "decision maker", "data team", "pipeline",
-];
-
-function getItem(key, fallback) {
+function readDraft(agentId) {
   try {
-    const raw = sessionStorage.getItem(key);
-    return raw === null ? fallback : JSON.parse(raw);
+    const raw = sessionStorage.getItem(draftKey(agentId));
+    const parsed = raw === null ? [] : JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed : [];
   } catch {
-    return fallback;
+    return [];
   }
 }
 
-function setItem(key, value) {
-  sessionStorage.setItem(key, JSON.stringify(value));
+function writeDraft(agentId, messages) {
+  try {
+    if (messages.length === 0) sessionStorage.removeItem(draftKey(agentId));
+    else sessionStorage.setItem(draftKey(agentId), JSON.stringify(messages));
+  } catch {
+    // Storage unavailable; the draft just lives in memory.
+  }
 }
 
-/**
- * Returns true if at least one PATTERN_KEYWORD appears in user messages
- * across ≥2 different transcripts.
- */
-function hasKeywordOverlap(transcripts) {
-  if (transcripts.length < 2) return false;
-  const runKeywords = transcripts.map((transcript) =>
-    new Set(
-      transcript
-        .filter((m) => m.role === "user")
-        .flatMap((m) =>
-          PATTERN_KEYWORDS.filter((kw) =>
-            m.content.toLowerCase().includes(kw)
-          )
-        )
-    )
-  );
-  return PATTERN_KEYWORDS.some(
-    (kw) => runKeywords.filter((s) => s.has(kw)).length >= 2
-  );
+function errorMessage(err) {
+  return err instanceof Error && err.message ? err.message : "Something went wrong.";
 }
 
-export function useSession() {
-  const [runCount, setRunCountState] = useState(() => getItem(KEYS.RUN_COUNT, 0));
-  const [transcripts, setTranscriptsState] = useState(() => getItem(KEYS.TRANSCRIPTS, []));
-  const [currentTranscript, setCurrentTranscriptState] = useState(() => getItem(KEYS.CURRENT_TRANSCRIPT, []));
-  const [evalCriteria, setEvalCriteriaState] = useState(() => getItem(KEYS.EVAL_CRITERIA, []));
-  const [patternState, setPatternStateRaw] = useState(() => getItem(KEYS.PATTERN_STATE, "idle"));
-  const [patternSummary, setPatternSummaryRaw] = useState(() => getItem(KEYS.PATTERN_SUMMARY, null));
-  const [lastCheckedAtRun, setLastCheckedAtRunState] = useState(() => getItem(KEYS.LAST_CHECKED_AT_RUN, 0));
+// Shape that hooks report while nothing is loaded (no agent, or load pending).
+const EMPTY = {
+  agent: null,
+  runCount: 0,
+  transcripts: [],
+  evalCriteria: [],
+  patternSummary: null,
+};
 
-  const setPatternState = useCallback((val) => {
-    setPatternStateRaw(val);
-    setItem(KEYS.PATTERN_STATE, val);
+export function useSession(agentId) {
+  // `loaded` records which agent the state below belongs to, so a stale or
+  // not-yet-finished load is never mistaken for the current agent.
+  const [loaded, setLoaded] = useState({ agentId: null, error: null });
+  const [agent, setAgent] = useState(EMPTY.agent);
+  const [runCount, setRunCount] = useState(EMPTY.runCount);
+  const [transcripts, setTranscripts] = useState(EMPTY.transcripts);
+  const [currentTranscript, setCurrentTranscript] = useState([]);
+  const [evalCriteria, setEvalCriteria] = useState(EMPTY.evalCriteria);
+  const [patternState, setPatternStateRaw] = useState("idle");
+  const [patternSummary, setPatternSummary] = useState(EMPTY.patternSummary);
+  const [criteriaSaveError, setCriteriaSaveError] = useState(null);
+
+  // Refs let async callbacks read the latest values after an await.
+  const patternStateRef = useRef("idle");
+  const criteriaRef = useRef([]);
+  const draftRef = useRef([]);
+  const agentIdRef = useRef(agentId);
+  useEffect(() => {
+    agentIdRef.current = agentId;
+  }, [agentId]);
+
+  const setPatternState = useCallback((value) => {
+    patternStateRef.current = value;
+    setPatternStateRaw(value);
   }, []);
 
-  const setPatternSummary = useCallback((val) => {
-    setPatternSummaryRaw(val);
-    setItem(KEYS.PATTERN_SUMMARY, val);
+  const applyCriteria = useCallback((next) => {
+    criteriaRef.current = next;
+    setEvalCriteria(next);
   }, []);
 
-  const setLastCheckedAtRun = useCallback((val) => {
-    setLastCheckedAtRunState(val);
-    setItem(KEYS.LAST_CHECKED_AT_RUN, val);
+  const applyDraft = useCallback((next) => {
+    draftRef.current = next;
+    setCurrentTranscript(next);
   }, []);
 
-  const addMessage = useCallback((message) => {
-    setCurrentTranscriptState((prev) => {
-      const next = [...prev, message];
-      setItem(KEYS.CURRENT_TRANSCRIPT, next);
-      return next;
-    });
-  }, []);
+  useEffect(() => {
+    if (agentId == null) return undefined;
+    let cancelled = false;
 
-  /**
-   * Appends a new criterion to the evalCriteria array and persists to sessionStorage.
-   * Called from App.jsx handleDiscoverEvals after a successful /generate-criteria response.
-   */
-  const addCriteria = useCallback((criterion) => {
-    setEvalCriteriaState((prev) => {
-      const next = [...prev, criterion];
-      setItem(KEYS.EVAL_CRITERIA, next);
-      return next;
-    });
-  }, []);
-
-  /**
-   * Updates a specific criterion by id. Called on blur from EvalCriteriaPanel field edits.
-   */
-  const updateCriteria = useCallback((id, fields) => {
-    setEvalCriteriaState((prev) => {
-      const next = prev.map((c) => (c.id === id ? { ...c, ...fields } : c));
-      setItem(KEYS.EVAL_CRITERIA, next);
-      return next;
-    });
-  }, []);
-
-  /**
-   * Saves the current transcript as a completed run, then evaluates whether to fire
-   * the LLM pattern check.
-   *
-   * Pattern check fires if:
-   *   1. nextCount - lastCheckedAtRun >= 2  (checks every 2 runs)
-   *   2. patternState NOT IN ["checking", "generating"]
-   *   3. hasKeywordOverlap detects keyword match across ≥2 transcripts
-   *
-   * On success (found=true): updates lastCheckedAtRun, sets patternSummary, → "pattern_found"
-   * On success (found=false): updates lastCheckedAtRun → "pattern_not_found"
-   * On error: does NOT update lastCheckedAtRun → "error" (allows retry on next run)
-   */
-  const saveRun = useCallback(async (currentState) => {
-    const {
-      currentPatternState,
-      currentTranscripts,
-      currentRunCount,
-      currentCurrentTranscript,
-      currentLastCheckedAtRun,
-    } = currentState;
-
-    const nextTranscripts = [...currentTranscripts, currentCurrentTranscript];
-    const nextCount = currentRunCount + 1;
-
-    setTranscriptsState(nextTranscripts);
-    setRunCountState(nextCount);
-    setItem(KEYS.TRANSCRIPTS, nextTranscripts);
-    setItem(KEYS.RUN_COUNT, nextCount);
-    setCurrentTranscriptState([]);
-    setItem(KEYS.CURRENT_TRANSCRIPT, []);
-
-    // All states except "checking" and "generating" are re-triggerable by design.
-    // "complete" re-triggers so new patterns are detected after criteria are already generated.
-    // "pattern_found" re-triggers to update patternSummary before the user clicks Discover Evals.
-    // See pattern-detection spec state machine table.
-    const deltaTranscripts = nextTranscripts.slice(currentLastCheckedAtRun);
-
-    if (
-      nextCount - currentLastCheckedAtRun >= 2 &&
-      !["checking", "generating"].includes(currentPatternState) &&
-      hasKeywordOverlap(deltaTranscripts)
-    ) {
-      setPatternState("checking");
-      try {
-        const apiTranscripts = deltaTranscripts.map((t) =>
-          t.map((m) => ({ role: m.role, content: m.content }))
+    getAgentState(agentId)
+      .then((state) => {
+        if (cancelled) return;
+        const criteria = state.criteria ?? [];
+        setAgent(state.agent);
+        setRunCount(state.run_count ?? 0);
+        setTranscripts((state.runs ?? []).map((run) => run.messages));
+        applyCriteria(criteria);
+        setPatternSummary(state.pattern_summary ?? null);
+        setPatternState(
+          derivePatternState({
+            patternSummary: state.pattern_summary,
+            criteriaCount: criteria.length,
+          })
         );
-        const result = await apiCheckPattern(apiTranscripts);
-        setLastCheckedAtRun(nextCount);
-        if (result.found) {
-          setPatternSummary(result.pattern_summary); // overwrites any previous summary
-          setPatternState("pattern_found");
-        } else {
-          setPatternState("pattern_not_found");
+        applyDraft(readDraft(agentId));
+        setCriteriaSaveError(null);
+        setLoaded({ agentId, error: null });
+      })
+      .catch((err) => {
+        if (cancelled) return;
+        if (err instanceof ApiError && (err.status === 401 || err.status === 404)) {
+          // The stored workspace or agent is gone; forget it so the app does not loop.
+          clearWorkspace();
         }
-      } catch {
-        setPatternState("error");
-        // lastCheckedAtRun NOT updated — allows retry on next qualifying run
-      }
+        setLoaded({ agentId, error: errorMessage(err) });
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [agentId, applyCriteria, applyDraft, setPatternState]);
+
+  const ready = agentId != null && loaded.agentId === agentId;
+  const loadError = ready ? loaded.error : null;
+  const loading = agentId != null && !ready;
+
+  const addMessage = useCallback(
+    (message) => {
+      const next = [...draftRef.current, message];
+      applyDraft(next);
+      writeDraft(agentIdRef.current, next);
+    },
+    [applyDraft]
+  );
+
+  // Posts the draft as a run; when the server says a pattern check is due,
+  // runs it and moves the state machine accordingly.
+  const saveRun = useCallback(async () => {
+    const id = agentIdRef.current;
+    if (id == null) return;
+    const messages = draftRef.current;
+
+    let saved;
+    try {
+      saved = await apiSaveRun(id, messages);
+    } catch {
+      setPatternState("error");
+      return;
     }
-  }, [setPatternState, setPatternSummary, setLastCheckedAtRun]);
+    if (agentIdRef.current !== id) return;
+
+    applyDraft([]);
+    writeDraft(id, []);
+    setTranscripts((prev) => [...prev, saved.run.messages]);
+    setRunCount(saved.run_count);
+
+    if (!saved.check_due) return;
+    if (["checking", "generating"].includes(patternStateRef.current)) return;
+
+    setPatternState("checking");
+    try {
+      const result = await apiCheckPattern(id);
+      if (agentIdRef.current !== id) return;
+      if (result.found) {
+        setPatternSummary(result.pattern_summary);
+        setPatternState("pattern_found");
+      } else {
+        setPatternState("pattern_not_found");
+      }
+    } catch {
+      if (agentIdRef.current !== id) return;
+      setPatternState("error");
+    }
+  }, [applyDraft, setPatternState]);
+
+  // Rethrows on failure so the caller can show the message; state is set to "error" first.
+  const discover = useCallback(async () => {
+    const id = agentIdRef.current;
+    if (id == null) return null;
+    setPatternState("generating");
+    try {
+      const criterion = await apiDiscoverCriterion(id);
+      if (agentIdRef.current !== id) return null;
+      applyCriteria([...criteriaRef.current, criterion]);
+      setPatternSummary(null); // the server consumes the summary on discovery
+      setPatternState("complete");
+      return criterion;
+    } catch (err) {
+      if (agentIdRef.current === id) setPatternState("error");
+      throw err instanceof Error ? err : new Error(errorMessage(err));
+    }
+  }, [applyCriteria, setPatternState]);
+
+  const addCriteria = useCallback(
+    async (fields) => {
+      const id = agentIdRef.current;
+      if (id == null) return null;
+      setCriteriaSaveError(null);
+      try {
+        const criterion = await apiAddCriterion(id, fields);
+        if (agentIdRef.current !== id) return null;
+        applyCriteria([...criteriaRef.current, criterion]);
+        return criterion;
+      } catch (err) {
+        setCriteriaSaveError(errorMessage(err));
+        return null;
+      }
+    },
+    [applyCriteria]
+  );
+
+  // Optimistic: the edit shows immediately; if the server rejects it, the
+  // criterion goes back to its last saved values and the error is surfaced.
+  const updateCriteria = useCallback(
+    async (id, fields) => {
+      const current = criteriaRef.current.find((c) => c.id === id);
+      if (!current) return;
+      const previous = Object.fromEntries(Object.keys(fields).map((key) => [key, current[key]]));
+      const unchanged = Object.keys(fields).every((key) => current[key] === fields[key]);
+      if (unchanged) return;
+
+      setCriteriaSaveError(null);
+      applyCriteria(criteriaRef.current.map((c) => (c.id === id ? { ...c, ...fields } : c)));
+      try {
+        await apiUpdateCriterion(id, fields);
+      } catch (err) {
+        applyCriteria(criteriaRef.current.map((c) => (c.id === id ? { ...c, ...previous } : c)));
+        setCriteriaSaveError(errorMessage(err));
+      }
+    },
+    [applyCriteria]
+  );
+
+  // Until the state for the current agent has loaded, expose nothing.
+  const view = ready && !loadError
+    ? { agent, runCount, transcripts, evalCriteria, patternSummary }
+    : EMPTY;
 
   return {
-    runCount,
-    transcripts,
-    currentTranscript,
-    evalCriteria,
-    patternState,
-    patternSummary,
-    lastCheckedAtRun,   // REQUIRED: App.jsx passes this as currentLastCheckedAtRun to saveRun
+    loading,
+    loadError,
+    agent: view.agent,
+    runCount: view.runCount,
+    transcripts: view.transcripts,
+    currentTranscript: ready && !loadError ? currentTranscript : EMPTY.transcripts,
+    evalCriteria: view.evalCriteria,
+    patternState: ready && !loadError ? patternState : "idle",
+    patternSummary: view.patternSummary,
+    criteriaSaveError,
     addMessage,
     saveRun,
+    discover,
     addCriteria,
     updateCriteria,
     setPatternState,

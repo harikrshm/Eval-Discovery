@@ -49,7 +49,7 @@ function EmptyState({ onPick }) {
   );
 }
 
-export default function ChatInterface({ currentTranscript, onMessage, disabled }) {
+export default function ChatInterface({ agentId, currentTranscript, onMessage, disabled }) {
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
   const [slow, setSlow] = useState(false);
@@ -85,7 +85,7 @@ export default function ChatInterface({ currentTranscript, onMessage, disabled }
     setLoading(true);
     setError(null);
     try {
-      const { reply } = await sendMessage(messages);
+      const { reply } = await sendMessage(agentId, messages);
       onMessage({ role: "assistant", content: reply });
     } catch {
       setError("Alex didn't respond. Check your connection, then try again.");
