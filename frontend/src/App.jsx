@@ -1,6 +1,7 @@
 import { useState, useEffect } from "react";
 import { Bot, History, ListChecks } from "lucide-react";
 import { useSession } from "./hooks/useSession";
+import { useTests } from "./hooks/useTests";
 import { getAgentId } from "./lib/workspace";
 import { cn } from "./lib/utils";
 import AgentSetup from "./components/AgentSetup";
@@ -78,7 +79,9 @@ export default function App() {
     discover,
     addCriteria,
     updateCriteria,
+    savePrompt,
   } = useSession(agentId);
+  const tests = useTests(agentId);
 
   const [criteriaError, setCriteriaError] = useState(null);
   const [saving, setSaving] = useState(false);
@@ -133,6 +136,8 @@ export default function App() {
     setCriteriaError(null);
     try {
       await discover();
+      // The server starts building tests for the new criterion; the refresh picks that job up.
+      tests.refresh();
       openEvalPanel();
     } catch (err) {
       setCriteriaError(err.message);
@@ -153,14 +158,29 @@ export default function App() {
     URL.revokeObjectURL(url);
   }
 
-  function handleAddCriteria() {
-    addCriteria({
+  async function handleAddCriteria() {
+    openEvalPanel();
+    const created = await addCriteria({
       name: "New criterion",
       definition: "",
       good_example: "",
       bad_example: "",
     });
-    openEvalPanel();
+    // The suite learns about the new criterion so it can offer "Build tests".
+    if (created) tests.refresh();
+  }
+
+  async function handleUpdateCriteria(id, fields) {
+    await updateCriteria(id, fields);
+    // Editing what a criterion means makes its test results out of date.
+    if ("definition" in fields || "good_example" in fields || "bad_example" in fields) {
+      tests.refresh();
+    }
+  }
+
+  async function handleSavePrompt(text) {
+    await savePrompt(text);
+    tests.refresh();
   }
 
   function handleDataDeleted() {
@@ -372,10 +392,22 @@ export default function App() {
                 patternState={patternState}
                 discoverPending={showDiscoverButton}
                 onDismiss={() => setPanelVisible(false)}
-                onUpdate={updateCriteria}
+                onUpdate={handleUpdateCriteria}
                 onAdd={handleAddCriteria}
                 saveError={criteriaSaveError}
                 onExportAll={handleExportAll}
+                suite={tests.suite}
+                jobs={tests.jobs}
+                agentName={agent.name}
+                userRoleLabel={agent.user_role_label}
+                onReplay={tests.replay}
+                onBuildTests={tests.buildTests}
+                onRunAll={tests.runAll}
+                promptEditor={{
+                  promptText: agent.system_prompt,
+                  versionNumber: agent.prompt_version_number,
+                  onSave: handleSavePrompt,
+                }}
               />
             </div>
           )}

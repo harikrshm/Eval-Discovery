@@ -6,11 +6,9 @@ import {
   draftLimitHint,
   draftLimitReason,
 } from "../lib/chatLimits";
+import { SLOW_REPLY_MS } from "../lib/timing";
 import { Button } from "./ui/button";
 import { Input } from "./ui/input";
-
-// Matches a free-tier backend waking from sleep.
-const SLOW_REPLY_MS = 4000;
 
 function EmptyState({ agent, onPick }) {
   const starters = agent.starter_messages ?? [];

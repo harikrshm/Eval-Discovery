@@ -7,6 +7,7 @@ import {
   discoverCriterion as apiDiscoverCriterion,
   addCriterion as apiAddCriterion,
   updateCriterion as apiUpdateCriterion,
+  updatePrompt as apiUpdatePrompt,
 } from "../api";
 import { clearAgentId, clearWorkspace } from "../lib/workspace";
 import { derivePatternState } from "../lib/patternState";
@@ -267,6 +268,25 @@ export function useSession(agentId) {
     [applyCriteria]
   );
 
+  // Saves a manual prompt edit as a new prompt version and mirrors it on the agent. Rejects with
+  // the server's error so the editor can show it; the draft and everything else stay as they are.
+  const savePrompt = useCallback(async (text) => {
+    const id = agentIdRef.current;
+    if (id == null) return;
+    const saved = await apiUpdatePrompt(id, text);
+    if (agentIdRef.current !== id) return;
+    setAgent((prev) =>
+      prev
+        ? {
+            ...prev,
+            system_prompt: saved.text,
+            prompt_version_id: saved.version_id,
+            prompt_version_number: saved.version_number,
+          }
+        : prev
+    );
+  }, []);
+
   // Until the state for the current agent has loaded, expose nothing.
   const view = ready && !loadError
     ? { agent, runCount, transcripts, evalCriteria, patternSummary }
@@ -293,6 +313,7 @@ export function useSession(agentId) {
     discover,
     addCriteria,
     updateCriteria,
+    savePrompt,
     setPatternState,
   };
 }

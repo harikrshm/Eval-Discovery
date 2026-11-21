@@ -1,0 +1,305 @@
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { act, createElement } from "react";
+import { createRoot } from "react-dom/client";
+import TestsSection from "./TestsSection";
+
+globalThis.IS_REACT_ACT_ENVIRONMENT = true;
+
+let container;
+let root;
+
+function result(verdict, extra = {}) {
+  return {
+    id: `r-${verdict}`,
+    kind: "replay",
+    verdict,
+    rationale: `Rationale for ${verdict}.`,
+    transcript: [
+      { role: "user", content: "Is it cheap?" },
+      { role: "assistant", content: "It costs 40 dollars." },
+    ],
+    stale: false,
+    prompt_version_id: "pv1",
+    created_at: "2026-11-21T10:00:00",
+    ...extra,
+  };
+}
+
+function testRow(id, role, overrides = {}) {
+  return {
+    id,
+    role,
+    source_run_id: `run-${id}`,
+    baseline: result("fail", { kind: "baseline", rationale: "Original run missed it.", transcript: null }),
+    current: null,
+    active_job_id: null,
+    ...overrides,
+  };
+}
+
+function suiteFor(overrides = {}) {
+  return {
+    criterion_id: "c1",
+    status: "failing",
+    judge_check: { passed: true },
+    active_job_id: null,
+    tests: [testRow("t1", "fix"), testRow("t2", "heldout")],
+    ...overrides,
+  };
+}
+
+async function render(props) {
+  container = document.createElement("div");
+  document.body.appendChild(container);
+  root = createRoot(container);
+  await act(async () => {
+    root.render(
+      createElement(TestsSection, {
+        criterionSuite: suiteFor(),
+        jobs: {},
+        agentName: "Alex",
+        userRoleLabel: "Prospect",
+        onReplay: vi.fn(),
+        onBuildTests: vi.fn(),
+        ...props,
+      })
+    );
+  });
+}
+
+function buttonByText(text) {
+  return [...container.querySelectorAll("button")].find((b) => b.textContent.includes(text));
+}
+
+afterEach(async () => {
+  await act(async () => root.unmount());
+  container.remove();
+  vi.useRealTimers();
+});
+
+describe("TestsSection status and rows", () => {
+  it.each([
+    ["failing", "Failing"],
+    ["passing", "Passing"],
+    ["untested", "Untested"],
+  ])("shows the %s status as text", async (status, text) => {
+    await render({ criterionSuite: suiteFor({ status }) });
+    expect(container.textContent).toContain(text);
+  });
+
+  it("labels each test and shows the original run and latest replay verdicts as text", async () => {
+    await render({
+      criterionSuite: suiteFor({
+        tests: [
+          testRow("t1", "fix", { current: result("pass") }),
+          testRow("t2", "heldout"),
+        ],
+      }),
+    });
+    const text = container.textContent;
+    expect(text).toContain("Fix test");
+    expect(text).toContain("Held-out test");
+    expect(text).toContain("Original run: Fail");
+    expect(text).toContain("Latest replay: Pass");
+    expect(text).toContain("Latest replay: Not run");
+  });
+
+  it("shows the weaker verification note only when there is just a fix test", async () => {
+    await render({ criterionSuite: suiteFor({ tests: [testRow("t1", "fix")] }) });
+    expect(container.textContent).toContain(
+      "No second failing run, so a fix would be verified more weakly."
+    );
+    await act(async () => root.unmount());
+    container.remove();
+
+    await render({});
+    expect(container.textContent).not.toContain("verified more weakly");
+  });
+
+  it("shows the low confidence note only when the judge check failed", async () => {
+    await render({ criterionSuite: suiteFor({ judge_check: { passed: false } }) });
+    expect(container.textContent).toContain("Low confidence");
+    await act(async () => root.unmount());
+    container.remove();
+
+    await render({ criterionSuite: suiteFor({ judge_check: { passed: true } }) });
+    expect(container.textContent).not.toContain("Low confidence");
+    await act(async () => root.unmount());
+    container.remove();
+
+    await render({ criterionSuite: suiteFor({ judge_check: null }) });
+    expect(container.textContent).not.toContain("Low confidence");
+  });
+});
+
+describe("TestsSection replay", () => {
+  it("calls onReplay with the test id", async () => {
+    const onReplay = vi.fn();
+    await render({ onReplay });
+    const buttons = [...container.querySelectorAll("button")].filter((b) => b.textContent.startsWith("Replay"));
+    expect(buttons).toHaveLength(2);
+
+    await act(async () => {
+      buttons[1].click();
+    });
+    expect(onReplay).toHaveBeenCalledWith("t2");
+  });
+
+  it("disables only the replaying test and relabels it while its job runs", async () => {
+    await render({ jobs: { "replay:t1": { status: "running", error: null, result: null } } });
+    const replaying = buttonByText("Replaying…");
+    expect(replaying.disabled).toBe(true);
+    const others = [...container.querySelectorAll("button")].filter((b) => b.textContent.startsWith("Replay") && b !== replaying);
+    expect(others).toHaveLength(1);
+    expect(others[0].disabled).toBe(false);
+  });
+
+  it("treats a queued job (clicked, not yet started) as in flight", async () => {
+    await render({ jobs: { "replay:t2": { status: "queued", error: null, result: null } } });
+    expect(buttonByText("Replaying…").disabled).toBe(true);
+  });
+
+  it("treats a job the suite lists as active as in flight", async () => {
+    await render({
+      criterionSuite: suiteFor({ tests: [testRow("t1", "fix", { active_job_id: "j1" })] }),
+    });
+    expect(buttonByText("Replaying…").disabled).toBe(true);
+  });
+
+  it("shows a failed replay as an alert with a Retry that replays again", async () => {
+    const onReplay = vi.fn();
+    await render({
+      onReplay,
+      jobs: { "replay:t1": { status: "failed", error: "The judge is unavailable.", result: null } },
+    });
+    const alert = container.querySelector('[role="alert"]');
+    expect(alert.textContent).toContain("The judge is unavailable.");
+
+    await act(async () => {
+      buttonByText("Retry").click();
+    });
+    expect(onReplay).toHaveBeenCalledWith("t1");
+  });
+});
+
+describe("TestsSection details", () => {
+  it("reveals the rationale and transcript with agent and role labels on demand", async () => {
+    await render({
+      criterionSuite: suiteFor({ tests: [testRow("t1", "fix", { current: result("pass") })] }),
+    });
+    const toggle = buttonByText("Details");
+    expect(toggle.getAttribute("aria-expanded")).toBe("false");
+    expect(container.textContent).not.toContain("Rationale for pass.");
+
+    await act(async () => {
+      toggle.click();
+    });
+    expect(toggle.getAttribute("aria-expanded")).toBe("true");
+    const region = document.getElementById(toggle.getAttribute("aria-controls"));
+    expect(region.textContent).toContain("Rationale for pass.");
+    expect(region.textContent).toContain("Prospect: Is it cheap?");
+    expect(region.textContent).toContain("Alex: It costs 40 dollars.");
+
+    await act(async () => {
+      toggle.click();
+    });
+    expect(toggle.getAttribute("aria-expanded")).toBe("false");
+  });
+
+  it("says when a test has not been replayed yet", async () => {
+    await render({ criterionSuite: suiteFor({ tests: [testRow("t1", "fix")] }) });
+    await act(async () => {
+      buttonByText("Details").click();
+    });
+    expect(container.textContent).toContain("Not replayed yet.");
+    expect(container.textContent).toContain("Original run missed it.");
+  });
+});
+
+describe("TestsSection with no tests", () => {
+  const empty = () => suiteFor({ status: "untested", tests: [] });
+
+  it("offers Build tests and calls onBuildTests with the criterion id", async () => {
+    const onBuildTests = vi.fn();
+    await render({ criterionSuite: empty(), onBuildTests });
+    expect(container.textContent).toContain("No tests yet.");
+
+    await act(async () => {
+      buttonByText("Build tests").click();
+    });
+    expect(onBuildTests).toHaveBeenCalledWith("c1");
+  });
+
+  it("says a build is in progress in a status region, disables Build, and adds a slow notice after 4 s", async () => {
+    vi.useFakeTimers();
+    await render({
+      criterionSuite: empty(),
+      jobs: { "build:c1": { status: "running", error: null, result: null } },
+    });
+    const status = container.querySelector('[role="status"]');
+    expect(status.textContent).toContain("Building tests from your saved runs…");
+    expect(status.textContent).not.toContain("Still working");
+    expect(container.textContent).not.toContain("No tests yet.");
+    expect(buttonByText("Build tests")).toBeUndefined();
+
+    await act(async () => {
+      vi.advanceTimersByTime(4000);
+    });
+    expect(container.querySelector('[role="status"]').textContent).toContain(
+      "Still working. The server may be waking up."
+    );
+  });
+
+  it("treats a suite-listed active build job as in progress", async () => {
+    await render({ criterionSuite: suiteFor({ tests: [], active_job_id: "j9" }) });
+    expect(container.querySelector('[role="status"]').textContent).toContain(
+      "Building tests from your saved runs…"
+    );
+  });
+
+  it("explains an already_handled build result", async () => {
+    await render({
+      criterionSuite: empty(),
+      jobs: {
+        "build:c1": { status: "done", error: null, result: { already_handled: true, tests_created: 0 } },
+      },
+    });
+    expect(container.textContent).toContain(
+      "None of your saved runs fail this criterion, so there is nothing to test yet."
+    );
+  });
+
+  it("has no special message for an already_built result", async () => {
+    await render({
+      criterionSuite: empty(),
+      jobs: { "build:c1": { status: "done", error: null, result: { already_built: true } } },
+    });
+    expect(container.textContent).not.toContain("None of your saved runs");
+  });
+
+  it("shows a failed build as an alert with a Retry that builds again", async () => {
+    const onBuildTests = vi.fn();
+    await render({
+      criterionSuite: empty(),
+      onBuildTests,
+      jobs: { "build:c1": { status: "failed", error: "Could not reach the judge.", result: null } },
+    });
+    expect(container.querySelector('[role="alert"]').textContent).toContain("Could not reach the judge.");
+
+    await act(async () => {
+      buttonByText("Retry").click();
+    });
+    expect(onBuildTests).toHaveBeenCalledWith("c1");
+  });
+});
+
+describe("TestsSection without a suite entry", () => {
+  it("renders nothing until the suite knows the criterion", async () => {
+    await render({ criterionSuite: undefined });
+    expect(container.textContent).toBe("");
+  });
+});
+
+beforeEach(() => {
+  document.body.innerHTML = "";
+});

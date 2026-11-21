@@ -6,6 +6,9 @@ import { Label } from "./ui/label";
 import { Separator } from "./ui/separator";
 import { ScrollArea } from "./ui/scroll-area";
 import { ChevronDown, ChevronUp, Plus, X } from "lucide-react";
+import PromptEditor from "./PromptEditor";
+import TestsSection from "./TestsSection";
+import { staleMessage } from "../lib/testStatus";
 
 const TEXT_FIELDS = [
   { key: "definition", label: "Definition" },
@@ -13,7 +16,19 @@ const TEXT_FIELDS = [
   { key: "bad_example", label: "Bad example" },
 ];
 
-function CriterionCard({ criterion, index, isExpanded, onToggle, onUpdate }) {
+function CriterionCard({
+  criterion,
+  index,
+  isExpanded,
+  onToggle,
+  onUpdate,
+  criterionSuite,
+  jobs,
+  agentName,
+  userRoleLabel,
+  onReplay,
+  onBuildTests,
+}) {
   const uid = useId();
   const bodyId = `${uid}-body`;
 
@@ -80,11 +95,24 @@ function CriterionCard({ criterion, index, isExpanded, onToggle, onUpdate }) {
               />
             </div>
           ))}
+
+          <Separator />
+
+          <TestsSection
+            criterionSuite={criterionSuite}
+            jobs={jobs}
+            agentName={agentName}
+            userRoleLabel={userRoleLabel}
+            onReplay={onReplay}
+            onBuildTests={onBuildTests}
+          />
         </div>
       )}
     </div>
   );
 }
+
+const NO_JOBS = {};
 
 export default function EvalCriteriaPanel({
   evalCriteria,
@@ -95,7 +123,22 @@ export default function EvalCriteriaPanel({
   onAdd,
   onExportAll,
   saveError,
+  suite = null,
+  jobs = NO_JOBS,
+  agentName,
+  userRoleLabel,
+  onReplay,
+  onBuildTests,
+  onRunAll,
+  promptEditor,
 }) {
+  const suiteByCriterion = new Map((suite?.criteria ?? []).map((c) => [c.criterion_id, c]));
+  const hasTests = (suite?.criteria ?? []).some((c) => c.tests.length > 0);
+  const showStale = (suite?.stale_count ?? 0) > 0 && hasTests;
+  const replayActive = Object.entries(jobs).some(
+    ([key, job]) => key.startsWith("replay:") && (job.status === "queued" || job.status === "running")
+  );
+
   // expandedIndex: only the last card is expanded by default
   const [expandedIndex, setExpandedIndex] = useState(evalCriteria.length - 1);
 
@@ -145,6 +188,19 @@ export default function EvalCriteriaPanel({
       {/* Scrollable criteria cards */}
       <ScrollArea className="flex-1">
         <div className="p-4 space-y-3">
+          {promptEditor && <PromptEditor {...promptEditor} />}
+
+          {showStale && (
+            <div className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900">
+              <p>{staleMessage(suite.stale_count)}</p>
+              <Button type="button" variant="outline" size="sm" onClick={onRunAll} disabled={replayActive}>
+                Run all tests
+              </Button>
+            </div>
+          )}
+
+          {promptEditor && <Separator />}
+
           {evalCriteria.map((criterion, index) => (
             <CriterionCard
               key={criterion.id}
@@ -153,6 +209,12 @@ export default function EvalCriteriaPanel({
               isExpanded={expandedIndex === index}
               onToggle={() => handleToggle(index)}
               onUpdate={onUpdate}
+              criterionSuite={suiteByCriterion.get(criterion.id)}
+              jobs={jobs}
+              agentName={agentName}
+              userRoleLabel={userRoleLabel}
+              onReplay={onReplay}
+              onBuildTests={onBuildTests}
             />
           ))}
         </div>

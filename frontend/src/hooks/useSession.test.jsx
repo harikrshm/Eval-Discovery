@@ -12,6 +12,7 @@ vi.mock("../api", async (importOriginal) => {
     discoverCriterion: vi.fn(),
     addCriterion: vi.fn(),
     updateCriterion: vi.fn(),
+    updatePrompt: vi.fn(),
   };
 });
 
@@ -123,6 +124,63 @@ describe("useSession discardDraft", () => {
     expect(view.holder.current.currentTranscript).toEqual([]);
     expect(sessionStorage.getItem("current_transcript:a1")).toBeNull();
     expect(api.saveRun).not.toHaveBeenCalled();
+    await view.unmount();
+  });
+});
+
+describe("useSession savePrompt", () => {
+  const WITH_VERSION = {
+    ...STATE,
+    agent: { ...STATE.agent, system_prompt: "You are Alex.", prompt_version_id: "pv1", prompt_version_number: 1 },
+  };
+
+  beforeEach(() => {
+    sessionStorage.clear();
+    vi.clearAllMocks();
+    api.getAgentState.mockResolvedValue(WITH_VERSION);
+  });
+
+  it("updates the agent's prompt and version without reloading the draft", async () => {
+    api.updatePrompt.mockResolvedValue({
+      version_id: "pv2",
+      version_number: 2,
+      text: "You are Alex, careful.",
+      changed: true,
+    });
+    const view = mount("a1");
+    await view.render();
+    await act(async () => {
+      view.holder.current.addMessage({ role: "user", content: "hi" }, "a1");
+    });
+
+    let returned = "unset";
+    await act(async () => {
+      returned = await view.holder.current.savePrompt("You are Alex, careful.");
+    });
+
+    expect(api.updatePrompt).toHaveBeenCalledWith("a1", "You are Alex, careful.");
+    expect(returned).toBeUndefined();
+    const { agent } = view.holder.current;
+    expect(agent.system_prompt).toBe("You are Alex, careful.");
+    expect(agent.prompt_version_id).toBe("pv2");
+    expect(agent.prompt_version_number).toBe(2);
+    expect(agent.name).toBe("Alex");
+    expect(api.getAgentState).toHaveBeenCalledTimes(1);
+    expect(view.holder.current.currentTranscript).toHaveLength(1);
+    await view.unmount();
+  });
+
+  it("rejects with the server's error and leaves the agent unchanged", async () => {
+    api.updatePrompt.mockRejectedValue(new api.ApiError("Prompt version limit reached for this agent.", 429));
+    const view = mount("a1");
+    await view.render();
+
+    await act(async () => {
+      await expect(view.holder.current.savePrompt("Other")).rejects.toThrow(
+        "Prompt version limit reached for this agent."
+      );
+    });
+    expect(view.holder.current.agent.prompt_version_number).toBe(1);
     await view.unmount();
   });
 });
