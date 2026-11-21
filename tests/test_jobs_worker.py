@@ -89,21 +89,60 @@ def test_run_one_unexpected_error_fails_on_last_attempt(db_session, fake_type, c
     assert "secrets" not in job.error
 
 
-def test_run_one_unexpected_error_after_dirty_session_is_rolled_back(db_session, fake_type, caplog):
+def _flushed_result(db, job):
+    """Flush (not commit) an EvalResult so only a rollback can remove it."""
+    ws_id = job.workspace_id
+    agent = Agent(workspace_id=ws_id, name="A", user_role_label="U")
+    db.add(agent)
+    db.flush()
+    crit = Criterion(agent_id=agent.id, position=1, name="n", definition="d", good_example="g",
+                     bad_example="b", why_discovered="w", source="discovered")
+    db.add(crit)
+    db.flush()
+    test = EvalTest(criterion_id=crit.id, role="fix", scripted_user_messages=["hi"])
+    db.add(test)
+    db.flush()
+    db.add(EvalResult(test_id=test.id, prompt_version_id="pv", kind="replay", verdict="pass",
+                      rationale="half written"))
+    db.flush()
+    job.result = {"half": "written"}
+    db.flush()
+
+
+def test_run_one_unexpected_error_rolls_back_flushed_writes(db_session, fake_type, caplog):
     ws = _ws(db_session)
     job = enqueue(db_session, ws.id, "fake", {})
 
-    def dirty_then_crash(db, j):
-        j.result = {"half": "written"}
-        j.status = "done"  # uncommitted change that must not survive
+    def dirty_flush_then_crash(db, j):
+        _flushed_result(db, j)
         raise RuntimeError("kaboom")
 
-    fake_type.side_effect = dirty_then_crash
+    fake_type.side_effect = dirty_flush_then_crash
     with caplog.at_level(logging.ERROR, logger="backend.jobs.worker"):
         run_one(db_session)
 
     job = db_session.get(Job, job.id)
     assert job.status == "queued" and job.result is None
+    assert db_session.scalars(select(EvalResult)).first() is None
+    assert db_session.scalars(select(EvalTest)).first() is None
+
+
+def test_run_one_jobfailed_rolls_back_flushed_writes(db_session, fake_type):
+    ws = _ws(db_session)
+    job = enqueue(db_session, ws.id, "fake", {})
+
+    def dirty_flush_then_jobfailed(db, j):
+        _flushed_result(db, j)
+        raise JobFailed("That test no longer exists.")
+
+    fake_type.side_effect = dirty_flush_then_jobfailed
+    run_one(db_session)
+
+    job = db_session.get(Job, job.id)
+    assert job.status == "failed" and job.error == "That test no longer exists."
+    assert job.result is None
+    assert db_session.scalars(select(EvalResult)).first() is None
+    assert db_session.scalars(select(EvalTest)).first() is None
 
 
 def test_run_one_unknown_type_fails(db_session):

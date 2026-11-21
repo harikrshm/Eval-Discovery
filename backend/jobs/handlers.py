@@ -89,14 +89,16 @@ def handle_build_tests(db: Session, job: Job) -> dict:
     spec = _spec(criterion)
     # The judge only reads the agent's name and role label; it never sees the system prompt.
     config = AgentConfig(agent.name, "", agent.user_role_label)
+    recent = list(
+        db.scalars(
+            select(Run).where(Run.agent_id == agent.id).order_by(Run.position.desc()).limit(RECENT_RUNS_TO_JUDGE)
+        )
+    )
+    # End the read transaction before the slow LLM calls (expire_on_commit=False keeps rows usable).
+    db.commit()
     try:
         check = sanity_check(config, spec)
 
-        recent = list(
-            db.scalars(
-                select(Run).where(Run.agent_id == agent.id).order_by(Run.position.desc()).limit(RECENT_RUNS_TO_JUDGE)
-            )
-        )
         judged: list[tuple[Run, JudgeResult]] = []
         failures = 0
         for run in reversed(recent):  # oldest -> newest
@@ -175,13 +177,17 @@ def handle_replay(db: Session, job: Job) -> dict:
         raise JobFailed("That test has no messages to replay.")
 
     config = AgentConfig(agent.name, version.text, agent.user_role_label)
+    # The judge never sees the agent's prompt: give it a config without one.
+    judge_config = AgentConfig(agent.name, "", agent.user_role_label)
     spec = _spec(criterion)
     messages = list(test.scripted_user_messages)
     role = test.role
     workspace_id = job.workspace_id
+    # End the read transaction before the slow LLM calls (expire_on_commit=False keeps rows usable).
+    db.commit()
     try:
         transcript = replay(config, messages)
-        verdict = judge(config, spec, transcript)
+        verdict = judge(judge_config, spec, transcript)
     except ReplayFailed as exc:
         logger.warning("replay failure for job %s: %s", job.id, exc)
         raise JobFailed(_AGENT_UNAVAILABLE) from exc

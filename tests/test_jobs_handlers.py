@@ -354,6 +354,30 @@ def test_build_tests_criterion_deleted_during_judging_fails_job(db_session, monk
     assert db_session.scalars(select(EvalTest)).first() is None
 
 
+def test_build_tests_holds_no_transaction_during_llm_calls(db_session, monkeypatch):
+    ws, agent, pv = _agent(db_session)
+    crit = _criterion(db_session, agent)
+    _runs(db_session, agent, pv, 2)
+    in_txn = []
+
+    def fake_sanity(config, spec):
+        in_txn.append(db_session.in_transaction())
+        return GOOD_CHECK
+
+    def fake_judge(config, spec, transcript):
+        in_txn.append(db_session.in_transaction())
+        return JudgeResult("fail", "r")
+
+    monkeypatch.setattr(handlers, "sanity_check", fake_sanity)
+    monkeypatch.setattr(handlers, "judge", fake_judge)
+    job = _job(db_session, ws, "build_tests", {"criterion_id": crit.id})
+
+    result = handle_build_tests(db_session, job)
+
+    assert result["tests_created"] == 2
+    assert in_txn == [False, False, False]
+
+
 # ---------- replay ----------
 
 
@@ -525,3 +549,39 @@ def test_job_rows_are_untouched_by_handlers(db_session, monkeypatch):
     job = _job(db_session, ws, "replay", {"test_id": test.id, "prompt_version_id": pv.id})
     handle_replay(db_session, job)
     assert db_session.get(Job, job.id).status == "queued"
+
+
+def test_replay_holds_no_transaction_during_llm_calls(db_session, monkeypatch):
+    ws, agent, pv = _agent(db_session)
+    test = _test(db_session, _criterion(db_session, agent))
+    in_txn = []
+
+    def fake_replay(config, messages):
+        in_txn.append(db_session.in_transaction())
+        return TRANSCRIPT
+
+    def fake_judge(config, spec, transcript):
+        in_txn.append(db_session.in_transaction())
+        return JudgeResult("pass", "ok")
+
+    monkeypatch.setattr(handlers, "replay", fake_replay)
+    monkeypatch.setattr(handlers, "judge", fake_judge)
+    job = _job(db_session, ws, "replay", {"test_id": test.id, "prompt_version_id": pv.id})
+
+    assert handle_replay(db_session, job)["verdict"] == "pass"
+    assert in_txn == [False, False]
+
+
+def test_replay_judge_never_sees_the_agent_prompt(db_session, monkeypatch):
+    ws, agent, pv = _agent(db_session)
+    test = _test(db_session, _criterion(db_session, agent))
+    replay_mock = _patch_replay(monkeypatch)
+    judge_mock = _verdicts(monkeypatch, ["pass"])
+    job = _job(db_session, ws, "replay", {"test_id": test.id, "prompt_version_id": pv.id})
+
+    handle_replay(db_session, job)
+
+    assert replay_mock.call_args.args[0].system_prompt == "be nice"
+    judge_config = judge_mock.call_args.args[0]
+    assert judge_config.system_prompt == ""
+    assert judge_config.name == "Alex" and judge_config.user_role_label == "Customer"
