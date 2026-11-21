@@ -1,3 +1,4 @@
+import asyncio
 import logging
 import os
 from contextlib import asynccontextmanager
@@ -11,13 +12,16 @@ from backend.api.runs import router as runs_router
 from backend.api.workspaces import router as workspaces_router
 from backend.db.session import SessionLocal
 from backend.db.workspaces import purge_expired
+from backend.jobs.worker import worker_loop
 
 logger = logging.getLogger(__name__)
+
+WORKER_SHUTDOWN_TIMEOUT_SECONDS = 5
 
 
 @asynccontextmanager
 async def lifespan(_: FastAPI):
-    """Purge expired workspaces once at startup."""
+    """Purge expired workspaces once at startup, then run the job worker (unless WORKER_ENABLED=0)."""
     db = SessionLocal()
     try:
         purged = purge_expired(db)
@@ -25,7 +29,22 @@ async def lifespan(_: FastAPI):
             logger.info("Purged %d expired workspace(s) at startup", purged)
     finally:
         db.close()
-    yield
+
+    stop = asyncio.Event()
+    worker_task = None
+    if os.getenv("WORKER_ENABLED") != "0":
+        worker_task = asyncio.create_task(worker_loop(stop))
+    try:
+        yield
+    finally:
+        stop.set()
+        if worker_task is not None:
+            try:
+                await asyncio.wait_for(worker_task, timeout=WORKER_SHUTDOWN_TIMEOUT_SECONDS)
+            except asyncio.TimeoutError:
+                logger.warning("Job worker did not stop within %s s", WORKER_SHUTDOWN_TIMEOUT_SECONDS)
+            except Exception:
+                logger.exception("Job worker stopped with an error")
 
 
 app = FastAPI(title="Eval Discovery API", lifespan=lifespan)

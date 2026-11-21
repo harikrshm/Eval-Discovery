@@ -1,5 +1,6 @@
 from datetime import timedelta
 
+import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy.orm import sessionmaker
 
@@ -19,6 +20,7 @@ def test_startup_purges_expired_workspaces(db_session, monkeypatch):
     live, _ = create_workspace(db_session, now=now)
     expired_id, live_id = expired.id, live.id
 
+    monkeypatch.setenv("WORKER_ENABLED", "0")  # this test is about the purge, not the worker
     # Make the lifespan use the same in-memory engine the test seeded.
     monkeypatch.setattr("backend.main.SessionLocal", sessionmaker(bind=db_session.get_bind()))
     with TestClient(app):
@@ -42,3 +44,44 @@ def test_cors_preflight_allows_workspace_token_header(client):
     assert r.status_code == 200
     assert r.headers["access-control-allow-origin"] == origin
     assert "x-workspace-token" in r.headers["access-control-allow-headers"].lower()
+
+
+def _patch_lifespan(db_session, monkeypatch):
+    """Point the startup purge at the test database and replace the worker loop with a recorder."""
+    monkeypatch.setattr("backend.main.SessionLocal", sessionmaker(bind=db_session.get_bind()))
+    events = {"started": 0, "stopped": 0, "stop_event": None}
+
+    async def fake_worker_loop(stop, poll_seconds=1.0):
+        events["started"] += 1
+        events["stop_event"] = stop
+        await stop.wait()
+        events["stopped"] += 1
+
+    monkeypatch.setattr("backend.main.worker_loop", fake_worker_loop)
+    return events
+
+
+def test_lifespan_with_worker_disabled_starts_no_task(db_session, monkeypatch):
+    events = _patch_lifespan(db_session, monkeypatch)
+    monkeypatch.setenv("WORKER_ENABLED", "0")
+
+    with TestClient(app):
+        pass
+
+    assert events["started"] == 0
+
+
+@pytest.mark.parametrize("value", [None, "1"])
+def test_lifespan_starts_worker_and_stops_it_on_shutdown(db_session, monkeypatch, value):
+    events = _patch_lifespan(db_session, monkeypatch)
+    if value is None:
+        monkeypatch.delenv("WORKER_ENABLED", raising=False)
+    else:
+        monkeypatch.setenv("WORKER_ENABLED", value)
+
+    with TestClient(app):
+        pass
+
+    assert events["started"] == 1
+    assert events["stop_event"].is_set()
+    assert events["stopped"] == 1  # shutdown awaited the task to completion
