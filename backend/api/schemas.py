@@ -54,9 +54,9 @@ class StoredMessage(BaseModel):
     content: str
 
 
-def _check_total_size(messages: list[Message]) -> None:
-    if sum(len(m.content) for m in messages) > MAX_REQUEST_CHARS:
-        raise ValueError(f"messages must total at most {MAX_REQUEST_CHARS} characters")
+def _check_total_size(messages: list[Message], max_chars: int = MAX_REQUEST_CHARS) -> None:
+    if sum(len(m.content) for m in messages) > max_chars:
+        raise ValueError(f"messages must total at most {max_chars} characters")
 
 
 class AgentCreate(_Strict):
@@ -143,11 +143,15 @@ class RunOut(BaseModel):
 
 
 class RunCreate(_Strict):
-    messages: list[Message] = Field(min_length=3, max_length=MAX_MESSAGES_PER_REQUEST)
+    """A saved run is the chat request (at most MAX_MESSAGES_PER_REQUEST messages and MAX_REQUEST_CHARS
+    characters) plus the reply to its last message, so it gets room for one more message and one more
+    assistant message of text."""
+
+    messages: list[Message] = Field(min_length=3, max_length=MAX_MESSAGES_PER_REQUEST + 1)
 
     @model_validator(mode="after")
     def _total_size(self) -> "RunCreate":
-        _check_total_size(self.messages)
+        _check_total_size(self.messages, MAX_REQUEST_CHARS + MAX_ASSISTANT_MESSAGE_CHARS)
         return self
 
 

@@ -83,8 +83,8 @@ def test_same_term_repeated_in_one_run_is_not_due(client, auth_headers):
     assert second["check_due"] is False
 
 
-@pytest.mark.parametrize("count", [0, 1, 2, 41])
-def test_run_needs_three_to_forty_messages(client, auth_headers, count):
+@pytest.mark.parametrize("count", [0, 1, 2, 42])
+def test_run_needs_three_to_forty_one_messages(client, auth_headers, count):
     agent_id = _agent(client, auth_headers)
     msgs = [{"role": "user", "content": "price"} for _ in range(count)]
     assert _post_run(client, auth_headers, agent_id, msgs).status_code == 422
@@ -92,7 +92,7 @@ def test_run_needs_three_to_forty_messages(client, auth_headers, count):
 
 def test_run_message_limits_accept_boundaries(client, auth_headers):
     agent_id = _agent(client, auth_headers)
-    for count in (3, 40):
+    for count in (3, 40, 41):
         msgs = [{"role": "user", "content": "price"} for _ in range(count)]
         assert _post_run(client, auth_headers, agent_id, msgs).status_code == 201
 
@@ -339,6 +339,50 @@ def test_run_save_rejects_long_user_turn_and_oversized_total(client, auth_header
         big += [{"role": "user", "content": "q"}, {"role": "assistant", "content": "a" * 16000}]
     big.append({"role": "user", "content": "q"})
     assert _post_run(client, auth_headers, agent_id, big).status_code == 422
+
+
+def _turns(sizes):
+    """Alternating user/assistant messages (user first) whose contents have the given lengths."""
+    return [
+        {"role": "user" if i % 2 == 0 else "assistant", "content": ("q" if i % 2 == 0 else "a") * n}
+        for i, n in enumerate(sizes)
+    ]
+
+
+def test_run_save_accepts_a_full_chat_request_plus_its_reply(client, auth_headers):
+    agent_id = _agent(client, auth_headers)
+    # 40 chat messages plus the reply to the last one is 41 messages.
+    assert _post_run(client, auth_headers, agent_id, _turns([1] * 41)).status_code == 201
+
+
+def test_run_save_accepts_135000_chars(client, auth_headers):
+    agent_id = _agent(client, auth_headers)
+    run = _turns([2000, 14625] * 8 + [2000])
+    assert sum(len(m["content"]) for m in run) == 135000
+    assert _post_run(client, auth_headers, agent_id, run).status_code == 201
+
+
+def test_run_save_total_cap_is_request_cap_plus_one_assistant_message(client, auth_headers):
+    agent_id = _agent(client, auth_headers)
+    cap = limits.MAX_REQUEST_CHARS + limits.MAX_ASSISTANT_MESSAGE_CHARS
+    run = _turns([2000, 16000] * 7 + [2000, cap - 128000])
+    assert sum(len(m["content"]) for m in run) == cap
+    assert _post_run(client, auth_headers, agent_id, run).status_code == 201
+    run[-1]["content"] += "a"
+    assert _post_run(client, auth_headers, agent_id, run).status_code == 422
+
+
+def test_chat_request_limits_are_unchanged():
+    from pydantic import ValidationError
+
+    from backend.api.schemas import ChatRequest
+
+    with pytest.raises(ValidationError):
+        ChatRequest(messages=_turns([1] * 41))  # 41 messages: still rejected for chat
+    # 110000 + X + 1 chars: exactly the request cap at X = 9999, one over at X = 10000.
+    ChatRequest(messages=_turns([2000, 16000] * 6 + [2000, 9999, 1]))
+    with pytest.raises(ValidationError):
+        ChatRequest(messages=_turns([2000, 16000] * 6 + [2000, 10000, 1]))
 
 
 def test_check_pattern_sends_only_the_ten_most_recent_runs(client, auth_headers, db_session):

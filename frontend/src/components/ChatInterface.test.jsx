@@ -37,6 +37,15 @@ async function render(props) {
   });
 }
 
+async function type(text) {
+  const input = container.querySelector("input");
+  await act(async () => {
+    const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value").set;
+    setter.call(input, text);
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+  });
+}
+
 function buttonByText(text) {
   return [...container.querySelectorAll("button")].find((b) => b.textContent.includes(text));
 }
@@ -72,6 +81,28 @@ describe("ChatInterface", () => {
     expect(container.querySelector("input").disabled).toBe(true);
     expect(container.querySelector('[role="status"]').textContent).toMatch(/40-message limit/);
     expect(container.querySelector('[aria-label="Send message"]').disabled).toBe(true);
+  });
+
+  it("blocks sending a typed text that would overflow the request size, but keeps the input editable", async () => {
+    // 2 messages, 119000 chars: another short message fits, a 2000-char one does not.
+    const transcript = [
+      { role: "user", content: "u".repeat(59500) },
+      { role: "assistant", content: "a".repeat(59500) },
+    ];
+    await render({ currentTranscript: transcript });
+    const send = container.querySelector('[aria-label="Send message"]');
+
+    await type("hi");
+    expect(send.disabled).toBe(false);
+    expect(container.querySelector('[role="status"]')).toBeNull();
+
+    await type("x".repeat(2000));
+    expect(send.disabled).toBe(true);
+    expect(container.querySelector("input").disabled).toBe(false);
+    expect(container.querySelector('[role="status"]').textContent).toMatch(/too long/);
+
+    await type("x".repeat(1000));
+    expect(send.disabled).toBe(false);
   });
 
   it("shows no limit hint for a short draft", async () => {

@@ -38,6 +38,19 @@ describe("draftLimitReason", () => {
   });
 });
 
+describe("draftLimitReason with the real next text", () => {
+  it("reports the size cap for a long next message that does not fit", () => {
+    const draft = draftOf(2, "a".repeat(59500)); // 119000 chars
+    expect(draftLimitReason(draft, "b".repeat(1000))).toBeNull();
+    expect(draftLimitReason(draft, "b".repeat(1001))).toBe("size");
+    expect(draftLimitReason(draft, "b".repeat(2000))).toBe("size");
+  });
+
+  it("still reports the message cap before the size cap", () => {
+    expect(draftLimitReason(draftOf(40), "b".repeat(2000))).toBe("messages");
+  });
+});
+
 describe("draftLimitHint", () => {
   it("explains how to continue", () => {
     expect(draftLimitHint("messages")).toMatch(/40/);

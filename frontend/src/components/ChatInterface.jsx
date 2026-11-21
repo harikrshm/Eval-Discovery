@@ -144,7 +144,10 @@ export default function ChatInterface({
   const firstStarter = agent.starter_messages?.[0];
   const placeholder = firstStarter ? `e.g. ${firstStarter}` : "Type a message";
   // A draft at its message or size cap can only be saved or discarded: another turn would be rejected.
-  const limitReason = draftLimitReason(currentTranscript, "x");
+  // The input locks only when not even one more character fits; a typed text that would overflow
+  // just blocks sending, so the user can shorten it.
+  const inputLockReason = draftLimitReason(currentTranscript, "x");
+  const limitReason = inputLockReason ?? draftLimitReason(currentTranscript, input.trim());
   const limitHint = draftLimitHint(limitReason);
   const canSend = !disabled && !loading && !limitReason && input.trim().length > 0;
   const canRetry = error !== null && currentTranscript.at(-1)?.role === "user";
@@ -241,7 +244,7 @@ export default function ChatInterface({
               onKeyDown={handleKeyDown}
               aria-label={`Message ${agent.name}`}
               placeholder={disabled ? "Generating eval — please wait…" : placeholder}
-              disabled={disabled || loading || Boolean(limitReason)}
+              disabled={disabled || loading || Boolean(inputLockReason)}
               maxLength={MAX_USER_MESSAGE_CHARS}
               className="flex-1 border-0 bg-transparent shadow-none focus-visible:ring-0 h-8 px-0"
             />
