@@ -233,3 +233,37 @@ def test_deleting_criterion_cascades_to_tests_and_results(db_session):
     db_session.commit()
     assert db_session.query(EvalTest).count() == 0
     assert db_session.query(EvalResult).count() == 0
+
+
+def test_phase3_column_defaults(db_session):
+    _, agent, pv = _make_agent(db_session)
+    crit = _criterion(agent.id)
+    db_session.add(crit)
+    db_session.flush()
+    test = EvalTest(criterion_id=crit.id, role="fix", scripted_user_messages=["hi"])
+    db_session.add(test)
+    db_session.commit()
+    assert pv.change_report is None and pv.verification is None and pv.source_test_id is None
+    assert test.origin == "run"
+    assert crit.revision == 0
+
+
+def test_prompt_version_number_unique_per_agent(db_session):
+    _, agent, pv = _make_agent(db_session)
+    db_session.commit()
+    db_session.add(PromptVersion(agent_id=agent.id, text="x", origin="suggested", status="proposed", number=1))
+    with pytest.raises(IntegrityError):
+        db_session.commit()
+    db_session.rollback()
+    db_session.add(PromptVersion(agent_id=agent.id, text="x", origin="suggested", status="proposed", number=2))
+    db_session.commit()
+
+
+def test_prompt_version_number_may_repeat_across_agents(db_session):
+    ws, agent, _ = _make_agent(db_session)
+    other = Agent(workspace_id=ws.id, name="Bo", user_role_label="Customer")
+    db_session.add(other)
+    db_session.flush()
+    db_session.add(PromptVersion(agent_id=other.id, text="y", origin="initial", status="promoted", number=1))
+    db_session.commit()
+    assert db_session.query(PromptVersion).filter_by(number=1).count() == 2

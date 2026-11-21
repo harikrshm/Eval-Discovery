@@ -63,6 +63,7 @@ class Agent(Base):
 
 class PromptVersion(Base):
     __tablename__ = "prompt_version"
+    __table_args__ = (UniqueConstraint("agent_id", "number", name="uq_prompt_version_agent_number"),)
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
     agent_id: Mapped[str] = _fk("agent.id")
@@ -72,6 +73,11 @@ class PromptVersion(Base):
     status: Mapped[str] = mapped_column(String(32))  # Phase 1: "promoted"
     # 1-based per agent, for "v2" labels; rows that predate the column are all version 1.
     number: Mapped[int] = mapped_column(Integer, default=1, server_default="1")
+    # Phase 3 candidate data (shapes documented in the Phase 3 plan); null for manual/initial versions.
+    change_report: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    verification: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    # Deliberately not a foreign key: a second delete path (via test_case) would break delete order.
+    source_test_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
 
     agent: Mapped[Agent] = relationship(back_populates="prompt_versions")
@@ -117,6 +123,8 @@ class Criterion(Base):
     why_discovered: Mapped[str] = mapped_column(Text)
     source: Mapped[str] = mapped_column(String(32))
     judge_check: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    # Bumped when definition/examples change, so stale results can be detected.
+    revision: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
 
     agent: Mapped[Agent] = relationship(back_populates="criteria")
@@ -146,6 +154,7 @@ class EvalTest(Base):
     # Deliberately not a foreign key: a second delete path (via run) would break Postgres delete order.
     source_run_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
     role: Mapped[str] = mapped_column(String(16))  # "fix" | "heldout"
+    origin: Mapped[str] = mapped_column(String(16), default="run", server_default="run")  # "run" | "generated"
     scripted_user_messages: Mapped[list] = mapped_column(JSON)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
 

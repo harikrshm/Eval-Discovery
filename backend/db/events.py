@@ -1,4 +1,4 @@
-"""Minimal product event log (Phase 1 and 2 names)."""
+"""Minimal product event log (Phase 1-3 names)."""
 
 import logging
 
@@ -18,6 +18,15 @@ EVENT_NAMES: frozenset[str] = frozenset(
         "replay_started",
         "replay_passed",
         "replay_failed",
+        "fix_suggested",
+        "fix_approved",
+        "fix_rejected",
+        "fix_verified",
+        "fix_verification_failed",
+        "fix_promoted",
+        "version_restored",
+        "report_viewed",
+        "test_generated",
     }
 )
 

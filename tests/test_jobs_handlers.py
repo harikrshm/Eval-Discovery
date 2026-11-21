@@ -404,7 +404,7 @@ def test_replay_stores_result_for_given_prompt_version(db_session, monkeypatch):
     ws, agent, pv = _agent(db_session)
     crit = _criterion(db_session, agent)
     test = _test(db_session, crit)
-    new_version = PromptVersion(agent_id=agent.id, text="new prompt", origin="edit", status="promoted")
+    new_version = PromptVersion(agent_id=agent.id, text="new prompt", origin="edit", status="promoted", number=2)
     db_session.add(new_version)
     db_session.commit()
     replay_mock = _patch_replay(monkeypatch)
