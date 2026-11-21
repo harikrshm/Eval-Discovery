@@ -11,6 +11,8 @@ import {
 import { clearAgentId, clearWorkspace } from "../lib/workspace";
 import { derivePatternState } from "../lib/patternState";
 import { remainingDraft } from "../lib/draft";
+import { isAgentGone } from "../lib/loadError";
+import { targetsCurrentAgent } from "../lib/messageTarget";
 
 // The server owns everything except the in-progress run, which is a draft kept
 // per agent in sessionStorage so a reload mid-conversation does not lose it.
@@ -51,7 +53,9 @@ const EMPTY = {
 export function useSession(agentId) {
   // `loaded` records which agent the state below belongs to, so a stale or
   // not-yet-finished load is never mistaken for the current agent.
-  const [loaded, setLoaded] = useState({ agentId: null, error: null });
+  const [loaded, setLoaded] = useState({ agentId: null, error: null, gone: false });
+  // Bumped by retry() to re-run the load for the same agent.
+  const [reloadKey, setReloadKey] = useState(0);
   const [agent, setAgent] = useState(EMPTY.agent);
   const [runCount, setRunCount] = useState(EMPTY.runCount);
   const [transcripts, setTranscripts] = useState(EMPTY.transcripts);
@@ -108,10 +112,11 @@ export function useSession(agentId) {
         applyDraft(readDraft(agentId));
         setCriteriaSaveError(null);
         setRunSaveFailed(false);
-        setLoaded({ agentId, error: null });
+        setLoaded({ agentId, error: null, gone: false });
       })
       .catch((err) => {
         if (cancelled) return;
+        const gone = isAgentGone(err);
         if (err instanceof ApiError && err.status === 401) {
           // The stored workspace is gone; forget it (and its agent) so the app does not loop.
           clearWorkspace();
@@ -119,20 +124,30 @@ export function useSession(agentId) {
           // Only the agent is gone; the workspace is still valid.
           clearAgentId();
         }
-        setLoaded({ agentId, error: errorMessage(err) });
+        setLoaded({ agentId, error: errorMessage(err), gone });
       });
 
     return () => {
       cancelled = true;
     };
-  }, [agentId, applyCriteria, applyDraft, setPatternState]);
+  }, [agentId, reloadKey, applyCriteria, applyDraft, setPatternState]);
 
   const ready = agentId != null && loaded.agentId === agentId;
   const loadError = ready ? loaded.error : null;
+  // True when the stored agent cannot come back (404/401); otherwise a retry may work.
+  const loadErrorGone = ready && loaded.error !== null ? loaded.gone : false;
+
+  // Show "Loading" again and re-run the load for the same agent.
+  const retry = useCallback(() => {
+    setLoaded({ agentId: null, error: null, gone: false });
+    setReloadKey((n) => n + 1);
+  }, []);
   const loading = agentId != null && !ready;
 
   const addMessage = useCallback(
-    (message) => {
+    (message, forAgentId) => {
+      // A late reply for an agent the user has since left is dropped.
+      if (!targetsCurrentAgent(agentIdRef.current, forAgentId)) return;
       const next = [...draftRef.current, message];
       applyDraft(next);
       writeDraft(agentIdRef.current, next);
@@ -252,6 +267,8 @@ export function useSession(agentId) {
   return {
     loading,
     loadError,
+    loadErrorGone,
+    retry,
     agent: view.agent,
     runCount: view.runCount,
     transcripts: view.transcripts,

@@ -62,6 +62,8 @@ export default function App() {
   const {
     loading,
     loadError,
+    loadErrorGone,
+    retry,
     agent,
     transcripts,
     currentTranscript,
@@ -174,12 +176,27 @@ export default function App() {
     return <AgentSetup onCreated={handleAgentCreated} />;
   }
 
-  if (loadError) {
+  if (loadError && loadErrorGone) {
+    // The stored agent is gone (404/401): pick or create another one.
     return (
       <AgentSetup
         onCreated={handleAgentCreated}
         notice={`Couldn't load your agent: ${loadError}`}
       />
+    );
+  }
+
+  if (loadError) {
+    // Transient failure: keep the stored agent and let the user try again.
+    return (
+      <div className="flex h-dvh items-center justify-center bg-background px-4">
+        <div role="alert" className="max-w-md text-center text-sm text-red-700">
+          <p>Couldn&apos;t load your agent: {loadError}</p>
+          <Button variant="outline" size="sm" className="mt-3" onClick={retry}>
+            Retry
+          </Button>
+        </div>
+      </div>
     );
   }
 

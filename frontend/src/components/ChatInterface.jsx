@@ -85,7 +85,7 @@ export default function ChatInterface({ agent, agentId, currentTranscript, onMes
     setError(null);
     try {
       const { reply } = await sendMessage(agentId, messages);
-      onMessage({ role: "assistant", content: reply });
+      onMessage({ role: "assistant", content: reply }, agentId);
     } catch {
       setError(`${agent.name} didn't respond. Check your connection, then try again.`);
     } finally {
