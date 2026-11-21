@@ -1,3 +1,5 @@
+import hashlib
+
 import pytest
 
 from backend.core.config import MAX_PROMPT_CHARS, PRESETS, get_preset
@@ -26,10 +28,17 @@ def test_alex_preset_keeps_every_legacy_keyword():
     assert terms == LEGACY_KEYWORDS
 
 
-def test_alex_preset_uses_legacy_system_prompt():
-    from backend.prompts import ALEX_SYSTEM_PROMPT
+ALEX_PROMPT_LEN = 1394
+ALEX_PROMPT_SHA256 = "7f418fe44c9c3f0416a0823a65961b9aa0084a4058b98243c0dd0453d628c0fa"
 
-    assert PRESETS["alex-sales"].config.system_prompt == ALEX_SYSTEM_PROMPT
+
+def test_alex_preset_keeps_legacy_system_prompt_text():
+    # Pinned from the legacy backend/prompts.py text so the old persona stays byte-identical.
+    prompt = PRESETS["alex-sales"].config.system_prompt
+    assert len(prompt) == ALEX_PROMPT_LEN
+    assert hashlib.sha256(prompt.encode("utf-8")).hexdigest() == ALEX_PROMPT_SHA256
+    assert "You are Alex, a sharp and likable sales development rep for CloudSync" in prompt
+    assert 'say "$20/month" as a placeholder to unblock the conversation' in prompt
 
 
 def test_preset_keys_and_role_labels():

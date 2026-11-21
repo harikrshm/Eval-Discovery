@@ -35,7 +35,7 @@ def client(db_session):
 
     app.dependency_overrides[get_db] = override_get_db
     try:
-        # Deliberately not used as a context manager: there is no lifespan yet.
+        # Deliberately not used as a context manager: the startup purge would hit the real engine.
         yield TestClient(app)
     finally:
         app.dependency_overrides.pop(get_db, None)

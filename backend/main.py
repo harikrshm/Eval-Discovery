@@ -1,16 +1,34 @@
+import logging
 import os
+from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from backend.agent import router as agent_router
+
 from backend.api.agents import router as agents_router
-from backend.api.criteria import router as api_criteria_router
+from backend.api.criteria import router as criteria_router
 from backend.api.runs import router as runs_router
 from backend.api.workspaces import router as workspaces_router
-from backend.checker import router as checker_router
-from backend.criteria import router as criteria_router
+from backend.db.session import SessionLocal
+from backend.db.workspaces import purge_expired
 
-app = FastAPI(title="Eval Discovery API")
+logger = logging.getLogger(__name__)
+
+
+@asynccontextmanager
+async def lifespan(_: FastAPI):
+    """Purge expired workspaces once at startup."""
+    db = SessionLocal()
+    try:
+        purged = purge_expired(db)
+        if purged:
+            logger.info("Purged %d expired workspace(s) at startup", purged)
+    finally:
+        db.close()
+    yield
+
+
+app = FastAPI(title="Eval Discovery API", lifespan=lifespan)
 
 ALLOWED_ORIGINS = [
     o.strip()
@@ -25,10 +43,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-app.include_router(agent_router)
-app.include_router(checker_router)
-app.include_router(criteria_router)
 app.include_router(workspaces_router)
 app.include_router(agents_router)
 app.include_router(runs_router)
-app.include_router(api_criteria_router)
+app.include_router(criteria_router)
