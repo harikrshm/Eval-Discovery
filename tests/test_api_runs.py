@@ -290,3 +290,31 @@ def test_check_pattern_is_rate_limited_after_ownership(client, auth_headers, db_
     assert calls == []
     _check(client, auth_headers, agent_id)
     assert calls == [1]
+
+
+def test_check_pattern_marks_last_analysed_run_not_newer_count(client, auth_headers, db_session):
+    agent_id = _agent(client, auth_headers)
+    _post_run(client, auth_headers, agent_id)
+    _post_run(client, auth_headers, agent_id)
+    row = db_session.get(Agent, agent_id)
+
+    def save_run_during_llm_call(config, transcripts):
+        # A run saved by another request while the (slow) pattern LLM call is in flight.
+        db_session.add(
+            Run(
+                agent_id=agent_id,
+                prompt_version_id=row.current_prompt_version_id,
+                position=3,
+                messages=_msgs(),
+            )
+        )
+        db_session.commit()
+        return PatternResult(found=False, pattern_summary="")
+
+    with patch("backend.api.runs.detect_pattern", side_effect=save_run_during_llm_call) as detect:
+        r = _check(client, auth_headers, agent_id)
+    assert r.status_code == 200
+    assert len(detect.call_args.args[1]) == 2  # only the two runs known at check time were analysed
+    db_session.refresh(row)
+    assert db_session.query(Run).count() == 3
+    assert row.last_checked_at_run == 2  # the unanalysed run 3 stays in the next delta

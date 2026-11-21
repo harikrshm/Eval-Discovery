@@ -119,7 +119,8 @@ def check_pattern(
         logger.warning("Pattern check failed", exc_info=True)
         raise HTTPException(status_code=502, detail=PATTERN_FAILED) from None
 
-    agent.last_checked_at_run = _run_count(db, agent)
+    # Mark only what was analysed: a run saved during the LLM call stays in the next delta.
+    agent.last_checked_at_run = runs[-1].position
     if result.found:
         agent.pattern_summary = result.pattern_summary
     db.commit()
