@@ -157,10 +157,10 @@ describe("useSession savePrompt", () => {
 
     let returned = "unset";
     await act(async () => {
-      returned = await view.holder.current.savePrompt("You are Alex, careful.");
+      returned = await view.holder.current.savePrompt("You are Alex, careful.", "pv1");
     });
 
-    expect(api.updatePrompt).toHaveBeenCalledWith("a1", "You are Alex, careful.");
+    expect(api.updatePrompt).toHaveBeenCalledWith("a1", "You are Alex, careful.", "pv1");
     expect(returned).toBeUndefined();
     const { agent } = view.holder.current;
     expect(agent.system_prompt).toBe("You are Alex, careful.");

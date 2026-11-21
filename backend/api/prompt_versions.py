@@ -35,6 +35,14 @@ def update_prompt(
     if verifying_version(db, agent) is not None:
         raise HTTPException(status_code=409, detail=FIX_VERIFYING)
     current = current_prompt_version(agent)
+    if body.base_version_id is not None and body.base_version_id != current.id:
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                f"The prompt changed to v{current.number} while you were editing. "
+                "Reload the prompt to continue."
+            ),
+        )
     if body.text == current.text:
         return PromptUpdated(
             version_id=current.id, version_number=current.number, text=current.text, changed=False

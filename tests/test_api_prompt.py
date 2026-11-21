@@ -246,3 +246,61 @@ def test_chat_keeps_using_the_current_prompt_while_a_candidate_is_verifying(clie
     assert r.status_code == 200
     assert chat.call_args.args[0] == PRESETS["alex-sales"].config.system_prompt
     assert chat.call_args.args[0] != "text 2"
+
+
+def _put_based_on(client, headers, agent_id, text, base_version_id):
+    return client.put(
+        f"/agents/{agent_id}/prompt",
+        json={"text": text, "base_version_id": base_version_id},
+        headers=headers,
+    )
+
+
+def test_put_with_the_current_base_version_succeeds(client, auth_headers, db_session):
+    agent_id = _agent(client, auth_headers)
+    current = db_session.get(Agent, agent_id).current_prompt_version_id
+    r = _put_based_on(client, auth_headers, agent_id, "Edited from v1.", current)
+    assert r.status_code == 200
+    assert r.json()["changed"] is True
+    assert r.json()["version_number"] == 2
+
+
+def test_put_with_a_stale_base_version_is_409_and_creates_nothing(client, auth_headers, db_session):
+    agent_id = _agent(client, auth_headers)
+    v1 = db_session.get(Agent, agent_id).current_prompt_version_id
+    assert _put(client, auth_headers, agent_id, "Promoted text.").status_code == 200
+    r = _put_based_on(client, auth_headers, agent_id, "Draft written on v1.", v1)
+    assert r.status_code == 409
+    assert r.json()["detail"] == (
+        "The prompt changed to v2 while you were editing. Reload the prompt to continue."
+    )
+    db_session.expire_all()
+    assert db_session.query(PromptVersion).filter_by(agent_id=agent_id).count() == 2
+    state = client.get(f"/agents/{agent_id}/state", headers=auth_headers).json()["agent"]
+    assert state["system_prompt"] == "Promoted text."
+
+
+def test_stale_base_version_is_409_even_when_the_text_equals_the_current_text(
+    client, auth_headers, db_session
+):
+    # The base check comes before the no-op check: the caller's view is stale either way.
+    agent_id = _agent(client, auth_headers)
+    v1 = db_session.get(Agent, agent_id).current_prompt_version_id
+    _put(client, auth_headers, agent_id, "Promoted text.")
+    r = _put_based_on(client, auth_headers, agent_id, "Promoted text.", v1)
+    assert r.status_code == 409
+
+
+def test_verifying_guard_comes_before_the_base_version_check(client, auth_headers, db_session):
+    agent_id = _agent(client, auth_headers)
+    current = db_session.get(Agent, agent_id).current_prompt_version_id
+    _add(db_session, agent_id, 2, "approved_verifying", parent_id=current)
+    r = _put_based_on(client, auth_headers, agent_id, "x", "some-old-id")
+    assert r.status_code == 409
+    assert r.json()["detail"] == VERIFYING
+
+
+def test_put_without_a_base_version_keeps_working_after_other_edits(client, auth_headers):
+    agent_id = _agent(client, auth_headers)
+    assert _put(client, auth_headers, agent_id, "One.").status_code == 200
+    assert _put(client, auth_headers, agent_id, "Two.").json()["version_number"] == 3

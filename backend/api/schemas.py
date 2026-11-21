@@ -111,6 +111,9 @@ class AgentOut(BaseModel):
 
 class PromptUpdate(_Strict):
     text: str = Field(min_length=1, max_length=MAX_PROMPT_CHARS)
+    # The version the edit was written against. When given, the server refuses the save if the
+    # agent's current version has moved on, so a stale draft cannot overwrite a newer prompt.
+    base_version_id: str | None = None
 
     @field_validator("text")
     @classmethod

@@ -8,15 +8,27 @@ const STALE_PROMPT_ERROR = "Couldn't load the latest prompt. Try again.";
 const VERIFYING_TEXT = "A fix is being verified. Wait for it to finish.";
 
 // Edits the agent's system prompt. Saving creates a new prompt version; the parent's
-// onSave(text) is async and throws an Error whose message is shown here.
+// onSave(text, baseVersionId) is async and throws an Error whose message is shown here.
+// `versionId` is the live version; the first keystroke records it as the version the edit is based
+// on. If the live version moves on while that draft exists (a fix was promoted, a version
+// restored), the draft is flagged and cannot be saved until it is discarded, because saving it
+// would silently replace the newer prompt. The server refuses such a save too (409).
 // `verifyingNumber` is the number of a suggested fix that is being verified (null otherwise):
 // the server refuses edits meanwhile, so the editor does too. `onBeforeEdit` reloads the live
 // prompt and resolves true when it is current; the editor never opens on a prompt it could not
 // confirm, because saving from an old text would overwrite a newer version.
-export default function PromptEditor({ promptText, versionNumber, verifyingNumber = null, onSave, onBeforeEdit }) {
+export default function PromptEditor({
+  promptText,
+  versionNumber,
+  versionId,
+  verifyingNumber = null,
+  onSave,
+  onBeforeEdit,
+}) {
   const [editing, setEditing] = useState(false);
   // null until the user types, so the text always starts from (and follows) the live prompt.
   const [draft, setDraft] = useState(null);
+  const [baseId, setBaseId] = useState(null); // the live version when the draft was started
   const [saving, setSaving] = useState(false);
   const [opening, setOpening] = useState(false);
   const [openError, setOpenError] = useState(null);
@@ -25,6 +37,10 @@ export default function PromptEditor({ promptText, versionNumber, verifyingNumbe
 
   const text = draft ?? promptText;
   const verifying = verifyingNumber != null;
+  const stale = editing && draft !== null && baseId !== versionId;
+  // An untouched editor shows the live prompt, so it is always based on the live version.
+  const base = draft === null ? versionId : baseId;
+  const verifyingRef = useRef(verifying);
   const openingRef = useRef(false);
   const refocusAfterOpen = useRef(false);
   const editRef = useRef(null);
@@ -50,6 +66,10 @@ export default function PromptEditor({ promptText, versionNumber, verifyingNumbe
     }
   }, [editing]);
 
+  useEffect(() => {
+    verifyingRef.current = verifying;
+  }, [verifying]);
+
   // The button is disabled while the latest prompt loads, which drops its focus; give it back.
   useEffect(() => {
     if (!opening && refocusAfterOpen.current) {
@@ -59,7 +79,7 @@ export default function PromptEditor({ promptText, versionNumber, verifyingNumbe
   }, [opening]);
 
   const trimmed = text.trim();
-  const canSave = !saving && !verifying && trimmed.length > 0 && trimmed !== promptText.trim() && text.length <= PROMPT_MAX;
+  const canSave = !saving && !verifying && !stale && trimmed.length > 0 && trimmed !== promptText.trim() && text.length <= PROMPT_MAX;
 
   async function open() {
     if (editing) {
@@ -85,11 +105,23 @@ export default function PromptEditor({ promptText, versionNumber, verifyingNumbe
         setOpenError(STALE_PROMPT_ERROR);
         return;
       }
+      if (verifyingRef.current) return; // a fix started verifying during the reload
     }
     setDraft(null);
     setError(null);
     setJustSaved(false);
     setEditing(true);
+  }
+
+  function handleChange(value) {
+    if (draft === null) setBaseId(versionId);
+    setDraft(value);
+  }
+
+  // Drops the draft and shows the live prompt again.
+  function discard() {
+    setDraft(null);
+    setError(null);
   }
 
   function cancel() {
@@ -105,7 +137,7 @@ export default function PromptEditor({ promptText, versionNumber, verifyingNumbe
     setSaving(true);
     setError(null);
     try {
-      await onSave(trimmed);
+      await onSave(trimmed, base);
       if (!mounted.current) return;
       refocus.current = true;
       setEditing(false);
@@ -162,7 +194,7 @@ export default function PromptEditor({ promptText, versionNumber, verifyingNumbe
             <Textarea
               id={textId}
               value={text}
-              onChange={(e) => setDraft(e.target.value)}
+              onChange={(e) => handleChange(e.target.value)}
               readOnly={saving}
               aria-describedby={counterId}
               rows={9}
@@ -176,6 +208,17 @@ export default function PromptEditor({ promptText, versionNumber, verifyingNumbe
               Saving creates a new prompt version. Your tests then need to be run again on it.
             </p>
           </div>
+
+          {stale && (
+            <div role="alert" className="flex flex-wrap items-center gap-2 text-sm text-red-700">
+              <p>
+                The prompt changed to v{versionNumber} while you were editing. Your edit is based on an older version.
+              </p>
+              <Button type="button" variant="outline" size="sm" onClick={discard}>
+                Discard edit
+              </Button>
+            </div>
+          )}
 
           {error && (
             <div role="alert" className="text-sm text-red-700">

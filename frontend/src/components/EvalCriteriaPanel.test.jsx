@@ -462,20 +462,20 @@ describe("EvalCriteriaPanel change review", () => {
 describe("EvalCriteriaPanel readiness chip", () => {
   const chip = () => container.querySelector('[data-testid="readiness-chip"]');
 
-  it("shows the readiness of the suite in a live region in the header", async () => {
+  it("shows the readiness of the suite as plain text in the header (the app header chip is the live one)", async () => {
     await render({});
     expect(chip().textContent).toBe("0 of 1 criteria passing");
-    expect(chip().getAttribute("role")).toBe("status");
+    expect(chip().getAttribute("role")).toBeNull();
   });
 
-  it("keeps an empty live region before the suite has loaded, then fills the same element", async () => {
+  it("is empty before the suite has loaded, then fills the same element", async () => {
     await render({ suite: null });
-    const live = chip();
-    expect(live).not.toBeNull();
-    expect(live.textContent).toBe("");
+    const el = chip();
+    expect(el).not.toBeNull();
+    expect(el.textContent).toBe("");
     await rerender({ suite: { ...suiteWith(), criteria: [{ ...suiteWith().criteria[0], status: "passing" }] } });
-    expect(chip()).toBe(live);
-    expect(live.textContent).toContain("All criteria passing.");
+    expect(chip()).toBe(el);
+    expect(el.textContent).toContain("All criteria passing.");
   });
 });
 

@@ -14,6 +14,7 @@ vi.mock("./api", async (importOriginal) => {
     approveVersion: vi.fn(),
     rejectVersion: vi.fn(),
     addCriterion: vi.fn(),
+    updatePrompt: vi.fn(),
     suggestFix: vi.fn(),
     generateHeldout: vi.fn(),
   };
@@ -290,7 +291,7 @@ describe("App change review", () => {
 });
 
 describe("App readiness chip", () => {
-  it("shows the same readiness in the app header and the panel, announced by one live region", async () => {
+  it("shows the same readiness in the app header and the panel, announced by the header's live region", async () => {
     api.getAgentState.mockResolvedValue(agentState(AGENT_V2));
     api.getTests.mockResolvedValue(suiteFor());
     await renderApp();
@@ -298,7 +299,80 @@ describe("App readiness chip", () => {
     const chips = [...container.querySelectorAll('[data-testid="readiness-chip"]')];
     expect(chips).toHaveLength(2);
     expect(chips.map((c) => c.textContent)).toEqual(["0 of 1 criteria passing", "0 of 1 criteria passing"]);
-    expect(chips.filter((c) => c.getAttribute("role") === "status")).toHaveLength(1);
+    const live = chips.filter((c) => c.getAttribute("role") === "status");
+    expect(live).toEqual([chips[0]]);
+    // The live one is outside the (inert while closed) panel, so it is announced either way.
     expect(container.querySelector("header").contains(chips[0])).toBe(true);
+    expect(chips[0].closest("[inert]")).toBeNull();
+    expect(chips[1].closest("aside").hasAttribute("inert")).toBe(true);
+  });
+
+  it("is mounted before it has anything to say, and the same element gets its first text", async () => {
+    let resolveSuite;
+    api.getAgentState.mockResolvedValue(agentState(AGENT_V2));
+    api.getTests.mockReturnValue(new Promise((resolve) => (resolveSuite = resolve)));
+    await renderApp();
+    const live = container.querySelector('header [data-testid="readiness-chip"]');
+    expect(live.getAttribute("role")).toBe("status");
+    expect(live.textContent).toBe("");
+
+    await act(async () => resolveSuite(suiteFor()));
+    await settle();
+    expect(container.querySelector('header [data-testid="readiness-chip"]')).toBe(live);
+    expect(live.textContent).toBe("0 of 1 criteria passing");
+  });
+});
+
+describe("App saving the prompt", () => {
+  async function typeInEditor(value) {
+    const textarea = promptTextarea();
+    await act(async () => {
+      const setter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value").set;
+      setter.call(textarea, value);
+      textarea.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+  }
+
+  it("sends the version the edit was written against", async () => {
+    api.getAgentState.mockResolvedValue(agentState(AGENT_V2));
+    api.getTests.mockResolvedValue(suiteFor());
+    api.updatePrompt.mockResolvedValue({ version_id: "pv3", version_number: 3, text: "Mine.", changed: true });
+    await renderApp();
+    await act(async () => {
+      buttonByText("Edit prompt").click();
+    });
+    await settle();
+    await typeInEditor("Mine.");
+    await act(async () => {
+      buttonByText("Save").click();
+    });
+    await settle();
+    expect(api.updatePrompt).toHaveBeenCalledWith("a1", "Mine.", "pv2");
+  });
+
+  it("shows the server's 409 verbatim, reloads the agent and flags the edit as stale", async () => {
+    const message = "The prompt changed to v3 while you were editing. Reload the prompt to continue.";
+    api.getAgentState.mockResolvedValue(agentState(AGENT_V2));
+    api.getTests.mockResolvedValue(suiteFor());
+    api.updatePrompt.mockRejectedValue(new api.ApiError(message, 409));
+    await renderApp();
+    await act(async () => {
+      buttonByText("Edit prompt").click();
+    });
+    await settle();
+    await typeInEditor("Mine.");
+
+    api.getAgentState.mockResolvedValue(
+      agentState({ ...AGENT_V2, system_prompt: "Promoted fix.", prompt_version_id: "pv3", prompt_version_number: 3 })
+    );
+    await act(async () => {
+      buttonByText("Save").click();
+    });
+    await settle();
+
+    const alerts = [...container.querySelectorAll('[role="alert"]')].map((a) => a.textContent);
+    expect(alerts).toContain(message);
+    expect(alerts.some((t) => t.includes("Your edit is based on an older version."))).toBe(true);
+    expect(buttonByText("Save").disabled).toBe(true);
   });
 });

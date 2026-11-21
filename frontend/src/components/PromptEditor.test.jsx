@@ -103,7 +103,7 @@ describe("PromptEditor", () => {
       buttonByText("Save").click();
     });
 
-    expect(onSave).toHaveBeenCalledWith("You are Alex, a careful agent.");
+    expect(onSave).toHaveBeenCalledWith("You are Alex, a careful agent.", undefined);
     expect(container.querySelector("textarea")).toBeNull();
     expect(document.activeElement).toBe(buttonByText("Edit prompt"));
   });
@@ -306,5 +306,104 @@ describe("PromptEditor stale prompt protection", () => {
     });
     expect(onBeforeEdit).toHaveBeenCalledTimes(1);
     await act(async () => finish(true));
+  });
+});
+
+describe("PromptEditor stale draft protection", () => {
+  const NOTICE = "The prompt changed to v3 while you were editing. Your edit is based on an older version.";
+
+  async function rerenderWith(props) {
+    await act(async () => {
+      root.render(
+        createElement(PromptEditor, {
+          promptText: "You are Alex.",
+          versionNumber: 2,
+          versionId: "pv2",
+          onSave: vi.fn(async () => {}),
+          ...props,
+        })
+      );
+    });
+  }
+
+  it("passes the version the edit was started on to onSave", async () => {
+    const onSave = vi.fn(async () => {});
+    await render({ onSave, versionId: "pv2" });
+    await openEditor();
+    await type("Edited.");
+    await act(async () => {
+      buttonByText("Save").click();
+    });
+    expect(onSave).toHaveBeenCalledWith("Edited.", "pv2");
+  });
+
+  it("flags a draft whose prompt changed underneath it, blocks Save, and Discard shows the new prompt", async () => {
+    const onSave = vi.fn(async () => {});
+    await render({ onSave, versionId: "pv2" });
+    await openEditor();
+    await type("A v2-based draft.");
+    expect(buttonByText("Save").disabled).toBe(false);
+
+    await rerenderWith({ promptText: "You are Alex, fixed.", versionNumber: 3, versionId: "pv3", onSave });
+
+    const alert = [...container.querySelectorAll('[role="alert"]')].find((a) => a.textContent.includes(NOTICE));
+    expect(alert).toBeDefined();
+    expect(container.querySelector("textarea").value).toBe("A v2-based draft."); // never silently replaced
+    expect(buttonByText("Save").disabled).toBe(true);
+
+    await act(async () => {
+      buttonByText("Discard edit").click();
+    });
+    expect(container.textContent).not.toContain(NOTICE);
+    expect(container.querySelector("textarea").value).toBe("You are Alex, fixed.");
+    expect(buttonByText("Save").disabled).toBe(true); // unchanged from the live prompt
+
+    await type("Built on the fix.");
+    await act(async () => {
+      buttonByText("Save").click();
+    });
+    expect(onSave).toHaveBeenCalledWith("Built on the fix.", "pv3");
+  });
+
+  it("follows the new prompt silently when nothing was typed", async () => {
+    const onSave = vi.fn(async () => {});
+    await render({ onSave, versionId: "pv2" });
+    await openEditor();
+    await rerenderWith({ promptText: "You are Alex, fixed.", versionNumber: 3, versionId: "pv3", onSave });
+    expect(container.textContent).not.toContain(NOTICE);
+    expect(container.querySelector("textarea").value).toBe("You are Alex, fixed.");
+
+    await type("Edited after the change.");
+    await act(async () => {
+      buttonByText("Save").click();
+    });
+    expect(onSave).toHaveBeenCalledWith("Edited after the change.", "pv3");
+  });
+
+  it("shows a server 409 verbatim and keeps the editor open", async () => {
+    const message = "The prompt changed to v3 while you were editing. Reload the prompt to continue.";
+    const onSave = vi.fn(async () => {
+      throw new Error(message);
+    });
+    await render({ onSave, versionId: "pv2" });
+    await openEditor();
+    await type("Edited.");
+    await act(async () => {
+      buttonByText("Save").click();
+    });
+    expect(container.querySelector('[role="alert"]').textContent).toBe(message);
+    expect(container.querySelector("textarea").value).toBe("Edited.");
+  });
+
+  it("does not open when a fix started verifying during the reload", async () => {
+    let finish;
+    const onBeforeEdit = vi.fn(() => new Promise((resolve) => (finish = resolve)));
+    await render({ onBeforeEdit });
+    await openEditor();
+    await rerenderWith({ verifyingNumber: 3, onBeforeEdit });
+    await act(async () => finish(true));
+    expect(container.querySelector("textarea")).toBeNull();
+    expect(buttonByText("Edit prompt").getAttribute("aria-expanded")).toBe("false");
+    expect(container.textContent).toContain("A fix is being verified. Wait for it to finish.");
   });
 });

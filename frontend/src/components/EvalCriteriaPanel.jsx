@@ -268,9 +268,9 @@ export default function EvalCriteriaPanel({
             <X className="h-4 w-4" aria-hidden="true" />
           </Button>
         </div>
-        {/* The live chip: always mounted, empty until the suite is known. The app header shows the
-            same numbers as plain text so a change is announced once. */}
-        <ReadinessChip readiness={suite ? readiness(suite) : null} className="mx-4 mb-2" />
+        {/* Plain text: this panel is inert while closed, so the live chip is the one in the app
+            header (outside the panel), and a change is announced once. */}
+        <ReadinessChip readiness={suite ? readiness(suite) : null} live={false} className="mx-4 mb-2" />
       </div>
 
       {/* The one live region for the change review. It stays mounted while the review remounts. */}

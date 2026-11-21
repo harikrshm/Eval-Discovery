@@ -561,7 +561,7 @@ Build detail worth knowing: the build job judges at most the 8 most recent saved
 | `/agents/{id}/criteria/discover` | POST | Generate a criterion from the stored pattern (409 if none); also queues a `build_tests` job and returns its `job_id` (null if the hourly job cap is reached) |
 | `/agents/{id}/criteria` | POST | Add a criterion manually |
 | `/criteria/{id}` | PATCH | Edit a criterion (partial update); changing the definition or an example marks its replay results stale |
-| `/agents/{id}/prompt` | PUT | Save a manual prompt edit as a new numbered version; returns `{version_id, version_number, text, changed}` (`changed: false` if the text is identical) |
+| `/agents/{id}/prompt` | PUT | Save a manual prompt edit as a new numbered version; returns `{version_id, version_number, text, changed}` (`changed: false` if the text is identical). An optional `base_version_id` is the version the edit was written against: if the agent's current version differs, the save is refused with 409 and nothing is written |
 | `/agents/{id}/tests` | GET | The suite: current prompt version, `stale_count`, and per criterion its status, `judge_check`, active build job and tests (baseline and current replay results, active replay job) |
 | `/tests/{id}/replay` | POST | Queue a replay of one test on the current prompt version (202, `{job_id}`; returns the active job if one exists) |
 | `/agents/{id}/tests/run-all` | POST | Queue a replay for every test that has none active (202, `{job_ids}`) |

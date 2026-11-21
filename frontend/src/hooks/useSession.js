@@ -277,10 +277,10 @@ export function useSession(agentId) {
 
   // Saves a manual prompt edit as a new prompt version and mirrors it on the agent. Rejects with
   // the server's error so the editor can show it; the draft and everything else stay as they are.
-  const savePrompt = useCallback(async (text) => {
+  const savePrompt = useCallback(async (text, baseVersionId) => {
     const id = agentIdRef.current;
     if (id == null) return;
-    const saved = await apiUpdatePrompt(id, text);
+    const saved = await apiUpdatePrompt(id, text, baseVersionId);
     if (agentIdRef.current !== id) return;
     setAgent((prev) =>
       prev

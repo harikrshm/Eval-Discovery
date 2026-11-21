@@ -294,6 +294,7 @@ describe("tests api", () => {
     await api.buildTests("c1");
     await api.getJob("j1");
     await api.updatePrompt("a1", "You are Alex.");
+    await api.updatePrompt("a1", "You are Alex, careful.", "pv1");
 
     const calls = fetchMock.mock.calls.map(([u, o]) => [
       o.method,
@@ -307,6 +308,7 @@ describe("tests api", () => {
       ["POST", "/criteria/c1/build-tests", undefined],
       ["GET", "/jobs/j1", undefined],
       ["PUT", "/agents/a1/prompt", { text: "You are Alex." }],
+      ["PUT", "/agents/a1/prompt", { text: "You are Alex, careful.", base_version_id: "pv1" }],
     ]);
     for (const call of fetchMock.mock.calls) {
       expect(headerOf(call, "X-Workspace-Token")).toBe("tok");

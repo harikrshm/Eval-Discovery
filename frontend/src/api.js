@@ -156,8 +156,13 @@ export function getJob(jobId) {
   return request(`/jobs/${jobId}`);
 }
 
-export function updatePrompt(agentId, text) {
-  return request(`/agents/${agentId}/prompt`, { method: "PUT", body: { text } });
+// `baseVersionId` is the version the text was written against; the server refuses the save (409)
+// when the agent has moved on since. Omitted, the save is unconditional.
+export function updatePrompt(agentId, text, baseVersionId) {
+  return request(`/agents/${agentId}/prompt`, {
+    method: "PUT",
+    body: baseVersionId === undefined ? { text } : { text, base_version_id: baseVersionId },
+  });
 }
 
 // Deletes the stored workspace. With no stored token there is nothing to delete (and

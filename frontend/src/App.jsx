@@ -201,8 +201,15 @@ export default function App() {
     }
   }
 
-  async function handleSavePrompt(text) {
-    await savePrompt(text);
+  async function handleSavePrompt(text, baseVersionId) {
+    try {
+      await savePrompt(text, baseVersionId);
+    } catch (err) {
+      // A refusal because the prompt moved on (or any failure): learn the live version so the
+      // editor can flag the draft as based on an older one.
+      refreshAgent();
+      throw err;
+    }
     tests.refresh();
   }
 
@@ -329,9 +336,9 @@ export default function App() {
             </Button>
           )}
 
-          {evalCriteria.length > 0 && (
-            <ReadinessChip readiness={tests.suite ? readiness(tests.suite) : null} live={false} />
-          )}
+          {/* The live chip: always mounted (empty without criteria or a suite) so its first text is
+              announced, and outside the panel, which is inert while closed. */}
+          <ReadinessChip readiness={evalCriteria.length > 0 && tests.suite ? readiness(tests.suite) : null} />
 
           {evalCriteria.length > 0 && (
             <Button
@@ -440,6 +447,7 @@ export default function App() {
                 promptEditor={{
                   promptText: agent.system_prompt,
                   versionNumber: agent.prompt_version_number,
+                  versionId: agent.prompt_version_id,
                   verifyingNumber:
                     tests.suite?.candidate?.status === "approved_verifying" ? tests.suite.candidate.number : null,
                   onSave: handleSavePrompt,
