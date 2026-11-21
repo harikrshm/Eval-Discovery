@@ -120,6 +120,38 @@ export function buildTests(criterionId) {
   return request(`/criteria/${criterionId}/build-tests`, { method: "POST" });
 }
 
+export function generateHeldout(criterionId) {
+  return request(`/criteria/${criterionId}/generate-heldout`, { method: "POST" });
+}
+
+export function suggestFix(testId) {
+  return request(`/tests/${testId}/suggest-fix`, { method: "POST" });
+}
+
+export function getVersions(agentId) {
+  return request(`/agents/${agentId}/prompt-versions`);
+}
+
+export function getVersion(versionId) {
+  return request(`/prompt-versions/${versionId}`);
+}
+
+export function approveVersion(versionId) {
+  return request(`/prompt-versions/${versionId}/approve`, { method: "POST" });
+}
+
+export function rejectVersion(versionId) {
+  return request(`/prompt-versions/${versionId}/reject`, { method: "POST" });
+}
+
+export function restoreVersion(versionId) {
+  return request(`/prompt-versions/${versionId}/restore`, { method: "POST" });
+}
+
+export function getReport(versionId) {
+  return request(`/prompt-versions/${versionId}/report`);
+}
+
 export function getJob(jobId) {
   return request(`/jobs/${jobId}`);
 }

@@ -5,12 +5,19 @@ import {
   replayTest as apiReplayTest,
   runAllTests as apiRunAllTests,
   buildTests as apiBuildTests,
+  suggestFix as apiSuggestFix,
+  generateHeldout as apiGenerateHeldout,
+  approveVersion as apiApproveVersion,
+  rejectVersion as apiRejectVersion,
+  restoreVersion as apiRestoreVersion,
 } from "../api";
 import { pollJob } from "../lib/jobs";
 import { friendlyError } from "../lib/testStatus";
 
 // The server owns the suite; this hook mirrors it and follows background jobs.
-// `jobs` maps "replay:<testId>" / "build:<criterionId>" to { status, error, result }.
+// `jobs` maps "replay:<testId>" / "build:<criterionId>" / "suggest:<testId>" /
+// "heldout:<criterionId>" to { status, error, result }; "version:<versionId>" does the same for
+// approve / reject / restore, which are not jobs but follow the same pending-then-failed rule.
 // A key goes to "queued" the moment an action starts (before the request returns) so the
 // UI can disable its button at once, and a failed job keeps its error message.
 
@@ -27,6 +34,18 @@ function replayKey(testId) {
 
 function buildKey(criterionId) {
   return `build:${criterionId}`;
+}
+
+function suggestKey(testId) {
+  return `suggest:${testId}`;
+}
+
+function heldoutKey(criterionId) {
+  return `heldout:${criterionId}`;
+}
+
+function versionKey(versionId) {
+  return `version:${versionId}`;
 }
 
 export function useTests(agentId) {
@@ -72,8 +91,12 @@ export function useTests(agentId) {
             if (criterion.active_job_id) {
               track(ctx, buildKey(criterion.criterion_id), criterion.active_job_id);
             }
+            if (criterion.heldout_job_id) {
+              track(ctx, heldoutKey(criterion.criterion_id), criterion.heldout_job_id);
+            }
             for (const test of criterion.tests) {
               if (test.active_job_id) track(ctx, replayKey(test.id), test.active_job_id);
+              if (test.suggest_job_id) track(ctx, suggestKey(test.id), test.suggest_job_id);
             }
           }
           return suite;
@@ -121,7 +144,7 @@ export function useTests(agentId) {
       );
     }
 
-    return { patchJob, dropJob, loadSuite, track };
+    return { isLive, patchJob, dropJob, loadSuite, track };
   }, []);
 
   useEffect(() => {
@@ -176,6 +199,56 @@ export function useTests(agentId) {
     [start]
   );
 
+  const suggestFix = useCallback((testId) => start(suggestKey(testId), () => apiSuggestFix(testId)), [start]);
+
+  const generateHeldout = useCallback(
+    (criterionId) => start(heldoutKey(criterionId), () => apiGenerateHeldout(criterionId)),
+    [start]
+  );
+
+  // Approve, reject and restore change the version state, not a job. The key is pending from
+  // the call until the suite has been reloaded (so the button cannot be clicked again while the
+  // view still shows the old state); a rejected request leaves a failed key with the message.
+  const versionAction = useCallback(
+    async (versionId, request, onReply) => {
+      const ctx = ctxRef.current;
+      if (!ctx) return;
+      const key = versionKey(versionId);
+      if (IN_FLIGHT.includes(ctx.jobs[key]?.status)) return;
+      engine.patchJob(ctx, key, { status: "queued", error: null, result: null });
+      let reply;
+      try {
+        reply = await request();
+      } catch (err) {
+        engine.patchJob(ctx, key, { status: "failed", error: friendlyError(err), result: null });
+        return;
+      }
+      if (!engine.isLive(ctx)) return;
+      if (onReply) onReply(ctx, reply);
+      await engine.loadSuite(ctx);
+      engine.dropJob(ctx, key);
+    },
+    [engine]
+  );
+
+  // The reply lists the replay jobs that now verify the fix, one per test.
+  const approve = useCallback(
+    (versionId) =>
+      versionAction(versionId, () => apiApproveVersion(versionId), (ctx, reply) => {
+        for (const { test_id: testId, job_id: jobId } of reply.jobs ?? []) {
+          engine.track(ctx, replayKey(testId), jobId);
+        }
+      }),
+    [versionAction, engine]
+  );
+
+  const reject = useCallback((versionId) => versionAction(versionId, () => apiRejectVersion(versionId)), [versionAction]);
+
+  const restore = useCallback(
+    (versionId) => versionAction(versionId, () => apiRestoreVersion(versionId)),
+    [versionAction]
+  );
+
   // The response only lists job ids, so the suite is reloaded to learn which test each
   // belongs to. A key still following the same job as before the reload got no new job
   // (it finished before the reload), so it stops being pending.
@@ -213,5 +286,10 @@ export function useTests(agentId) {
     replay,
     runAll,
     buildTests,
+    suggestFix,
+    generateHeldout,
+    approve,
+    reject,
+    restore,
   };
 }

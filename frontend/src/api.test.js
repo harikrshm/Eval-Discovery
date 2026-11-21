@@ -321,3 +321,66 @@ describe("tests api", () => {
     await expect(api.replayTest("t1")).resolves.toEqual({ job_id: "j9" });
   });
 });
+
+describe("fix-loop api", () => {
+  let fetchMock;
+
+  beforeEach(() => {
+    localStorage.clear();
+    fetchMock = vi.fn();
+    globalThis.fetch = fetchMock;
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+    delete globalThis.fetch;
+  });
+
+  it("calls the right method, path and body, with the token header", async () => {
+    const { workspace, api } = await load();
+    workspace.setToken("tok");
+    fetchMock.mockImplementation(async () => jsonResponse(200, {}));
+
+    await api.generateHeldout("c1");
+    await api.suggestFix("t1");
+    await api.getVersions("a1");
+    await api.getVersion("v1");
+    await api.approveVersion("v1");
+    await api.rejectVersion("v1");
+    await api.restoreVersion("v1");
+    await api.getReport("v1");
+
+    const calls = fetchMock.mock.calls.map(([u, o]) => [
+      o.method,
+      String(u).replace(/^.*?(?=\/(agents|criteria|tests|prompt-versions))/, ""),
+      o.body === undefined ? undefined : JSON.parse(o.body),
+    ]);
+    expect(calls).toEqual([
+      ["POST", "/criteria/c1/generate-heldout", undefined],
+      ["POST", "/tests/t1/suggest-fix", undefined],
+      ["GET", "/agents/a1/prompt-versions", undefined],
+      ["GET", "/prompt-versions/v1", undefined],
+      ["POST", "/prompt-versions/v1/approve", undefined],
+      ["POST", "/prompt-versions/v1/reject", undefined],
+      ["POST", "/prompt-versions/v1/restore", undefined],
+      ["GET", "/prompt-versions/v1/report", undefined],
+    ]);
+    for (const call of fetchMock.mock.calls) {
+      expect(headerOf(call, "X-Workspace-Token")).toBe("tok");
+    }
+  });
+
+  it("returns the parsed body and keeps the server's message on a 409", async () => {
+    const { workspace, api } = await load();
+    workspace.setToken("tok");
+    fetchMock.mockResolvedValueOnce(jsonResponse(202, { job_id: "j9" }));
+    await expect(api.suggestFix("t1")).resolves.toEqual({ job_id: "j9" });
+
+    fetchMock.mockResolvedValueOnce(jsonResponse(409, { detail: "This fix can't be approved in its current state." }));
+    const err = await api.approveVersion("v1").catch((e) => e);
+    expect(err).toBeInstanceOf(api.ApiError);
+    expect(err.status).toBe(409);
+    expect(err.message).toBe("This fix can't be approved in its current state.");
+  });
+});
+

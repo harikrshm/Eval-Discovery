@@ -75,6 +75,10 @@ export function useSession(agentId) {
   const agentIdRef = useRef(agentId);
   useEffect(() => {
     agentIdRef.current = agentId;
+    // Cleared on unmount (and between agents) so a reply that lands later finds no agent.
+    return () => {
+      agentIdRef.current = null;
+    };
   }, [agentId]);
 
   const setPatternState = useCallback((value) => {
@@ -290,6 +294,25 @@ export function useSession(agentId) {
     );
   }, []);
 
+  // Reloads only the prompt fields of the agent (after a fix is promoted or a version restored)
+  // so the prompt editor never shows stale text. The draft, criteria and pattern state are not
+  // touched. A failed reload is ignored: the next load or edit brings the fields up to date.
+  const refreshAgent = useCallback(async () => {
+    const id = agentIdRef.current;
+    if (id == null) return;
+    let state;
+    try {
+      state = await getAgentState(id);
+    } catch {
+      return;
+    }
+    if (agentIdRef.current !== id || !state?.agent) return;
+    const { system_prompt, prompt_version_id, prompt_version_number } = state.agent;
+    setAgent((prev) =>
+      prev && prev.id === id ? { ...prev, system_prompt, prompt_version_id, prompt_version_number } : prev
+    );
+  }, []);
+
   // Until the state for the current agent has loaded, expose nothing.
   const view = ready && !loadError
     ? { agent, runCount, transcripts, evalCriteria, patternSummary }
@@ -317,6 +340,7 @@ export function useSession(agentId) {
     addCriteria,
     updateCriteria,
     savePrompt,
+    refreshAgent,
     setPatternState,
   };
 }

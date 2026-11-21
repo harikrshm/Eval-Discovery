@@ -30,24 +30,26 @@ const STATE = {
   last_checked_at_run: 0,
 };
 
-function mount(agentId) {
+function mount(initialAgentId) {
   const holder = { current: null };
   const record = (value) => {
     holder.current = value;
   };
-  function Probe({ onValue }) {
+  function Probe({ agentId, onValue }) {
     onValue(useSession(agentId));
     return null;
   }
   const container = document.createElement("div");
   const root = createRoot(container);
+  const render = async (agentId) => {
+    await act(async () => {
+      root.render(createElement(Probe, { agentId, onValue: record }));
+    });
+  };
   return {
     holder,
-    async render() {
-      await act(async () => {
-        root.render(createElement(Probe, { onValue: record }));
-      });
-    },
+    render: () => render(initialAgentId),
+    rerender: render,
     unmount: () => act(() => root.unmount()),
   };
 }
@@ -250,5 +252,116 @@ describe("useSession discover", () => {
     // Export all writes JSON.stringify(evalCriteria, null, 2).
     expect(JSON.stringify(view.holder.current.evalCriteria, null, 2)).not.toContain("job_id");
     await view.unmount();
+  });
+});
+
+describe("useSession refreshAgent", () => {
+  const WITH_VERSION = {
+    ...STATE,
+    criteria: [{ id: "c1", name: "N", definition: "d", good_example: "g", bad_example: "b" }],
+    pattern_summary: "asks about price",
+    agent: { ...STATE.agent, system_prompt: "You are Alex.", prompt_version_id: "pv1", prompt_version_number: 1 },
+  };
+  const PROMOTED = {
+    ...WITH_VERSION,
+    criteria: [], // must be ignored: refreshAgent never touches criteria
+    pattern_summary: null,
+    agent: {
+      ...WITH_VERSION.agent,
+      name: "Renamed",
+      system_prompt: "You are Alex, careful.",
+      prompt_version_id: "pv2",
+      prompt_version_number: 2,
+    },
+  };
+
+  beforeEach(() => {
+    sessionStorage.clear();
+    vi.clearAllMocks();
+    api.getAgentState.mockResolvedValue(WITH_VERSION);
+  });
+
+  it("updates only the prompt fields and leaves the draft, criteria and pattern state alone", async () => {
+    const view = mount("a1");
+    await view.render();
+    await act(async () => {
+      view.holder.current.addMessage({ role: "user", content: "hi" }, "a1");
+    });
+    expect(view.holder.current.patternState).toBe("pattern_found");
+    api.getAgentState.mockResolvedValue(PROMOTED);
+
+    await act(async () => {
+      await view.holder.current.refreshAgent();
+    });
+
+    expect(api.getAgentState).toHaveBeenLastCalledWith("a1");
+    const { agent } = view.holder.current;
+    expect(agent.system_prompt).toBe("You are Alex, careful.");
+    expect(agent.prompt_version_id).toBe("pv2");
+    expect(agent.prompt_version_number).toBe(2);
+    expect(agent.name).toBe("Alex");
+    expect(view.holder.current.currentTranscript).toHaveLength(1);
+    expect(view.holder.current.evalCriteria).toHaveLength(1);
+    expect(view.holder.current.patternState).toBe("pattern_found");
+    expect(view.holder.current.patternSummary).toBe("asks about price");
+    expect(view.holder.current.loading).toBe(false);
+    await view.unmount();
+  });
+
+  it("changes nothing and does not throw when the reload fails", async () => {
+    const view = mount("a1");
+    await view.render();
+    api.getAgentState.mockRejectedValue(new TypeError("Failed to fetch"));
+
+    await act(async () => {
+      await view.holder.current.refreshAgent();
+    });
+
+    expect(view.holder.current.agent.prompt_version_number).toBe(1);
+    expect(view.holder.current.loadError).toBeNull();
+    await view.unmount();
+  });
+
+  it("ignores a reply that lands after switching agents", async () => {
+    const view = mount("a1");
+    await view.render();
+    let resolveLate;
+    api.getAgentState.mockReturnValueOnce(new Promise((resolve) => (resolveLate = resolve)));
+    let call;
+    await act(async () => {
+      call = view.holder.current.refreshAgent();
+    });
+
+    api.getAgentState.mockResolvedValue({ ...STATE, agent: { ...STATE.agent, id: "a2", name: "Bea" } });
+    await view.rerender("a2");
+    await act(async () => {
+      resolveLate(PROMOTED);
+      await call;
+    });
+
+    expect(view.holder.current.agent.id).toBe("a2");
+    expect(view.holder.current.agent.prompt_version_number).toBeUndefined();
+    expect(view.holder.current.agent.system_prompt).toBeUndefined();
+    await view.unmount();
+  });
+
+  it("updates nothing after unmount", async () => {
+    const view = mount("a1");
+    await view.render();
+    let resolveLate;
+    api.getAgentState.mockReturnValueOnce(new Promise((resolve) => (resolveLate = resolve)));
+    let call;
+    await act(async () => {
+      call = view.holder.current.refreshAgent();
+    });
+    const before = view.holder.current.agent;
+
+    await view.unmount();
+    await act(async () => {
+      resolveLate(PROMOTED);
+      await call;
+    });
+
+    expect(view.holder.current.agent).toBe(before);
   });
 });

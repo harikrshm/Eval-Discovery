@@ -10,6 +10,11 @@ vi.mock("../api", async (importOriginal) => {
     replayTest: vi.fn(),
     runAllTests: vi.fn(),
     buildTests: vi.fn(),
+    suggestFix: vi.fn(),
+    generateHeldout: vi.fn(),
+    approveVersion: vi.fn(),
+    rejectVersion: vi.fn(),
+    restoreVersion: vi.fn(),
     getJob: vi.fn(),
   };
 });
@@ -49,6 +54,14 @@ function withActive({ build = null, t1 = null, t2 = null } = {}) {
   s.criteria[0].tests[0].active_job_id = t1;
   s.criteria[0].tests[1].active_job_id = t2;
   s.criteria[1].active_job_id = build;
+  return s;
+}
+
+// Resume fields the Phase 3 suite carries: suggest_job_id on a test, heldout_job_id on a criterion.
+function withFixJobs({ suggest = null, heldout = null } = {}) {
+  const s = suite();
+  s.criteria[0].tests[0].suggest_job_id = suggest;
+  s.criteria[0].heldout_job_id = heldout;
   return s;
 }
 
@@ -527,6 +540,459 @@ describe("useTests", () => {
         error: "Tests already exist for this criterion.",
       });
       await view.unmount();
+    });
+  });
+
+  describe("suggestFix", () => {
+    it("is pending at once, follows the job, then reloads the suite", async () => {
+      const accepted = deferred();
+      api.suggestFix.mockReturnValue(accepted.promise);
+      const view = mount("a1");
+      await view.render();
+
+      let call;
+      await act(async () => {
+        call = view.holder.current.suggestFix("t1");
+      });
+      expect(pollJob).not.toHaveBeenCalled();
+      expect(view.holder.current.jobs["suggest:t1"]).toMatchObject({ status: "queued", error: null });
+
+      await act(async () => {
+        accepted.resolve({ job_id: "js" });
+        await call;
+      });
+      expect(api.suggestFix).toHaveBeenCalledWith("t1");
+      expect(pollJob).toHaveBeenCalledWith(api.getJob, "js", expect.anything());
+
+      await act(async () => {
+        polls.js.resolve({ id: "js", status: "done", result: { version_id: "v2", number: 2 }, error: null });
+      });
+      expect(view.holder.current.jobs["suggest:t1"]).toMatchObject({
+        status: "done",
+        result: { version_id: "v2", number: 2 },
+      });
+      expect(api.getTests).toHaveBeenCalledTimes(2);
+      await view.unmount();
+    });
+
+    it("ignores a second call while pending", async () => {
+      const accepted = deferred();
+      api.suggestFix.mockReturnValue(accepted.promise);
+      const view = mount("a1");
+      await view.render();
+
+      await act(async () => {
+        view.holder.current.suggestFix("t1");
+        view.holder.current.suggestFix("t1");
+      });
+      await act(async () => accepted.resolve({ job_id: "js" }));
+
+      expect(api.suggestFix).toHaveBeenCalledTimes(1);
+      await view.unmount();
+    });
+
+    it("marks the key failed with the server message when the request is rejected", async () => {
+      api.suggestFix.mockRejectedValue(new api.ApiError("A fix is already proposed or being verified.", 409));
+      const view = mount("a1");
+      await view.render();
+
+      await act(async () => {
+        await view.holder.current.suggestFix("t1");
+      });
+
+      expect(view.holder.current.jobs["suggest:t1"]).toMatchObject({
+        status: "failed",
+        error: "A fix is already proposed or being verified.",
+      });
+      expect(pollJob).not.toHaveBeenCalled();
+      await view.unmount();
+    });
+
+    it("turns a raw network failure into friendly copy", async () => {
+      api.suggestFix.mockRejectedValue(new TypeError("Failed to fetch"));
+      const view = mount("a1");
+      await view.render();
+
+      await act(async () => {
+        await view.holder.current.suggestFix("t1");
+      });
+
+      expect(view.holder.current.jobs["suggest:t1"].error).toBe(
+        "Couldn't reach the server. Check your connection, then try again.",
+      );
+      await view.unmount();
+    });
+
+    it("keeps the job's own error string when the job fails", async () => {
+      api.suggestFix.mockResolvedValue({ job_id: "js" });
+      const view = mount("a1");
+      await view.render();
+      await act(async () => {
+        await view.holder.current.suggestFix("t1");
+      });
+
+      await act(async () => {
+        polls.js.resolve({ id: "js", status: "failed", result: null, error: "Couldn't write a fix. Try again." });
+      });
+
+      expect(view.holder.current.jobs["suggest:t1"]).toMatchObject({
+        status: "failed",
+        error: "Couldn't write a fix. Try again.",
+      });
+      await view.unmount();
+    });
+  });
+
+  describe("generateHeldout", () => {
+    it("is pending at once and keeps the finished job result", async () => {
+      const accepted = deferred();
+      api.generateHeldout.mockReturnValue(accepted.promise);
+      const view = mount("a1");
+      await view.render();
+
+      let call;
+      await act(async () => {
+        call = view.holder.current.generateHeldout("c1");
+      });
+      expect(view.holder.current.jobs["heldout:c1"]).toMatchObject({ status: "queued" });
+      expect(pollJob).not.toHaveBeenCalled();
+
+      await act(async () => {
+        accepted.resolve({ job_id: "jh" });
+        await call;
+      });
+      expect(api.generateHeldout).toHaveBeenCalledWith("c1");
+
+      await act(async () => {
+        polls.jh.resolve({
+          id: "jh",
+          status: "done",
+          result: { created: false, reason: "agent_handles_it" },
+          error: null,
+        });
+      });
+      expect(view.holder.current.jobs["heldout:c1"]).toMatchObject({
+        status: "done",
+        result: { created: false, reason: "agent_handles_it" },
+      });
+      expect(api.getTests).toHaveBeenCalledTimes(2);
+      await view.unmount();
+    });
+
+    it("ignores a second call while pending", async () => {
+      api.generateHeldout.mockReturnValue(deferred().promise);
+      const view = mount("a1");
+      await view.render();
+
+      await act(async () => {
+        view.holder.current.generateHeldout("c1");
+        view.holder.current.generateHeldout("c1");
+      });
+
+      expect(api.generateHeldout).toHaveBeenCalledTimes(1);
+      await view.unmount();
+    });
+
+    it("marks the key failed with the server message when the request is rejected", async () => {
+      api.generateHeldout.mockRejectedValue(
+        new api.ApiError("This criterion needs a fix test and no held-out test.", 409),
+      );
+      const view = mount("a1");
+      await view.render();
+
+      await act(async () => {
+        await view.holder.current.generateHeldout("c1");
+      });
+
+      expect(view.holder.current.jobs["heldout:c1"]).toMatchObject({
+        status: "failed",
+        error: "This criterion needs a fix test and no held-out test.",
+      });
+      await view.unmount();
+    });
+  });
+
+  describe("resuming fix-loop jobs", () => {
+    it("resumes suggest_job_id and heldout_job_id from the suite", async () => {
+      api.getTests.mockResolvedValueOnce(withFixJobs({ suggest: "js", heldout: "jh" }));
+      const view = mount("a1");
+      await view.render();
+
+      expect(pollJob).toHaveBeenCalledWith(api.getJob, "js", expect.anything());
+      expect(pollJob).toHaveBeenCalledWith(api.getJob, "jh", expect.anything());
+      expect(view.holder.current.jobs["suggest:t1"]).toMatchObject({ status: "queued" });
+      expect(view.holder.current.jobs["heldout:c1"]).toMatchObject({ status: "queued" });
+
+      await act(async () => {
+        polls.js.resolve({ id: "js", status: "done", result: {}, error: null });
+      });
+      expect(view.holder.current.jobs["suggest:t1"]).toMatchObject({ status: "done" });
+      expect(api.getTests).toHaveBeenCalledTimes(2);
+      await view.unmount();
+    });
+
+    it("does not poll a resumed fix-loop job twice", async () => {
+      api.getTests.mockResolvedValue(withFixJobs({ suggest: "js" }));
+      const view = mount("a1");
+      await view.render();
+      await act(async () => {
+        await view.holder.current.refresh();
+      });
+
+      expect(pollJob).toHaveBeenCalledTimes(1);
+      await view.unmount();
+    });
+  });
+
+  describe("approve", () => {
+    it("is pending at once, tracks the returned replay jobs, refreshes the suite and clears the pending key", async () => {
+      const accepted = deferred();
+      api.approveVersion.mockReturnValue(accepted.promise);
+      const view = mount("a1");
+      await view.render();
+
+      let call;
+      await act(async () => {
+        call = view.holder.current.approve("v2");
+      });
+      expect(view.holder.current.jobs["version:v2"]).toMatchObject({ status: "queued", error: null });
+
+      await act(async () => {
+        accepted.resolve({
+          version_id: "v2",
+          status: "approved_verifying",
+          jobs: [
+            { test_id: "t1", job_id: "jr1" },
+            { test_id: "t2", job_id: "jr2" },
+          ],
+        });
+        await call;
+      });
+
+      expect(api.approveVersion).toHaveBeenCalledWith("v2");
+      expect(pollJob).toHaveBeenCalledWith(api.getJob, "jr1", expect.anything());
+      expect(pollJob).toHaveBeenCalledWith(api.getJob, "jr2", expect.anything());
+      expect(view.holder.current.jobs["replay:t1"]).toMatchObject({ status: "queued" });
+      expect(view.holder.current.jobs["replay:t2"]).toMatchObject({ status: "queued" });
+      expect(api.getTests).toHaveBeenCalledTimes(2);
+      expect(view.holder.current.jobs["version:v2"]).toBeUndefined();
+      await view.unmount();
+    });
+
+    it("does not follow a replay job twice when the refreshed suite lists it too", async () => {
+      api.approveVersion.mockResolvedValue({
+        version_id: "v2",
+        status: "approved_verifying",
+        jobs: [{ test_id: "t1", job_id: "jr1" }],
+      });
+      api.getTests.mockResolvedValueOnce(suite()).mockResolvedValue(withActive({ t1: "jr1" }));
+      const view = mount("a1");
+      await view.render();
+
+      await act(async () => {
+        await view.holder.current.approve("v2");
+      });
+
+      expect(pollJob).toHaveBeenCalledTimes(1);
+      await view.unmount();
+    });
+
+    it("ignores a second call while the first is pending", async () => {
+      api.approveVersion.mockReturnValue(deferred().promise);
+      const view = mount("a1");
+      await view.render();
+
+      await act(async () => {
+        view.holder.current.approve("v2");
+        view.holder.current.approve("v2");
+      });
+
+      expect(api.approveVersion).toHaveBeenCalledTimes(1);
+      await view.unmount();
+    });
+
+    it("surfaces the server message on failure under version:<id>, and allows another try", async () => {
+      api.approveVersion.mockRejectedValue(new api.ApiError("The test queue is busy. Try again in a minute.", 429));
+      const view = mount("a1");
+      await view.render();
+
+      await act(async () => {
+        await view.holder.current.approve("v2");
+      });
+
+      expect(view.holder.current.jobs["version:v2"]).toMatchObject({
+        status: "failed",
+        error: "The test queue is busy. Try again in a minute.",
+      });
+      expect(api.getTests).toHaveBeenCalledTimes(1);
+
+      api.approveVersion.mockResolvedValue({ version_id: "v2", status: "approved_verifying", jobs: [] });
+      await act(async () => {
+        await view.holder.current.approve("v2");
+      });
+      expect(api.approveVersion).toHaveBeenCalledTimes(2);
+      expect(view.holder.current.jobs["version:v2"]).toBeUndefined();
+      await view.unmount();
+    });
+  });
+
+  describe.each([
+    ["reject", "rejectVersion", { version_id: "v2", status: "rejected" }, "This fix can't be rejected in its current state."],
+    ["restore", "restoreVersion", { id: "v1", number: 1, status: "restored" }, "This version can't be restored."],
+  ])("%s", (action, apiName, okReply, serverMessage) => {
+    it("is pending at once, refreshes the suite on success and clears the key", async () => {
+      const accepted = deferred();
+      api[apiName].mockReturnValue(accepted.promise);
+      const view = mount("a1");
+      await view.render();
+
+      let call;
+      await act(async () => {
+        call = view.holder.current[action]("v2");
+      });
+      expect(view.holder.current.jobs["version:v2"]).toMatchObject({ status: "queued", error: null });
+      expect(api.getTests).toHaveBeenCalledTimes(1);
+
+      api.getTests.mockResolvedValueOnce(suite({ prompt_version_number: 3 }));
+      await act(async () => {
+        accepted.resolve(okReply);
+        await call;
+      });
+
+      expect(api[apiName]).toHaveBeenCalledWith("v2");
+      expect(api.getTests).toHaveBeenCalledTimes(2);
+      expect(view.holder.current.suite.prompt_version_number).toBe(3);
+      expect(view.holder.current.jobs["version:v2"]).toBeUndefined();
+      expect(pollJob).not.toHaveBeenCalled();
+      await view.unmount();
+    });
+
+    it("ignores a second call while pending", async () => {
+      api[apiName].mockReturnValue(deferred().promise);
+      const view = mount("a1");
+      await view.render();
+
+      await act(async () => {
+        view.holder.current[action]("v2");
+        view.holder.current[action]("v2");
+      });
+
+      expect(api[apiName]).toHaveBeenCalledTimes(1);
+      await view.unmount();
+    });
+
+    it("surfaces the server message on failure and does not refresh", async () => {
+      api[apiName].mockRejectedValue(new api.ApiError(serverMessage, 409));
+      const view = mount("a1");
+      await view.render();
+
+      await act(async () => {
+        await view.holder.current[action]("v2");
+      });
+
+      expect(view.holder.current.jobs["version:v2"]).toMatchObject({ status: "failed", error: serverMessage });
+      expect(api.getTests).toHaveBeenCalledTimes(1);
+      await view.unmount();
+    });
+
+    it("turns a raw network failure into friendly copy", async () => {
+      api[apiName].mockRejectedValue(new TypeError("Failed to fetch"));
+      const view = mount("a1");
+      await view.render();
+
+      await act(async () => {
+        await view.holder.current[action]("v2");
+      });
+
+      expect(view.holder.current.jobs["version:v2"].error).toBe(
+        "Couldn't reach the server. Check your connection, then try again.",
+      );
+      await view.unmount();
+    });
+
+    it("updates nothing after unmount", async () => {
+      const accepted = deferred();
+      api[apiName].mockReturnValue(accepted.promise);
+      const view = mount("a1");
+      await view.render();
+      await act(async () => {
+        view.holder.current[action]("v2");
+      });
+
+      await view.unmount();
+      await act(async () => accepted.resolve(okReply));
+
+      expect(api.getTests).toHaveBeenCalledTimes(1);
+    });
+
+    it("ignores a reply that lands after switching agents", async () => {
+      const accepted = deferred();
+      api[apiName].mockReturnValue(accepted.promise);
+      const view = mount("a1");
+      await view.render();
+      await act(async () => {
+        view.holder.current[action]("v2");
+      });
+      await view.rerender("a2");
+      expect(api.getTests).toHaveBeenCalledTimes(2);
+
+      await act(async () => accepted.resolve(okReply));
+
+      expect(api.getTests).toHaveBeenCalledTimes(2);
+      expect(view.holder.current.jobs).toEqual({});
+      await view.unmount();
+    });
+  });
+
+  describe("fix-loop unmount and agent switch", () => {
+    it("ignores a suggestFix reply that lands after unmount", async () => {
+      const accepted = deferred();
+      api.suggestFix.mockReturnValue(accepted.promise);
+      const view = mount("a1");
+      await view.render();
+      await act(async () => {
+        view.holder.current.suggestFix("t1");
+      });
+
+      await view.unmount();
+      await act(async () => accepted.resolve({ job_id: "late" }));
+
+      expect(pollJob).not.toHaveBeenCalled();
+    });
+
+    it("ignores a generateHeldout reply that lands after switching agents", async () => {
+      const accepted = deferred();
+      api.generateHeldout.mockReturnValue(accepted.promise);
+      const view = mount("a1");
+      await view.render();
+      await act(async () => {
+        view.holder.current.generateHeldout("c1");
+      });
+      await view.rerender("a2");
+
+      await act(async () => accepted.resolve({ job_id: "late" }));
+
+      expect(pollJob).not.toHaveBeenCalled();
+      expect(view.holder.current.jobs).toEqual({});
+      await view.unmount();
+    });
+
+    it("tracks nothing from an approve reply that lands after unmount", async () => {
+      const accepted = deferred();
+      api.approveVersion.mockReturnValue(accepted.promise);
+      const view = mount("a1");
+      await view.render();
+      await act(async () => {
+        view.holder.current.approve("v2");
+      });
+
+      await view.unmount();
+      await act(async () =>
+        accepted.resolve({ version_id: "v2", status: "approved_verifying", jobs: [{ test_id: "t1", job_id: "jr1" }] }),
+      );
+
+      expect(pollJob).not.toHaveBeenCalled();
+      expect(api.getTests).toHaveBeenCalledTimes(1);
     });
   });
 
