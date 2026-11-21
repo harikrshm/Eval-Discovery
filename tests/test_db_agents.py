@@ -82,6 +82,54 @@ def test_new_prompt_version_numbers_after_the_highest_existing(db_session):
     assert version.number == 8
 
 
+def test_new_prompt_version_supersedes_a_proposed_version(db_session):
+    workspace, _ = create_workspace(db_session)
+    preset = PRESETS["support"]
+    agent = create_agent(db_session, workspace, preset.config, preset.analysis)
+    proposed = PromptVersion(
+        agent_id=agent.id, text="p", origin="suggested", status="proposed", number=2
+    )
+    verifying = PromptVersion(
+        agent_id=agent.id, text="v", origin="suggested", status="approved_verifying", number=3
+    )
+    db_session.add_all([proposed, verifying])
+    db_session.flush()
+    version = new_prompt_version(db_session, agent, "manual edit")
+    assert proposed.status == "superseded"
+    assert verifying.status == "approved_verifying"
+    assert version.number == 4 and version.status == "promoted"
+
+
+def test_prompt_version_counts_exclude_rejected_and_failed_but_row_count_does_not(db_session):
+    from backend.db.agents import (
+        MAX_PROMPT_VERSIONS_PER_AGENT,
+        MAX_VERSION_ROWS_PER_AGENT,
+        prompt_version_count,
+        prompt_version_row_count,
+    )
+
+    workspace, _ = create_workspace(db_session)
+    preset = PRESETS["support"]
+    agent = create_agent(db_session, workspace, preset.config, preset.analysis)
+    for number, status in enumerate(
+        ["superseded", "proposed", "approved_verifying", "rejected", "failed_verification"], start=2
+    ):
+        db_session.add(
+            PromptVersion(agent_id=agent.id, text="x", origin="manual", status=status, number=number)
+        )
+    db_session.flush()
+    assert prompt_version_count(db_session, agent) == 4
+    assert prompt_version_row_count(db_session, agent) == 6
+    assert (MAX_PROMPT_VERSIONS_PER_AGENT, MAX_VERSION_ROWS_PER_AGENT) == (20, 60)
+
+
+def test_version_cap_constant_is_shared_with_the_api_limits():
+    from backend.api import limits
+    from backend.db import agents
+
+    assert limits.MAX_PROMPT_VERSIONS_PER_AGENT is agents.MAX_PROMPT_VERSIONS_PER_AGENT
+
+
 def test_agent_count_counts_only_that_workspaces_agents(db_session):
     first, _ = create_workspace(db_session)
     second, _ = create_workspace(db_session)

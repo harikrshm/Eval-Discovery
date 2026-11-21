@@ -10,6 +10,12 @@ from backend.core.config import MAX_AGENTS_PER_WORKSPACE, AgentAnalysis, AgentCo
 from backend.db.models import Agent, BehaviorMap, PromptVersion, Workspace
 
 
+# Single source of the version caps (backend.api.limits re-exports the first one).
+MAX_PROMPT_VERSIONS_PER_AGENT = 20
+MAX_VERSION_ROWS_PER_AGENT = 60
+UNCOUNTED_VERSION_STATUSES = ("rejected", "failed_verification")
+
+
 class AgentLimitReached(Exception):
     """The workspace already has MAX_AGENTS_PER_WORKSPACE agents."""
 
@@ -92,7 +98,22 @@ def current_prompt(agent: Agent) -> str:
 
 
 def prompt_version_count(db: Session, agent: Agent) -> int:
-    """Number of prompt versions the agent has."""
+    """Number of prompt versions that count toward the per-agent cap.
+
+    Rejected and failed-verification candidates never became the prompt, so they are not counted.
+    """
+    return db.scalar(
+        select(func.count())
+        .select_from(PromptVersion)
+        .where(
+            PromptVersion.agent_id == agent.id,
+            PromptVersion.status.not_in(UNCOUNTED_VERSION_STATUSES),
+        )
+    )
+
+
+def prompt_version_row_count(db: Session, agent: Agent) -> int:
+    """Number of prompt version rows the agent has, whatever their status (the hard cap's count)."""
     return db.scalar(
         select(func.count()).select_from(PromptVersion).where(PromptVersion.agent_id == agent.id)
     )
@@ -110,7 +131,8 @@ def new_prompt_version(db: Session, agent: Agent, text: str) -> PromptVersion:
     """Promote `text` as the agent's next manual prompt version; the caller commits.
 
     The new version's number is max(existing)+1 and its parent is the current version, which
-    becomes `superseded`. Existing runs keep pointing at the version they ran on.
+    becomes `superseded`, as does any `proposed` candidate (its parent is no longer current).
+    Existing runs keep pointing at the version they ran on.
     """
     parent_id = agent.current_prompt_version_id
     highest = db.scalar(
@@ -118,7 +140,7 @@ def new_prompt_version(db: Session, agent: Agent, text: str) -> PromptVersion:
     )
     db.execute(
         update(PromptVersion)
-        .where(PromptVersion.agent_id == agent.id, PromptVersion.status == "promoted")
+        .where(PromptVersion.agent_id == agent.id, PromptVersion.status.in_(("promoted", "proposed")))
         .values(status="superseded")
         .execution_options(synchronize_session="fetch")
     )
