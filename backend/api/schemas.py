@@ -117,6 +117,34 @@ class CriterionOut(BaseModel):
     source: str
 
 
+MAX_CRITERION_NAME_CHARS = 200
+MAX_CRITERION_TEXT_CHARS = 2000
+
+
+class CriterionCreate(_Strict):
+    name: str = Field(min_length=1, max_length=MAX_CRITERION_NAME_CHARS)
+    definition: str = Field(max_length=MAX_CRITERION_TEXT_CHARS)
+    good_example: str = Field(max_length=MAX_CRITERION_TEXT_CHARS)
+    bad_example: str = Field(max_length=MAX_CRITERION_TEXT_CHARS)
+
+
+class CriterionUpdate(_Strict):
+    """Partial update: only the fields present in the body are changed."""
+
+    name: str | None = Field(default=None, min_length=1, max_length=MAX_CRITERION_NAME_CHARS)
+    definition: str | None = Field(default=None, max_length=MAX_CRITERION_TEXT_CHARS)
+    good_example: str | None = Field(default=None, max_length=MAX_CRITERION_TEXT_CHARS)
+    bad_example: str | None = Field(default=None, max_length=MAX_CRITERION_TEXT_CHARS)
+    why_discovered: str | None = Field(default=None, max_length=MAX_CRITERION_TEXT_CHARS)
+
+    @model_validator(mode="after")
+    def _no_explicit_null(self) -> "CriterionUpdate":
+        for field in self.model_fields_set:
+            if getattr(self, field) is None:
+                raise ValueError(f"{field} must not be null")
+        return self
+
+
 class AgentState(BaseModel):
     agent: AgentOut
     runs: list[RunOut]
