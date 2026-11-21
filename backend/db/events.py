@@ -1,4 +1,4 @@
-"""Minimal product event log (Phase 1 names only)."""
+"""Minimal product event log (Phase 1 and 2 names)."""
 
 import logging
 
@@ -9,7 +9,16 @@ from backend.db.models import Event
 logger = logging.getLogger(__name__)
 
 EVENT_NAMES: frozenset[str] = frozenset(
-    {"agent_created", "run_saved", "loop_detected", "criterion_created"}
+    {
+        "agent_created",
+        "run_saved",
+        "loop_detected",
+        "criterion_created",
+        "test_created",
+        "replay_started",
+        "replay_passed",
+        "replay_failed",
+    }
 )
 
 

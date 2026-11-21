@@ -6,7 +6,16 @@ from backend.db.workspaces import create_workspace
 
 
 def test_event_names():
-    assert EVENT_NAMES == {"agent_created", "run_saved", "loop_detected", "criterion_created"}
+    assert EVENT_NAMES == {
+        "agent_created",
+        "run_saved",
+        "loop_detected",
+        "criterion_created",
+        "test_created",
+        "replay_started",
+        "replay_passed",
+        "replay_failed",
+    }
 
 
 def test_log_event_persists_properties_and_created_at(db_session):
