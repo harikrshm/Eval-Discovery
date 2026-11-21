@@ -20,6 +20,7 @@ from backend.db.agents import current_prompt, get_owned_agent
 from backend.db.events import try_log_event
 from backend.db.models import Agent, Criterion, Workspace
 from backend.db.session import get_db
+from backend.db.testsuite import mark_criterion_results_stale
 
 logger = logging.getLogger(__name__)
 
@@ -29,6 +30,8 @@ NO_PATTERN = "No pattern to build from yet."
 GENERATION_FAILED = "Criteria generation unavailable, try again."
 MANUAL_WHY = "(manually added)"
 CRITERIA_LIMIT = "Criteria limit reached for this agent."
+# What the judge reads; editing any of these makes earlier verdicts and the sanity check obsolete.
+JUDGED_FIELDS = ("definition", "good_example", "bad_example")
 
 
 def _owned_or_404(db: Session, workspace: Workspace, agent_id: str) -> Agent:
@@ -136,7 +139,12 @@ def update(
     )
     if criterion is None:
         raise HTTPException(status_code=404, detail="Criterion not found.")
-    for field, value in body.model_dump(exclude_unset=True).items():
+    changes = body.model_dump(exclude_unset=True)
+    # Compare before setattr: only a real change to a judged field invalidates results.
+    judged_changed = any(getattr(criterion, f) != changes[f] for f in JUDGED_FIELDS if f in changes)
+    for field, value in changes.items():
         setattr(criterion, field, value)
+    if judged_changed:
+        mark_criterion_results_stale(db, criterion)
     db.commit()
     return _out(criterion)

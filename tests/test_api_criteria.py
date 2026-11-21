@@ -4,7 +4,7 @@ import pytest
 
 from backend.api import limits
 from backend.core.criteria import CriterionDraft, CriterionGenerationFailed
-from backend.db.models import Agent, Criterion, Event
+from backend.db.models import Agent, Criterion, EvalResult, EvalTest, Event
 from backend.db.workspaces import create_workspace
 
 DRAFT = CriterionDraft(
@@ -207,6 +207,63 @@ def test_patch_updates_only_given_fields(client, auth_headers, db_session):
     assert stored.name == "Renamed"
     assert stored.definition == MANUAL["definition"]
     assert stored.position == 1
+
+
+def _with_replay_result(db_session, cid):
+    test = EvalTest(criterion_id=cid, role="fix", scripted_user_messages=["hi"])
+    db_session.add(test)
+    db_session.flush()
+    db_session.add(
+        EvalResult(test_id=test.id, prompt_version_id="pv", kind="replay", verdict="pass", rationale="r")
+    )
+    criterion = db_session.get(Criterion, cid)
+    criterion.judge_check = {"ok": True}
+    db_session.commit()
+
+
+def _replay_stale_and_check(db_session, cid):
+    db_session.expire_all()
+    result = db_session.query(EvalResult).one()
+    return result.stale, db_session.get(Criterion, cid).judge_check
+
+
+@pytest.mark.parametrize("field", ["definition", "good_example", "bad_example"])
+def test_patch_of_a_judged_field_marks_results_stale_and_clears_judge_check(
+    client, auth_headers, db_session, field
+):
+    agent_id = _agent(client, auth_headers)
+    cid = _make(client, auth_headers, agent_id)
+    _with_replay_result(db_session, cid)
+    r = client.patch(f"/criteria/{cid}", json={field: "Something new."}, headers=auth_headers)
+    assert r.status_code == 200
+    assert _replay_stale_and_check(db_session, cid) == (True, None)
+
+
+def test_patch_of_name_only_leaves_results_and_check_alone(client, auth_headers, db_session):
+    agent_id = _agent(client, auth_headers)
+    cid = _make(client, auth_headers, agent_id)
+    _with_replay_result(db_session, cid)
+    client.patch(f"/criteria/{cid}", json={"name": "Renamed", "why_discovered": "Because."}, headers=auth_headers)
+    assert _replay_stale_and_check(db_session, cid) == (False, {"ok": True})
+
+
+def test_patch_with_unchanged_values_leaves_results_and_check_alone(client, auth_headers, db_session):
+    agent_id = _agent(client, auth_headers)
+    cid = _make(client, auth_headers, agent_id)
+    _with_replay_result(db_session, cid)
+    body = {k: MANUAL[k] for k in ("definition", "good_example", "bad_example")}
+    r = client.patch(f"/criteria/{cid}", json=body, headers=auth_headers)
+    assert r.status_code == 200
+    assert _replay_stale_and_check(db_session, cid) == (False, {"ok": True})
+
+
+def test_patch_only_invalidates_the_edited_criterion(client, auth_headers, db_session):
+    agent_id = _agent(client, auth_headers)
+    edited = _make(client, auth_headers, agent_id)
+    other = _make(client, auth_headers, agent_id)
+    _with_replay_result(db_session, other)
+    client.patch(f"/criteria/{edited}", json={"definition": "Changed."}, headers=auth_headers)
+    assert _replay_stale_and_check(db_session, other) == (False, {"ok": True})
 
 
 def test_patch_empty_body_is_noop(client, auth_headers):

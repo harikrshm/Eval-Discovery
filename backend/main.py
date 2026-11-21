@@ -8,6 +8,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from backend.api.agents import router as agents_router
 from backend.api.criteria import router as criteria_router
+from backend.api.prompt_versions import router as prompt_router
 from backend.api.runs import router as runs_router
 from backend.api.workspaces import router as workspaces_router
 from backend.db.session import SessionLocal
@@ -66,3 +67,4 @@ app.include_router(workspaces_router)
 app.include_router(agents_router)
 app.include_router(runs_router)
 app.include_router(criteria_router)
+app.include_router(prompt_router)

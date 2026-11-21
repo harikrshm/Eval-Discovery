@@ -29,6 +29,7 @@ from backend.db.agents import (
     agent_count,
     create_agent,
     current_prompt,
+    current_prompt_version,
     get_owned_agent,
     latest_analysis,
 )
@@ -49,11 +50,14 @@ AGENT_LIMIT = "Agent limit reached for this workspace."
 
 def _agent_out(agent: Agent) -> AgentOut:
     analysis = latest_analysis(agent)
+    version = current_prompt_version(agent)
     return AgentOut(
         id=agent.id,
         name=agent.name,
         user_role_label=agent.user_role_label,
-        system_prompt=current_prompt(agent),
+        system_prompt=version.text,
+        prompt_version_id=version.id,
+        prompt_version_number=version.number,
         behaviors=[BehaviorOut(**b) for b in analysis["behaviors"]],
         starter_messages=analysis["starter_messages"],
     )

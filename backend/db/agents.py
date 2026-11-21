@@ -3,7 +3,7 @@
 import hashlib
 from dataclasses import asdict
 
-from sqlalchemy import func, select
+from sqlalchemy import func, select, update
 from sqlalchemy.orm import Session
 
 from backend.core.config import MAX_AGENTS_PER_WORKSPACE, AgentAnalysis, AgentConfig, Behavior
@@ -42,7 +42,7 @@ def create_agent(
         db.add(agent)
         db.flush()
         version = PromptVersion(
-            agent_id=agent.id, text=config.system_prompt, origin=origin, status="promoted"
+            agent_id=agent.id, text=config.system_prompt, origin=origin, status="promoted", number=1
         )
         db.add(version)
         db.flush()
@@ -75,6 +75,51 @@ def current_prompt(agent: Agent) -> str:
         if version.id == agent.current_prompt_version_id:
             return version.text
     raise LookupError(f"agent {agent.id} has no current prompt version")
+
+
+def prompt_version_count(db: Session, agent: Agent) -> int:
+    """Number of prompt versions the agent has."""
+    return db.scalar(
+        select(func.count()).select_from(PromptVersion).where(PromptVersion.agent_id == agent.id)
+    )
+
+
+def current_prompt_version(agent: Agent) -> PromptVersion:
+    """The agent's current prompt version row."""
+    for version in agent.prompt_versions:
+        if version.id == agent.current_prompt_version_id:
+            return version
+    raise LookupError(f"agent {agent.id} has no current prompt version")
+
+
+def new_prompt_version(db: Session, agent: Agent, text: str) -> PromptVersion:
+    """Promote `text` as the agent's next manual prompt version; the caller commits.
+
+    The new version's number is max(existing)+1 and its parent is the current version, which
+    becomes `superseded`. Existing runs keep pointing at the version they ran on.
+    """
+    parent_id = agent.current_prompt_version_id
+    highest = db.scalar(
+        select(func.max(PromptVersion.number)).where(PromptVersion.agent_id == agent.id)
+    )
+    db.execute(
+        update(PromptVersion)
+        .where(PromptVersion.agent_id == agent.id, PromptVersion.status == "promoted")
+        .values(status="superseded")
+        .execution_options(synchronize_session="fetch")
+    )
+    version = PromptVersion(
+        agent_id=agent.id,
+        text=text,
+        parent_id=parent_id,
+        origin="manual",
+        status="promoted",
+        number=(highest or 0) + 1,
+    )
+    db.add(version)
+    db.flush()
+    agent.current_prompt_version_id = version.id
+    return version
 
 
 def latest_analysis(agent: Agent) -> dict:

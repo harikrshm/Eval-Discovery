@@ -103,8 +103,28 @@ class AgentOut(BaseModel):
     name: str
     user_role_label: str
     system_prompt: str
+    prompt_version_id: str
+    prompt_version_number: int
     behaviors: list[BehaviorOut]
     starter_messages: list[str]
+
+
+class PromptUpdate(_Strict):
+    text: str = Field(min_length=1, max_length=MAX_PROMPT_CHARS)
+
+    @field_validator("text")
+    @classmethod
+    def _text_not_blank(cls, value: str) -> str:
+        if not value.strip():
+            raise ValueError("must not be blank")
+        return value
+
+
+class PromptUpdated(BaseModel):
+    version_id: str
+    version_number: int
+    text: str
+    changed: bool
 
 
 class PresetOut(BaseModel):

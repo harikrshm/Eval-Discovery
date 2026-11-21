@@ -65,6 +65,17 @@ def test_create_from_preset_makes_no_llm_call(client, auth_headers, db_session):
     assert event.name == "agent_created" and event.properties == {"source": "preset"}
 
 
+def test_agent_out_carries_prompt_version_id_and_number(client, auth_headers, db_session):
+    body = client.post("/agents", json={"preset_id": "alex-sales"}, headers=auth_headers).json()
+    version = db_session.query(PromptVersion).one()
+    assert body["prompt_version_id"] == version.id
+    assert body["prompt_version_number"] == 1
+    with patch("backend.api.agents.analyze_agent", return_value=_analysis()):
+        custom = client.post("/agents", json=_custom(), headers=auth_headers).json()
+    assert custom["prompt_version_number"] == 1
+    assert custom["prompt_version_id"] != body["prompt_version_id"]
+
+
 def test_unknown_preset_is_422(client, auth_headers):
     r = client.post("/agents", json={"preset_id": "nope"}, headers=auth_headers)
     assert r.status_code == 422

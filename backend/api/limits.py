@@ -20,6 +20,7 @@ MAX_ASSISTANT_MESSAGE_CHARS = 16000  # model replies, which the user cannot shor
 MAX_REQUEST_CHARS = 120000  # sum over all messages in one request
 MAX_CRITERIA_PER_AGENT = 30
 MAX_PATTERN_RUNS = 10
+MAX_PROMPT_VERSIONS_PER_AGENT = 20
 
 
 class RateLimiter:
