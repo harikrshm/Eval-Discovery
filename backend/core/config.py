@@ -24,6 +24,14 @@ class AgentConfig:
 
 
 @dataclass(frozen=True)
+class CriterionSpec:
+    name: str
+    definition: str
+    good_example: str
+    bad_example: str
+
+
+@dataclass(frozen=True)
 class AgentAnalysis:
     user_role_label: str
     behaviors: tuple[Behavior, ...]

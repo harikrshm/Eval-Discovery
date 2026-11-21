@@ -77,6 +77,24 @@ def test_strip_thinking_leaves_clean_output_unchanged():
     assert result == "Clean response with no thinking."
 
 
+def test_temperature_is_forwarded_only_when_given():
+    from backend.groq_client import groq_chat
+
+    mock_response = MagicMock()
+    mock_response.choices[0].message.content = "ok"
+    with patch("backend.groq_client.client.chat.completions.create", return_value=mock_response) as create:
+        groq_chat(system="s", messages=[{"role": "user", "content": "hi"}], temperature=0)
+        assert create.call_args.kwargs["temperature"] == 0
+        groq_chat(system="s", messages=[{"role": "user", "content": "hi"}])
+        assert "temperature" not in create.call_args.kwargs
+
+
+def test_judge_model_is_gpt_oss_120b():
+    from backend.groq_client import MODEL_JUDGE
+
+    assert MODEL_JUDGE == "openai/gpt-oss-120b"
+
+
 def test_max_tokens_is_forwarded_only_when_given():
     from backend.groq_client import groq_chat
 

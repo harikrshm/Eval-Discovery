@@ -8,6 +8,7 @@ load_dotenv()
 MODEL_CHAT    = "openai/gpt-oss-20b"
 MODEL_PATTERN = "openai/gpt-oss-120b"
 MODEL_CRITERIA = "qwen/qwen3.8-27b"
+MODEL_JUDGE = "openai/gpt-oss-120b"
 
 _api_key = os.getenv("GROQ_API_KEY") or "sk-test-placeholder"
 client = Groq(api_key=_api_key)
@@ -19,13 +20,19 @@ def _strip_thinking(text: str) -> str:
 
 
 def groq_chat(
-    system: str, messages: list[dict], model: str = MODEL_CHAT, max_tokens: int | None = None
+    system: str,
+    messages: list[dict],
+    model: str = MODEL_CHAT,
+    max_tokens: int | None = None,
+    temperature: float | None = None,
 ) -> str:
     """Send messages to Groq and return the assistant reply text, stripped of thinking blocks."""
     full_messages = [{"role": "system", "content": system}] + messages
     kwargs = {"model": model, "messages": full_messages}
     if max_tokens is not None:
         kwargs["max_tokens"] = max_tokens
+    if temperature is not None:
+        kwargs["temperature"] = temperature
     if model == MODEL_CRITERIA:
         kwargs["reasoning_format"] = "hidden"
     response = client.chat.completions.create(**kwargs)
