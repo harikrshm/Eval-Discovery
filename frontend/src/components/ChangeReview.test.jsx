@@ -128,14 +128,14 @@ describe("ChangeReview proposed state", () => {
   it("renders the line diff with prefixes and screen reader labels", async () => {
     await render({});
     const items = [...container.querySelectorAll('[aria-label="Prompt changes"] li')];
-    expect(items.map((li) => li.textContent.replace(/^(Added line|Removed line)/, ""))).toEqual([
+    expect(items.map((li) => li.textContent)).toEqual([
       "  Line A",
-      "- Line OLD",
-      "+ Line NEW",
+      "Removed line: - Line OLD",
+      "Added line: + Line NEW",
       "  Line C",
     ]);
-    expect(items[1].querySelector(".sr-only").textContent).toBe("Removed line");
-    expect(items[2].querySelector(".sr-only").textContent).toBe("Added line");
+    expect(items[1].querySelector(".sr-only").textContent).toBe("Removed line: ");
+    expect(items[2].querySelector(".sr-only").textContent).toBe("Added line: ");
     expect(items[0].querySelector(".sr-only")).toBeNull();
   });
 
@@ -187,7 +187,7 @@ describe("ChangeReview proposed state", () => {
 
   it("shows a loading status and no actions while the report loads", async () => {
     await render({ report: null, version: null, reportLoading: true });
-    expect(container.querySelector('[role="status"]').textContent).toBe("Loading the suggested fix…");
+    expect(container.textContent).toContain("Loading the suggested fix…");
     expect(buttonByText("Approve and verify")).toBeUndefined();
   });
 
@@ -196,46 +196,63 @@ describe("ChangeReview proposed state", () => {
     const alert = container.querySelector('[role="alert"]');
     expect(alert.textContent).toContain("Couldn't load the suggested fix.");
     expect(alert.textContent).toContain("Backend down");
-    expect(buttonByText("Retry")).toBeUndefined();
   });
 
-  it("keeps one status region that exists before its text changes", async () => {
+  it("has no live region of its own: the panel announces the changes", async () => {
     await render({ report: null, version: null, reportLoading: true });
-    const region = container.querySelector('[role="status"]');
+    expect(container.querySelector('[role="status"]')).toBeNull();
+  });
+
+  it("has a focusable heading for the panel to move focus to", async () => {
+    await render({});
+    const heading = container.querySelector("h3");
+    expect(heading.getAttribute("tabindex")).toBe("-1");
+    expect(heading.hasAttribute("data-review-focus")).toBe(true);
+  });
+
+  it("offers Retry and Reject, but not Approve, when the report cannot load", async () => {
+    const onRetry = vi.fn();
+    const onReject = vi.fn();
+    await render({ report: null, version: null, reportError: "Backend down", onRetry, onReject });
+    expect(buttonByText("Approve and verify")).toBeUndefined();
     await act(async () => {
-      root.render(
-        createElement(ChangeReview, {
-          candidate: candidate(),
-          version: VERSION,
-          report: reportWith(null),
-          reportLoading: false,
-          reportError: null,
-          busy: false,
-          error: null,
-          onApprove: vi.fn(),
-          onReject: vi.fn(),
-        })
-      );
+      buttonByText("Retry").click();
     });
-    expect(container.querySelector('[role="status"]')).toBe(region);
-    expect(region.textContent).toBe("");
+    await act(async () => {
+      buttonByText("Reject").click();
+    });
+    expect(onRetry).toHaveBeenCalledTimes(1);
+    expect(onReject).toHaveBeenCalledTimes(1);
+  });
+
+  it("disables Reject while busy even when the report cannot load", async () => {
+    await render({ report: null, version: null, reportError: "Backend down", busy: true });
+    expect(buttonByText("Reject").disabled).toBe(true);
+  });
+
+  it("does not throw when no handlers are wired", async () => {
+    await render({ onApprove: undefined, onReject: undefined });
+    await act(async () => {
+      buttonByText("Approve and verify").click();
+      buttonByText("Reject").click();
+    });
+    expect(buttonByText("Reject")).toBeDefined();
   });
 });
 
 describe("ChangeReview verifying state", () => {
   const verifying = candidate({ status: "approved_verifying", progress: { done: 1, total: 3 } });
 
-  it("announces the progress in a status region", async () => {
+  it("shows the progress as visible text", async () => {
     await render({ candidate: verifying, report: reportWith(null) });
-    const status = container.querySelector('[role="status"]');
-    expect(status.textContent).toBe("Verifying v3: 1 of 3 tests done. Chat still uses v2.");
+    expect(container.textContent).toContain("Verifying v3: 1 of 3 tests done. Chat still uses v2.");
+    expect(container.querySelector('[role="status"]')).toBeNull();
     expect(buttonByText("Approve and verify")).toBeUndefined();
     expect(container.querySelector('[aria-label="Prompt changes"]')).toBeNull();
   });
 
-  it("updates the same region as progress changes", async () => {
+  it("updates the progress text when the count changes", async () => {
     await render({ candidate: verifying });
-    const region = container.querySelector('[role="status"]');
     await act(async () => {
       root.render(
         createElement(ChangeReview, {
@@ -251,13 +268,12 @@ describe("ChangeReview verifying state", () => {
         })
       );
     });
-    expect(container.querySelector('[role="status"]')).toBe(region);
-    expect(region.textContent).toContain("2 of 3 tests done");
+    expect(container.textContent).toContain("2 of 3 tests done");
   });
 
   it("handles missing progress without crashing", async () => {
     await render({ candidate: { ...verifying, progress: null } });
-    expect(container.querySelector('[role="status"]').textContent).toContain("Verifying v3");
+    expect(container.textContent).toContain("Verifying v3");
   });
 });
 
@@ -288,6 +304,7 @@ describe("ChangeReview resolved states", () => {
     await render({ candidate: promoted, report: reportWith(outcome()) });
     expect(container.textContent).not.toContain("It stayed on topic now.");
     const details = buttonByText("Details");
+    expect(details.textContent).toBe("Details for Fix test: Stays on topic");
     expect(details.getAttribute("aria-expanded")).toBe("false");
     await act(async () => {
       details.click();
@@ -337,38 +354,25 @@ describe("ChangeReview resolved states", () => {
     expect(container.textContent).not.toContain("Writing the explanation");
   });
 
-  it("shows a status while the narrative is pending", async () => {
+  it("shows that the explanation is being written while the narrative is pending", async () => {
     const o = outcome({ narrative: null });
     await render({ candidate: promoted, report: reportWith(o) });
-    const status = [...container.querySelectorAll('[role="status"]')].find((el) =>
-      el.textContent.includes("Writing the explanation…")
-    );
-    expect(status).toBeDefined();
+    expect(container.textContent).toContain("Writing the explanation…");
+    expect(container.querySelector("table")).not.toBeNull();
   });
 
-  it("keeps the same status region when the narrative arrives", async () => {
-    const pending = reportWith(outcome({ narrative: null }));
-    await render({ candidate: promoted, report: pending });
-    const region = container.querySelector('[role="status"]');
-    expect(region.textContent).toBe("Writing the explanation…");
-    await act(async () => {
-      root.render(
-        createElement(ChangeReview, {
-          candidate: promoted,
-          version: VERSION,
-          report: reportWith(outcome()),
-          reportLoading: false,
-          reportError: null,
-          busy: false,
-          error: null,
-          onApprove: vi.fn(),
-          onReject: vi.fn(),
-        })
-      );
-    });
-    expect(container.querySelector('[role="status"]')).toBe(region);
-    expect(region.textContent).toBe("");
+  it("stops saying it is writing once the hook has given up", async () => {
+    const o = outcome({ narrative: null });
+    await render({ candidate: promoted, report: reportWith(o), gaveUp: true });
+    expect(container.textContent).not.toContain("Writing the explanation");
+    expect(container.textContent).toContain("Couldn't write the explanation. The results above are still correct.");
+    expect(container.querySelector("table")).not.toBeNull();
+  });
+
+  it("prefers a narrative that arrived late over the gave-up message", async () => {
+    await render({ candidate: promoted, report: reportWith(outcome()), gaveUp: true });
     expect(container.textContent).toContain("The fix worked.");
+    expect(container.textContent).not.toContain("Couldn't write the explanation");
   });
 
   it("says the explanation is unavailable and still shows the table", async () => {
@@ -381,7 +385,8 @@ describe("ChangeReview resolved states", () => {
 
   it("shows a loading status while the resolved report loads", async () => {
     await render({ candidate: promoted, report: null, version: null, reportLoading: true });
-    expect(container.querySelector('[role="status"]').textContent).toBe("Loading the suggested fix…");
+    expect(container.textContent).toContain("Loading the suggested fix…");
+    expect(container.querySelector("table")).toBeNull();
   });
 
   it("still shows the outcome line from the candidate when the report has no outcome yet", async () => {
@@ -398,6 +403,7 @@ describe("ChangeReviewContainer", () => {
       version: null,
       loading: false,
       error: null,
+      gaveUp: false,
       ...value,
     });
   }
@@ -417,6 +423,85 @@ describe("ChangeReviewContainer", () => {
     mockReport({ loading: true });
     await render(containerProps(), ChangeReviewContainer);
     expect(container.textContent).toContain("Loading the suggested fix…");
+  });
+
+  it("passes gaveUp from the hook through", async () => {
+    mockReport({ report: reportWith(outcome({ narrative: null })), version: VERSION, gaveUp: true });
+    await render(containerProps({ candidate: candidate({ status: "promoted" }) }), ChangeReviewContainer);
+    expect(container.textContent).toContain("Couldn't write the explanation.");
+  });
+
+  it("passes Retry through", async () => {
+    mockReport({ error: "Backend down" });
+    const onRetry = vi.fn();
+    await render(containerProps({ onRetry }), ChangeReviewContainer);
+    await act(async () => {
+      buttonByText("Retry").click();
+    });
+    expect(onRetry).toHaveBeenCalledTimes(1);
+  });
+
+  describe("announcements", () => {
+    async function announced(candidateOverrides, hook) {
+      mockReport(hook);
+      const onAnnounce = vi.fn();
+      await render(containerProps({ candidate: candidate(candidateOverrides), onAnnounce }), ChangeReviewContainer);
+      return onAnnounce.mock.calls.map((c) => c[0]);
+    }
+
+    it("announces that the fix is ready to review", async () => {
+      expect(await announced({}, { report: reportWith(null), version: VERSION })).toEqual([
+        "Suggested fix v3 is ready to review.",
+      ]);
+    });
+
+    it("announces the loading state", async () => {
+      expect(await announced({}, { loading: true })).toEqual(["Loading the suggested fix…"]);
+    });
+
+    it("announces the verifying state without the changing counts", async () => {
+      const calls = await announced(
+        { status: "approved_verifying", progress: { done: 1, total: 3 } },
+        { report: reportWith(null), version: VERSION }
+      );
+      expect(calls).toEqual(["Verifying v3. Chat still uses v2."]);
+    });
+
+    it("announces a promotion with the explanation still being written", async () => {
+      const calls = await announced(
+        { status: "promoted" },
+        { report: reportWith(outcome({ narrative: null })), version: VERSION }
+      );
+      expect(calls).toEqual(["v3 is now live. Writing the explanation…"]);
+    });
+
+    it("announces a promotion with its explanation", async () => {
+      const calls = await announced({ status: "promoted" }, { report: reportWith(outcome()), version: VERSION });
+      expect(calls).toEqual(["v3 is now live. The explanation is ready."]);
+    });
+
+    it("announces a failed verification with its reason and that the explanation is unavailable", async () => {
+      const o = outcome({
+        status: "failed_verification",
+        reason: "The fix test still fails.",
+        narrative: null,
+        explanation_unavailable: true,
+      });
+      const calls = await announced({ status: "failed_verification" }, { report: reportWith(o), version: VERSION });
+      expect(calls).toEqual(["v3 was not promoted: The fix test still fails. Explanation unavailable."]);
+    });
+
+    it("announces that the explanation could not be written once the hook gave up", async () => {
+      const calls = await announced(
+        { status: "promoted" },
+        { report: reportWith(outcome({ narrative: null })), version: VERSION, gaveUp: true }
+      );
+      expect(calls).toEqual(["v3 is now live. Couldn't write the explanation."]);
+    });
+
+    it("announces nothing for a load error, which already has an alert", async () => {
+      expect(await announced({}, { error: "Backend down" })).toEqual([""]);
+    });
   });
 
   it("approves and rejects by version id", async () => {

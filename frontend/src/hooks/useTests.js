@@ -180,7 +180,7 @@ export function useTests(agentId) {
     async (key, request) => {
       const ctx = ctxRef.current;
       if (!ctx) return;
-      if (IN_FLIGHT.includes(ctx.jobs[key]?.status)) return;
+      if (IN_FLIGHT.includes(ctx.jobs[key]?.status)) return false;
       engine.patchJob(ctx, key, { status: "queued", error: null, result: null });
       try {
         const { job_id: jobId } = await request();
@@ -209,24 +209,26 @@ export function useTests(agentId) {
   // Approve, reject and restore change the version state, not a job. The key is pending from
   // the call until the suite has been reloaded (so the button cannot be clicked again while the
   // view still shows the old state); a rejected request leaves a failed key with the message.
+  // Resolves true when the action went through and the suite was refreshed, false otherwise.
   const versionAction = useCallback(
     async (versionId, request, onReply) => {
       const ctx = ctxRef.current;
-      if (!ctx) return;
+      if (!ctx) return false;
       const key = versionKey(versionId);
-      if (IN_FLIGHT.includes(ctx.jobs[key]?.status)) return;
+      if (IN_FLIGHT.includes(ctx.jobs[key]?.status)) return false;
       engine.patchJob(ctx, key, { status: "queued", error: null, result: null });
       let reply;
       try {
         reply = await request();
       } catch (err) {
         engine.patchJob(ctx, key, { status: "failed", error: friendlyError(err), result: null });
-        return;
+        return false;
       }
-      if (!engine.isLive(ctx)) return;
+      if (!engine.isLive(ctx)) return false;
       if (onReply) onReply(ctx, reply);
       await engine.loadSuite(ctx);
       engine.dropJob(ctx, key);
+      return true;
     },
     [engine]
   );

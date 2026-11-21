@@ -10,7 +10,7 @@ import { friendlyError } from "../lib/testStatus";
 export const POLL_INTERVAL_MS = 3000;
 export const POLL_LIMIT_MS = 120000;
 
-const IDLE = { report: null, version: null, loading: false, error: null };
+const IDLE = { report: null, version: null, loading: false, error: null, gaveUp: false };
 
 function awaitingNarrative(report) {
   const outcome = report?.outcome;
@@ -19,7 +19,7 @@ function awaitingNarrative(report) {
 
 export function useReport(versionId, { enabled = true } = {}) {
   // `loaded` records which version it belongs to, so a stale answer is never shown for another.
-  const [loaded, setLoaded] = useState({ versionId: null, report: null, version: null, error: null });
+  const [loaded, setLoaded] = useState({ versionId: null, report: null, version: null, error: null, gaveUp: false });
 
   const active = enabled && versionId != null;
 
@@ -30,9 +30,11 @@ export function useReport(versionId, { enabled = true } = {}) {
     let pollTimer = null;
     let limitTimer = null;
     let timedOut = false;
+    let latest = null; // the newest report seen, to tell at the time limit whether a narrative is still missing
 
     // Later polls replace only the report: the version's text never changes.
     const publishReport = (report) => {
+      latest = report;
       if (!signal.aborted) setLoaded((prev) => ({ ...prev, report }));
     };
 
@@ -55,17 +57,20 @@ export function useReport(versionId, { enabled = true } = {}) {
       try {
         const [version, report] = await Promise.all([getVersion(versionId), getReport(versionId)]);
         if (signal.aborted) return;
-        setLoaded({ versionId, report, version, error: null });
+        latest = report;
+        setLoaded({ versionId, report, version, error: null, gaveUp: false });
         if (awaitingNarrative(report)) {
           limitTimer = setTimeout(() => {
             timedOut = true;
             clearTimeout(pollTimer);
+            // Polling has stopped for good: tell the view the narrative is not coming.
+            if (!signal.aborted && awaitingNarrative(latest)) setLoaded((prev) => ({ ...prev, gaveUp: true }));
           }, POLL_LIMIT_MS);
           pollTimer = setTimeout(poll, POLL_INTERVAL_MS);
         }
       } catch (err) {
         if (signal.aborted) return;
-        setLoaded({ versionId, report: null, version: null, error: friendlyError(err) });
+        setLoaded({ versionId, report: null, version: null, error: friendlyError(err), gaveUp: false });
       }
     })();
 
@@ -77,6 +82,6 @@ export function useReport(versionId, { enabled = true } = {}) {
   }, [active, versionId]);
 
   if (!active) return IDLE;
-  if (loaded.versionId !== versionId) return { report: null, version: null, loading: true, error: null };
-  return { report: loaded.report, version: loaded.version, loading: false, error: loaded.error };
+  if (loaded.versionId !== versionId) return { report: null, version: null, loading: true, error: null, gaveUp: false };
+  return { report: loaded.report, version: loaded.version, loading: false, error: loaded.error, gaveUp: loaded.gaveUp };
 }

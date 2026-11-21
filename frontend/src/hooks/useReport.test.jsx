@@ -88,12 +88,12 @@ describe("useReport", () => {
   it("is idle without a version id or when disabled", async () => {
     const none = mount(null);
     await none.render();
-    expect(none.holder.current).toEqual({ report: null, version: null, loading: false, error: null });
+    expect(none.holder.current).toEqual({ report: null, version: null, loading: false, error: null, gaveUp: false });
     await none.unmount();
 
     const off = mount("v2");
     await off.render(false);
-    expect(off.holder.current).toEqual({ report: null, version: null, loading: false, error: null });
+    expect(off.holder.current).toEqual({ report: null, version: null, loading: false, error: null, gaveUp: false });
     expect(api.getVersion).not.toHaveBeenCalled();
     expect(api.getReport).not.toHaveBeenCalled();
     await off.unmount();
@@ -191,6 +191,56 @@ describe("useReport", () => {
 
     await tick(60000);
     expect(api.getReport).toHaveBeenCalledTimes(callsAtTimeout);
+    await view.unmount();
+  });
+
+  it("reports gaveUp once the time limit stops polling with the narrative still missing", async () => {
+    api.getReport.mockResolvedValue(report());
+    const view = mount("v2");
+    await view.render();
+    expect(view.holder.current.gaveUp).toBe(false);
+
+    await tick(119000);
+    expect(view.holder.current.gaveUp).toBe(false);
+    await tick(1000);
+    expect(view.holder.current.gaveUp).toBe(true);
+    expect(view.holder.current.report).not.toBeNull();
+    await view.unmount();
+  });
+
+  it("does not report gaveUp when the narrative arrived in time", async () => {
+    api.getReport.mockResolvedValue(report());
+    const view = mount("v2");
+    await view.render();
+    api.getReport.mockResolvedValue(report({ narrative: NARRATIVE }));
+    await tick(3000);
+
+    await tick(130000);
+    expect(view.holder.current.gaveUp).toBe(false);
+    await view.unmount();
+  });
+
+  it("does not report gaveUp when the explanation was marked unavailable", async () => {
+    api.getReport.mockResolvedValue(report());
+    const view = mount("v2");
+    await view.render();
+    api.getReport.mockResolvedValue(report({ unavailable: true }));
+    await tick(3000);
+
+    await tick(130000);
+    expect(view.holder.current.gaveUp).toBe(false);
+    await view.unmount();
+  });
+
+  it("clears gaveUp for another version", async () => {
+    api.getReport.mockResolvedValue(report());
+    const view = mount("v2");
+    await view.render();
+    await tick(121000);
+    expect(view.holder.current.gaveUp).toBe(true);
+
+    await view.rerender("v3");
+    expect(view.holder.current.gaveUp).toBe(false);
     await view.unmount();
   });
 
@@ -312,7 +362,7 @@ describe("useReport", () => {
     await view.render();
 
     await view.rerender("v2", false);
-    expect(view.holder.current).toEqual({ report: null, version: null, loading: false, error: null });
+    expect(view.holder.current).toEqual({ report: null, version: null, loading: false, error: null, gaveUp: false });
     const calls = api.getReport.mock.calls.length;
     await tick(30000);
 

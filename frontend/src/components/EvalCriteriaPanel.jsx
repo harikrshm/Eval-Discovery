@@ -1,4 +1,4 @@
-import { useState, useEffect, useId } from "react";
+import { useState, useEffect, useId, useRef } from "react";
 import { Button } from "./ui/button";
 import { Input } from "./ui/input";
 import { Textarea } from "./ui/textarea";
@@ -143,6 +143,8 @@ export default function EvalCriteriaPanel({
   // A failed load must not make the tests vanish silently; a stale suite stays visible beside it.
   const showTestsError = Boolean(testsError) && !testsLoading;
   const candidate = suite?.candidate ?? null;
+  const candidateId = candidate?.version_id;
+  const candidateStatus = candidate?.status;
   const showStale = (suite?.stale_count ?? 0) > 0 && hasTests;
   const replayActive = Object.entries(jobs).some(
     ([key, job]) => key.startsWith("replay:") && (job.status === "queued" || job.status === "running")
@@ -156,6 +158,54 @@ export default function EvalCriteriaPanel({
     setExpandedIndex(evalCriteria.length - 1);
   }, [evalCriteria.length]);
 
+  // The review remounts when its candidate changes status, so a focused Approve or Reject button
+  // is gone by the time the action settles. The panel owns where focus goes next, and only after
+  // the user's own click has settled: a status change nobody asked for never moves focus.
+  const [announcement, setAnnouncement] = useState("");
+  const [attempt, setAttempt] = useState(0);
+  const [focusTick, setFocusTick] = useState(0);
+  const focusRequest = useRef(null);
+  const reviewRef = useRef(null);
+  const titleRef = useRef(null);
+
+  useEffect(() => {
+    const request = focusRequest.current;
+    if (!request) return;
+    const heading = reviewRef.current?.querySelector("[data-review-focus]");
+    if (request.kind === "retry") {
+      heading?.focus();
+    } else if (request.kind === "approve") {
+      if (candidateId === request.versionId && candidateStatus === request.fromStatus) return; // not shown yet
+      if (candidateId === request.versionId) heading?.focus();
+    } else if (request.kind === "reject") {
+      if (candidateId === request.versionId) return; // still shown: wait for the refreshed suite
+      titleRef.current?.focus();
+    }
+    focusRequest.current = null;
+  }, [focusTick, attempt, candidateId, candidateStatus]);
+
+  async function handleApprove(versionId) {
+    if (!onApprove) return;
+    const fromStatus = candidateStatus;
+    if ((await onApprove(versionId)) === false) return;
+    focusRequest.current = { kind: "approve", versionId, fromStatus };
+    setFocusTick((t) => t + 1);
+  }
+
+  async function handleReject(versionId) {
+    if (!onReject) return;
+    const number = candidate?.number;
+    if ((await onReject(versionId)) === false) return;
+    setAnnouncement(`Suggested fix v${number} rejected.`);
+    focusRequest.current = { kind: "reject", versionId };
+    setFocusTick((t) => t + 1);
+  }
+
+  function handleRetry() {
+    focusRequest.current = { kind: "retry" };
+    setAttempt((a) => a + 1);
+  }
+
   function handleToggle(index) {
     setExpandedIndex((prev) => (prev === index ? null : index));
   }
@@ -164,7 +214,11 @@ export default function EvalCriteriaPanel({
     <div className="flex flex-col h-full bg-[#fafafa]">
       {/* Header */}
       <div className="h-11 flex items-center justify-between px-4 border-b border-border flex-shrink-0">
-        <h2 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+        <h2
+          ref={titleRef}
+          tabIndex={-1}
+          className="text-xs font-semibold uppercase tracking-wide text-muted-foreground focus:outline-none"
+        >
           Eval criteria
         </h2>
         <Button
@@ -176,6 +230,11 @@ export default function EvalCriteriaPanel({
         >
           <X className="h-4 w-4" aria-hidden="true" />
         </Button>
+      </div>
+
+      {/* The one live region for the change review. It stays mounted while the review remounts. */}
+      <div role="status" className="sr-only">
+        {announcement}
       </div>
 
       {/* "New pattern detected" notification banner */}
@@ -224,15 +283,19 @@ export default function EvalCriteriaPanel({
           )}
 
           {candidate && (
-            <ChangeReviewContainer
-              key={`${candidate.version_id}:${candidate.status}`}
-              candidate={candidate}
-              jobs={jobs}
-              onApprove={onApprove}
-              onReject={onReject}
-              agentName={agentName}
-              userRoleLabel={userRoleLabel}
-            />
+            <div ref={reviewRef}>
+              <ChangeReviewContainer
+                key={`${candidate.version_id}:${candidate.status}:${attempt}`}
+                candidate={candidate}
+                jobs={jobs}
+                onApprove={handleApprove}
+                onReject={handleReject}
+                onRetry={handleRetry}
+                onAnnounce={setAnnouncement}
+                agentName={agentName}
+                userRoleLabel={userRoleLabel}
+              />
+            </div>
           )}
 
           {promptEditor && <Separator />}

@@ -797,6 +797,25 @@ describe("useTests", () => {
       await view.unmount();
     });
 
+    it("resolves true once the suite has been refreshed and false when the request failed", async () => {
+      api.approveVersion.mockResolvedValue({ version_id: "v2", status: "approved_verifying", jobs: [] });
+      const view = mount("a1");
+      await view.render();
+
+      let ok;
+      await act(async () => {
+        ok = await view.holder.current.approve("v2");
+      });
+      expect(ok).toBe(true);
+
+      api.approveVersion.mockRejectedValue(new api.ApiError("Nope.", 409));
+      await act(async () => {
+        ok = await view.holder.current.approve("v2");
+      });
+      expect(ok).toBe(false);
+      await view.unmount();
+    });
+
     it("ignores a second call while the first is pending", async () => {
       api.approveVersion.mockReturnValue(deferred().promise);
       const view = mount("a1");
@@ -864,6 +883,24 @@ describe("useTests", () => {
       expect(view.holder.current.suite.prompt_version_number).toBe(3);
       expect(view.holder.current.jobs["version:v2"]).toBeUndefined();
       expect(pollJob).not.toHaveBeenCalled();
+      await view.unmount();
+    });
+
+    it("resolves true on success and false on failure", async () => {
+      api[apiName].mockResolvedValue(okReply);
+      const view = mount("a1");
+      await view.render();
+      let ok;
+      await act(async () => {
+        ok = await view.holder.current[action]("v2");
+      });
+      expect(ok).toBe(true);
+
+      api[apiName].mockRejectedValue(new api.ApiError(serverMessage, 409));
+      await act(async () => {
+        ok = await view.holder.current[action]("v2");
+      });
+      expect(ok).toBe(false);
       await view.unmount();
     });
 

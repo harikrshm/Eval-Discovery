@@ -38,32 +38,43 @@ function suiteWith({ stale = 0, tests = [{ id: "t1", role: "fix", baseline: null
   };
 }
 
+const lastEditor = { promptText: "You are Alex.", versionNumber: 2, onSave: vi.fn(async () => {}) };
+
+function panelProps(props) {
+  return {
+    evalCriteria: [CRITERION],
+    patternState: "complete",
+    discoverPending: false,
+    onDismiss: vi.fn(),
+    onUpdate: vi.fn(),
+    onAdd: vi.fn(),
+    onExportAll: vi.fn(),
+    saveError: null,
+    suite: suiteWith(),
+    jobs: {},
+    onReplay: vi.fn(),
+    onBuildTests: vi.fn(),
+    onRunAll: vi.fn(),
+    agentName: "Alex",
+    userRoleLabel: "Prospect",
+    promptEditor: lastEditor,
+    ...props,
+  };
+}
+
 async function render(props) {
   container = document.createElement("div");
   document.body.appendChild(container);
   root = createRoot(container);
   await act(async () => {
-    root.render(
-      createElement(EvalCriteriaPanel, {
-        evalCriteria: [CRITERION],
-        patternState: "complete",
-        discoverPending: false,
-        onDismiss: vi.fn(),
-        onUpdate: vi.fn(),
-        onAdd: vi.fn(),
-        onExportAll: vi.fn(),
-        saveError: null,
-        suite: suiteWith(),
-        jobs: {},
-        onReplay: vi.fn(),
-        onBuildTests: vi.fn(),
-        onRunAll: vi.fn(),
-        agentName: "Alex",
-        userRoleLabel: "Prospect",
-        promptEditor: { promptText: "You are Alex.", versionNumber: 2, onSave: vi.fn(async () => {}) },
-        ...props,
-      })
-    );
+    root.render(createElement(EvalCriteriaPanel, panelProps(props)));
+  });
+}
+
+// Re-renders the mounted panel with the same defaults plus these props (a parent state change).
+async function rerender(props) {
+  await act(async () => {
+    root.render(createElement(EvalCriteriaPanel, panelProps(props)));
   });
 }
 
@@ -277,21 +288,168 @@ describe("EvalCriteriaPanel change review", () => {
     const before = container.querySelector('[aria-label="Change review"]');
     expect(before).not.toBeNull();
     vi.mocked(useReport).mockClear();
-    await act(async () => {
-      root.render(
-        createElement(EvalCriteriaPanel, {
-          evalCriteria: [CRITERION],
-          patternState: "complete",
-          discoverPending: false,
-          onDismiss: vi.fn(),
-          onUpdate: vi.fn(),
-          onAdd: vi.fn(),
-          onExportAll: vi.fn(),
-          suite: { ...suiteWith(), candidate: { ...CANDIDATE, status: "approved_verifying", progress: { done: 0, total: 2 } } },
-          jobs: {},
-        })
-      );
+    await rerender({
+      suite: { ...suiteWith(), candidate: { ...CANDIDATE, status: "approved_verifying", progress: { done: 0, total: 2 } } },
     });
+    expect(useReport).toHaveBeenCalled();
     expect(container.querySelector('[aria-label="Change review"]')).not.toBe(before);
+  });
+
+  describe("announcements", () => {
+    const region = () => container.querySelector('[role="status"].sr-only');
+
+    it("keeps one panel-level live region that exists before its text changes", async () => {
+      vi.mocked(useReport).mockReturnValue(LOADED);
+      await render({ suite: { ...suiteWith(), candidate: CANDIDATE } });
+      const live = region();
+      expect(live).not.toBeNull();
+      expect(live.textContent).toBe("Suggested fix v3 is ready to review.");
+
+      await rerender({
+        suite: { ...suiteWith(), candidate: { ...CANDIDATE, status: "approved_verifying", progress: { done: 0, total: 2 } } },
+      });
+      expect(region()).toBe(live);
+      expect(live.textContent).toBe("Verifying v3. Chat still uses v2.");
+
+      vi.mocked(useReport).mockReturnValue({
+        ...LOADED,
+        report: {
+          ...REPORT,
+          status: "promoted",
+          outcome: {
+            status: "promoted",
+            reason: "ok",
+            table: [],
+            narrative: { explanation: "It worked.", next_step: "Done.", cited_test_ids: [] },
+            explanation_unavailable: false,
+          },
+        },
+      });
+      await rerender({ suite: { ...suiteWith(), candidate: { ...CANDIDATE, status: "promoted" } } });
+      expect(region()).toBe(live);
+      expect(live.textContent).toBe("v3 is now live. The explanation is ready.");
+    });
+
+    it("exists even without a candidate and is empty", async () => {
+      await render({ suite: { ...suiteWith(), candidate: null } });
+      expect(region()).not.toBeNull();
+      expect(region().textContent).toBe("");
+    });
+
+    it("does not duplicate the announcement in a second live region of the review", async () => {
+      vi.mocked(useReport).mockReturnValue(LOADED);
+      await render({ suite: { ...suiteWith(), candidate: { ...CANDIDATE, status: "approved_verifying", progress: { done: 1, total: 2 } } } });
+      const live = [...container.querySelectorAll('[role="status"]')].filter((el) => el.textContent.includes("Verifying v3"));
+      expect(live).toHaveLength(1);
+    });
+
+    it("announces a rejection", async () => {
+      vi.mocked(useReport).mockReturnValue(LOADED);
+      const onReject = vi.fn(async () => {
+        await rerender({ suite: { ...suiteWith(), candidate: null }, onReject });
+        return true;
+      });
+      await render({ suite: { ...suiteWith(), candidate: CANDIDATE }, onReject });
+      await act(async () => {
+        buttonByText("Reject").click();
+      });
+      expect(region().textContent).toBe("Suggested fix v3 rejected.");
+    });
+  });
+
+  describe("focus", () => {
+    const VERIFYING = { ...CANDIDATE, status: "approved_verifying", progress: { done: 0, total: 2 } };
+
+    beforeEach(() => {
+      vi.mocked(useReport).mockReturnValue(LOADED);
+    });
+
+    it("moves focus to the new state's heading after the user's Approve settles", async () => {
+      const onApprove = vi.fn(async () => {
+        await rerender({ suite: { ...suiteWith(), candidate: VERIFYING }, onApprove });
+        return true;
+      });
+      await render({ suite: { ...suiteWith(), candidate: CANDIDATE }, onApprove });
+      buttonByText("Approve and verify").focus();
+      await act(async () => {
+        buttonByText("Approve and verify").click();
+      });
+      expect(document.activeElement.tagName).toBe("H3");
+      expect(document.activeElement.textContent).toBe("What happened with v3");
+    });
+
+    it("moves focus even when the suite refresh renders before the handler resolves", async () => {
+      let finish;
+      const onApprove = vi.fn(() => new Promise((resolve) => (finish = resolve)));
+      await render({ suite: { ...suiteWith(), candidate: CANDIDATE }, onApprove });
+      await act(async () => {
+        buttonByText("Approve and verify").click();
+      });
+      await rerender({ suite: { ...suiteWith(), candidate: VERIFYING }, onApprove });
+      expect(document.activeElement.tagName).not.toBe("H3");
+      await act(async () => finish(true));
+      expect(document.activeElement.textContent).toBe("What happened with v3");
+    });
+
+    it("leaves focus alone when Approve fails", async () => {
+      const onApprove = vi.fn(async () => false);
+      await render({ suite: { ...suiteWith(), candidate: CANDIDATE }, onApprove });
+      const approve = buttonByText("Approve and verify");
+      approve.focus();
+      await act(async () => {
+        approve.click();
+      });
+      expect(document.activeElement).toBe(approve);
+      // A later background change must not steal focus either.
+      await rerender({ suite: { ...suiteWith(), candidate: VERIFYING }, onApprove });
+      expect(document.activeElement.tagName).not.toBe("H3");
+    });
+
+    it("moves focus to the panel heading after Reject removes the review", async () => {
+      const onReject = vi.fn(async () => {
+        await rerender({ suite: { ...suiteWith(), candidate: null }, onReject });
+        return true;
+      });
+      await render({ suite: { ...suiteWith(), candidate: CANDIDATE }, onReject });
+      buttonByText("Reject").focus();
+      await act(async () => {
+        buttonByText("Reject").click();
+      });
+      expect(document.activeElement.tagName).toBe("H2");
+      expect(document.activeElement.textContent).toBe("Eval criteria");
+      expect(document.activeElement.getAttribute("tabindex")).toBe("-1");
+    });
+
+    it("does not move focus when the status changes without a user click", async () => {
+      await render({ suite: { ...suiteWith(), candidate: CANDIDATE } });
+      const edit = buttonByText("Edit prompt");
+      edit.focus();
+      await rerender({ suite: { ...suiteWith(), candidate: VERIFYING } });
+      expect(document.activeElement).toBe(edit);
+      await rerender({ suite: { ...suiteWith(), candidate: { ...CANDIDATE, status: "promoted" } } });
+      expect(document.activeElement).toBe(edit);
+      await rerender({ suite: { ...suiteWith(), candidate: null } });
+      expect(document.activeElement).toBe(edit);
+    });
+  });
+
+  describe("report load failure", () => {
+    it("offers Retry that refetches and keeps focus in the review, and keeps Reject reachable", async () => {
+      vi.mocked(useReport).mockReturnValue({ report: null, version: null, loading: false, error: "Backend down", gaveUp: false });
+      const onReject = vi.fn();
+      await render({ suite: { ...suiteWith(), candidate: CANDIDATE }, onReject });
+      expect(container.textContent).toContain("Couldn't load the suggested fix.");
+      expect(buttonByText("Reject")).toBeDefined();
+      const before = container.querySelector('[aria-label="Change review"]');
+      vi.mocked(useReport).mockClear();
+
+      buttonByText("Retry").focus();
+      await act(async () => {
+        buttonByText("Retry").click();
+      });
+      expect(useReport).toHaveBeenCalled();
+      expect(container.querySelector('[aria-label="Change review"]')).not.toBe(before);
+      expect(document.activeElement.tagName).toBe("H3");
+    });
   });
 });
