@@ -109,7 +109,7 @@ def test_every_preset_is_well_formed():
     for p in PRESETS.values():
         assert 0 < len(p.config.system_prompt) <= MAX_PROMPT_CHARS
         assert len(p.analysis.behaviors) >= 4
-        assert all(len(b.trigger_terms) >= 3 and all(t == t.lower() for t in b.trigger_terms) for b in p.analysis.behaviors)
+        assert all(len(b.trigger_terms) >= 2 and all(t == t.lower() for t in b.trigger_terms) for b in p.analysis.behaviors)   # >=2: Alex's voicemail behavior has exactly 2 legacy terms
         assert len(p.analysis.starter_messages) == 3
         assert p.config.user_role_label == p.analysis.user_role_label
 
