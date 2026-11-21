@@ -216,7 +216,10 @@ export function useSession(agentId) {
     if (id == null) return null;
     setPatternState("generating");
     try {
-      const criterion = await apiDiscoverCriterion(id);
+      // The response also carries the build job's id; the suite refresh resumes that job, and
+      // the stored criterion (which Export all writes out) must stay a plain criterion.
+      // eslint-disable-next-line no-unused-vars
+      const { job_id, ...criterion } = await apiDiscoverCriterion(id);
       if (agentIdRef.current !== id) return null;
       applyCriteria([...criteriaRef.current, criterion]);
       setPatternSummary(null); // the server consumes the summary on discovery

@@ -216,3 +216,39 @@ describe("useSession criteria errors", () => {
     await view.unmount();
   });
 });
+
+describe("useSession discover", () => {
+  beforeEach(() => {
+    sessionStorage.clear();
+    vi.clearAllMocks();
+    api.getAgentState.mockResolvedValue({ ...STATE, pattern_summary: "asks about price" });
+  });
+
+  it("keeps the build job id out of the stored criterion, so Export all does not include it", async () => {
+    api.discoverCriterion.mockResolvedValue({
+      id: "c1",
+      name: "Answers the pricing question",
+      definition: "d",
+      good_example: "g",
+      bad_example: "b",
+      why_discovered: "w",
+      source: "discovered",
+      job_id: "job-9",
+    });
+    const view = mount("a1");
+    await view.render();
+
+    let returned;
+    await act(async () => {
+      returned = await view.holder.current.discover();
+    });
+
+    const [stored] = view.holder.current.evalCriteria;
+    expect(stored.id).toBe("c1");
+    expect("job_id" in stored).toBe(false);
+    expect("job_id" in returned).toBe(false);
+    // Export all writes JSON.stringify(evalCriteria, null, 2).
+    expect(JSON.stringify(view.holder.current.evalCriteria, null, 2)).not.toContain("job_id");
+    await view.unmount();
+  });
+});
