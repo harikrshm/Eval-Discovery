@@ -1,57 +1,94 @@
-# Eval Discovery Agent
+# Eval Discovery
 
-Helps voice agent builders break out of the preview run loop by auto-generating eval rubrics grounded in real conversation data.
+Helps voice-agent builders break out of the preview run loop by generating eval criteria grounded in their own test conversations. Works with any agent: paste its system prompt, or start from a preset.
 
-## What It Does
+## What it does
 
-1. You play a prospect and chat with **Alex** — a CloudSync SDR AI agent
-2. Click **End run** after each conversation to save the run
-3. The system automatically detects repeated testing patterns across your runs
-4. Click **Discover evals** to generate a structured evaluation rubric
-5. Edit the criteria and **Export all** as JSON for your test pipeline
+1. **Set up an agent**: paste any agent's system prompt (up to 4000 characters) or pick a preset (a sales rep, a support agent, an appointment-booking assistant). For a pasted prompt, an LLM reads it once and builds a map of the behaviors worth testing, the role you play (prospect, customer, caller...) and three starter messages.
+2. **Chat** with the agent as that role.
+3. Click **End run** after each conversation to save it.
+4. When you keep probing the same behavior across runs, a **loop is detected** and a pattern summary with quoted evidence is stored.
+5. Click **Discover evals** to turn the pattern into a structured criterion (name, definition, good and bad example, why it was discovered).
+6. **Edit** the criteria, add your own, and **Export all** as JSON for your test pipeline.
 
-## Architecture Overview
+Everything is saved server-side in an anonymous workspace, so a reload or a return visit picks up where you left off.
 
-**Two-tier web app** — React frontend + Python FastAPI backend — with three specialized LLM models via Groq:
+## Architecture overview
+
+React 19 + Vite frontend, FastAPI backend, SQLAlchemy 2 on Postgres (SQLite locally), LLM calls through Groq.
 
 ```
-Browser (React)  →  FastAPI (Python)  →  Groq API
-  sessionStorage      3 routers            3 LLM models
-  useSession hook     Pydantic schemas     llama / gpt / qwen
+Browser (React)  ->  FastAPI  ->  Postgres / SQLite
+  workspace token      api/        workspace, agent, prompt_version,
+  in localStorage      core/       behavior_map, run, criterion, event
+                       db/
+                          ->  Groq API (chat, prompt analysis, pattern, criteria)
 ```
 
-| Component | Technology | Purpose |
-|-----------|-----------|---------|
-| UI | React 19 + Vite + Tailwind | Chat, history, criteria panels |
-| State | `useSession` hook + sessionStorage | FSM, runs, keyword pattern trigger |
-| API | FastAPI + Pydantic | `/chat`, `/check-pattern`, `/generate-criteria` |
-| LLM | Groq (gpt-oss-20b / gpt-oss-120b / qwen3.8-27b) | Chat · pattern detection · rubric gen |
+| Part | Where | Notes |
+|------|-------|-------|
+| API routers | `backend/api/` | workspaces, agents (presets, create, state, chat), runs (save, check-pattern), criteria (discover, add, edit) |
+| Pure logic | `backend/core/` | agent config and presets, prompt analysis, pattern detection, criterion generation, prompt builders; no web or DB imports |
+| Persistence | `backend/db/`, `migrations/` | SQLAlchemy models, Alembic migration `0001_foundation` |
+| Frontend | `frontend/src/` | `useSession` hook hydrates from the server; `AgentSetup` screen; chat, history and criteria panels |
 
-Full architecture document with diagrams: **[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)**
+Full document with diagrams: **[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)**
 
 ## Setup
 
-**Backend** (requires Python 3.11+):
+**Backend** (Python 3.11+):
 
     pip install -r requirements.txt
-    cp .env.example .env   # add your GROQ_API_KEY
+    cp .env.example .env          # set GROQ_API_KEY
+    alembic upgrade head          # creates the tables
     uvicorn backend.main:app --reload
 
-**Frontend** (requires Node 18+):
+`DATABASE_URL` is optional locally: unset, the backend uses SQLite at `./dev.db`. To use Postgres instead, run `docker compose up -d` and keep the `DATABASE_URL` from `.env.example` (it matches `docker-compose.yml`).
+
+**Frontend** (Node 18+):
 
     cd frontend
     npm install
     npm run dev
 
-Open http://localhost:5173.
+Open http://localhost:5173. The frontend talks to `http://localhost:8000` unless `VITE_API_URL` is set at build time.
 
-## Running Tests
+## Tests
 
-    pytest tests/ -v
+    python -m pytest tests -q          # backend (SQLite, Groq is mocked)
+    cd frontend && npm test            # frontend (Vitest)
+    cd frontend && npm run lint && npm run build
 
-## Key Design Notes
+## Key design notes
 
-- **No database** — all state lives in `sessionStorage` for single-session use; JSON export is the durable artifact
-- **Delta batching** — only new transcripts since the last check are sent to the pattern API, reducing token usage
-- **Keyword pre-filter** — 38 domain keywords must appear in ≥2 runs before any API call is made
-- **Three-model strategy** — cheapest model for chat, strongest for pattern analysis, reasoning model for criteria generation
+- **Anonymous workspaces.** The first API call creates a workspace and returns a random token that the browser keeps in `localStorage`. Only its SHA-256 hash is stored. There are no accounts.
+- **30-day expiry.** A workspace and everything under it expires after 30 days and is purged when the backend starts. `DELETE /workspaces/me` deletes it immediately.
+- **Behavior map instead of hardcoded keywords.** Each agent has a stored map of behaviors with trigger terms (presets ship theirs; pasted prompts get one from the analysis call). The pattern pre-filter checks those terms in user messages and only asks the LLM when a term appears in at least 2 new runs.
+- **Delta batching on the server.** Each agent remembers the last run it checked; a check only sends the runs saved since then. `check_due` in the save-run response tells the UI when to run it.
+- **Pasted text is data.** Agent prompts, transcripts and pattern summaries are wrapped in delimiter tags, and the system text says tagged content is data, not instructions. Delimiter tags inside pasted text are neutralized.
+- **Limits.** 5 agents and 50 runs per workspace, 4000-character prompts, 2000-character messages, at most 40 messages per request, and 30 LLM-backed calls per minute per client IP (in-memory, per process).
+- **Events.** A small product event log (`agent_created`, `run_saved`, `loop_detected`, `criterion_created`) is written best-effort: a failed write never fails a request.
+- **Models.** `openai/gpt-oss-20b` plays the agent, `openai/gpt-oss-120b` analyzes prompts and detects patterns, `qwen/qwen3.8-27b` writes criteria.
+
+## Deploy
+
+**Not yet verified on a live Postgres.** The migration and models were checked offline against the Postgres dialect only (generated SQL reviewed, nothing executed). The first thing to check after deploying is that `alembic upgrade head` succeeds, then `POST /workspaces` and `GET /presets` respond.
+
+Backend on Render (web service):
+
+1. Add a Postgres database. Check the provider's current free-tier terms first (expiry, size and connection limits change).
+2. Set environment variables: `DATABASE_URL` (the instance's connection string; `postgres://` and `postgresql://` both work), `ALLOWED_ORIGINS` (your frontend origin, comma-separated for several), `GROQ_API_KEY`.
+3. Set the start command (same as `Procfile`):
+
+       alembic upgrade head && uvicorn backend.main:app --host 0.0.0.0 --port $PORT --proxy-headers --forwarded-allow-ips="*"
+
+   `--proxy-headers` with `--forwarded-allow-ips="*"` makes uvicorn trust `X-Forwarded-For`, so the per-IP rate limiter sees the real client instead of Render's proxy. That is acceptable on Render because its single proxy is the only way to reach the container. Anywhere clients can reach uvicorn directly, `*` lets them spoof their IP and dodge the limiter; list the proxy's address instead.
+
+Frontend (Cloudflare Worker with static assets): rebuild with the backend URL baked in, then deploy.
+
+    cd frontend
+    VITE_API_URL=https://your-backend.onrender.com npm run build
+
+## Roadmap
+
+Later phases (saved tests, replay, judging, suggested prompt fixes) are described in [docs/superpowers/specs/2026-11-21-agent-ready-eval-flywheel-design.md](docs/superpowers/specs/2026-11-21-agent-ready-eval-flywheel-design.md). They are not implemented yet.
