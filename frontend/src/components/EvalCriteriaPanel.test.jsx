@@ -139,3 +139,48 @@ describe("EvalCriteriaPanel before the suite has loaded", () => {
     expect(buttonByText("Run all tests")).toBeUndefined();
   });
 });
+
+describe("EvalCriteriaPanel tests load error", () => {
+  const alerts = () => [...container.querySelectorAll('[role="alert"]')].filter((a) => a.textContent.includes("load tests"));
+
+  it("shows an alert with the error and a Retry button when the first load failed", async () => {
+    const onRetryTests = vi.fn();
+    await render({ suite: null, testsError: "Backend down", onRetryTests });
+    const [alert] = alerts();
+    expect(alert.textContent).toContain("Couldn't load tests.");
+    expect(alert.textContent).toContain("Backend down");
+
+    await act(async () => {
+      [...alert.querySelectorAll("button")].find((b) => b.textContent === "Retry").click();
+    });
+    expect(onRetryTests).toHaveBeenCalledTimes(1);
+  });
+
+  it("shows no alert when the suite loaded without error", async () => {
+    await render({ testsError: null });
+    expect(alerts()).toHaveLength(0);
+  });
+
+  it("keeps the stale suite visible alongside the alert when a refresh failed", async () => {
+    await render({ suite: suiteWith({ stale: 1 }), testsError: "Failed to fetch" });
+    expect(alerts()).toHaveLength(1);
+    expect(container.textContent).toContain("Fix test");
+    expect(buttonByText("Run all tests")).toBeDefined();
+  });
+
+  it("hides the alert while a load is in flight", async () => {
+    await render({ suite: null, testsError: "Backend down", testsLoading: true });
+    expect(alerts()).toHaveLength(0);
+  });
+});
+
+describe("EvalCriteriaPanel announcements", () => {
+  it("makes the stale banner a status region", async () => {
+    await render({ suite: suiteWith({ stale: 2 }) });
+    const banner = [...container.querySelectorAll('[role="status"]')].find((el) =>
+      el.textContent.includes("out of date")
+    );
+    expect(banner).toBeDefined();
+    expect(banner.textContent).toContain("Run all tests");
+  });
+});

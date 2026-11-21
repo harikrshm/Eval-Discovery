@@ -35,7 +35,7 @@ function TestRow({ test, job, agentName, userRoleLabel, onReplay }) {
           <p className="text-xs text-muted-foreground">
             Original run: {verdictLabel(baseline?.verdict ?? "fail")}
           </p>
-          <p className="text-xs text-muted-foreground">
+          <p aria-live="polite" className="text-xs text-muted-foreground">
             Latest replay: {verdictLabel(current?.verdict)}
           </p>
         </div>

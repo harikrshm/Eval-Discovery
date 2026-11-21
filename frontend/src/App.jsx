@@ -398,6 +398,9 @@ export default function App() {
                 onExportAll={handleExportAll}
                 suite={tests.suite}
                 jobs={tests.jobs}
+                testsError={tests.error}
+                testsLoading={tests.loading}
+                onRetryTests={tests.refresh}
                 agentName={agent.name}
                 userRoleLabel={agent.user_role_label}
                 onReplay={tests.replay}

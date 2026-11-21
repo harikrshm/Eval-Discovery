@@ -12,6 +12,7 @@ export default function PromptEditor({ promptText, versionNumber, onSave }) {
   const [text, setText] = useState(promptText);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState(null);
+  const [justSaved, setJustSaved] = useState(false);
 
   const editRef = useRef(null);
   const mounted = useRef(true);
@@ -46,6 +47,7 @@ export default function PromptEditor({ promptText, versionNumber, onSave }) {
     }
     setText(promptText);
     setError(null);
+    setJustSaved(false);
     setEditing(true);
   }
 
@@ -66,6 +68,7 @@ export default function PromptEditor({ promptText, versionNumber, onSave }) {
       if (!mounted.current) return;
       refocus.current = true;
       setEditing(false);
+      setJustSaved(true);
     } catch (err) {
       if (mounted.current) {
         setError(err instanceof Error && err.message ? err.message : "Couldn't save the prompt. Try again.");
@@ -78,7 +81,13 @@ export default function PromptEditor({ promptText, versionNumber, onSave }) {
   return (
     <section aria-label="Agent prompt" className="space-y-2">
       <div className="flex items-center justify-between gap-2">
-        <p className="text-sm text-foreground">Chat uses prompt v{versionNumber}</p>
+        <div>
+          <p className="text-sm text-foreground">Chat uses prompt v{versionNumber}</p>
+          {/* Always rendered so the announcement of a save is picked up when its text appears. */}
+          <p role="status" className="sr-only">
+            {justSaved ? `Saved as v${versionNumber}.` : ""}
+          </p>
+        </div>
         <Button
           ref={editRef}
           type="button"

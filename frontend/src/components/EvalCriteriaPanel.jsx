@@ -131,9 +131,14 @@ export default function EvalCriteriaPanel({
   onBuildTests,
   onRunAll,
   promptEditor,
+  testsError = null,
+  testsLoading = false,
+  onRetryTests,
 }) {
   const suiteByCriterion = new Map((suite?.criteria ?? []).map((c) => [c.criterion_id, c]));
   const hasTests = (suite?.criteria ?? []).some((c) => c.tests.length > 0);
+  // A failed load must not make the tests vanish silently; a stale suite stays visible beside it.
+  const showTestsError = Boolean(testsError) && !testsLoading;
   const showStale = (suite?.stale_count ?? 0) > 0 && hasTests;
   const replayActive = Object.entries(jobs).some(
     ([key, job]) => key.startsWith("replay:") && (job.status === "queued" || job.status === "running")
@@ -190,8 +195,23 @@ export default function EvalCriteriaPanel({
         <div className="p-4 space-y-3">
           {promptEditor && <PromptEditor {...promptEditor} />}
 
+          {showTestsError && (
+            <div
+              role="alert"
+              className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700"
+            >
+              <p>Couldn&apos;t load tests. {testsError}</p>
+              <Button type="button" variant="outline" size="sm" onClick={onRetryTests}>
+                Retry
+              </Button>
+            </div>
+          )}
+
           {showStale && (
-            <div className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900">
+            <div
+              role="status"
+              className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900"
+            >
               <p>{staleMessage(suite.stale_count)}</p>
               <Button type="button" variant="outline" size="sm" onClick={onRunAll} disabled={replayActive}>
                 Run all tests

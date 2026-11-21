@@ -303,3 +303,15 @@ describe("TestsSection without a suite entry", () => {
 beforeEach(() => {
   document.body.innerHTML = "";
 });
+
+describe("TestsSection announcements", () => {
+  it("renders the latest replay verdict inside an aria-live polite element, even before a result", async () => {
+    await render({
+      criterionSuite: suiteFor({
+        tests: [testRow("t1", "fix", { current: result("pass") }), testRow("t2", "heldout")],
+      }),
+    });
+    const lives = [...container.querySelectorAll('[aria-live="polite"]')];
+    expect(lives.map((el) => el.textContent)).toEqual(["Latest replay: Pass", "Latest replay: Not run"]);
+  });
+});

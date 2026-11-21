@@ -175,3 +175,41 @@ describe("PromptEditor", () => {
     expect(container.querySelector("textarea").value).toBe("You are Alex.");
   });
 });
+
+describe("PromptEditor announcements", () => {
+  const status = () => container.querySelector('[role="status"]');
+
+  it("has an empty status region before anything is saved", async () => {
+    await render({});
+    expect(status()).not.toBeNull();
+    expect(status().textContent).toBe("");
+  });
+
+  it("announces the saved version and clears it when editing again", async () => {
+    const onSave = vi.fn(async () => {});
+    await render({ onSave, versionNumber: 3 });
+    await openEditor();
+    await type("A different prompt.");
+    await act(async () => {
+      buttonByText("Save").click();
+    });
+    expect(status().textContent).toBe("Saved as v3.");
+    expect(status().className).toContain("sr-only");
+
+    await openEditor();
+    expect(status().textContent).toBe("");
+  });
+
+  it("announces nothing when the save fails", async () => {
+    const onSave = vi.fn(async () => {
+      throw new Error("nope");
+    });
+    await render({ onSave });
+    await openEditor();
+    await type("A different prompt.");
+    await act(async () => {
+      buttonByText("Save").click();
+    });
+    expect(status().textContent).toBe("");
+  });
+});
