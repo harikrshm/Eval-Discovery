@@ -97,6 +97,8 @@ class Run(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
 
     agent: Mapped[Agent] = relationship(back_populates="runs")
+    # One-way, so the ORM deletes a run before its prompt version (Postgres enforces the FK).
+    prompt_version: Mapped[PromptVersion] = relationship()
 
 
 class Criterion(Base):

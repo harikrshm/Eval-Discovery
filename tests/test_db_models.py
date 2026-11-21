@@ -11,7 +11,7 @@ from backend.db.models import (
     Workspace,
     utcnow,
 )
-from backend.db.session import normalize_database_url
+from backend.db.session import Base, normalize_database_url
 
 
 def _make_agent(db_session):
@@ -69,3 +69,45 @@ def test_run_position_unique_per_agent(db_session):
     db_session.add(Run(agent_id=agent.id, prompt_version_id=pv.id, position=1, messages=[]))
     with pytest.raises(IntegrityError):
         db_session.commit()
+
+
+def test_workspace_delete_cascades_cleanly_with_foreign_keys_enforced():
+    """Postgres enforces FKs (SQLite does not by default); the ORM must delete in a safe order.
+
+    Run references both agent and prompt_version; without a relationship to prompt_version the
+    ORM may delete the prompt version first, so the DB cascade removes the run and the ORM's own
+    DELETE then matches 0 rows (an SAWarning).
+    """
+    import warnings
+
+    from sqlalchemy import create_engine, event
+    from sqlalchemy.orm import sessionmaker
+
+    from backend.core.config import PRESETS
+    from backend.db.agents import create_agent
+    from backend.db.workspaces import create_workspace
+
+    engine = create_engine("sqlite://")
+
+    @event.listens_for(engine, "connect")
+    def _enforce_fks(dbapi_conn, _):
+        dbapi_conn.execute("PRAGMA foreign_keys=ON")
+
+    Base.metadata.create_all(engine)
+    db = sessionmaker(bind=engine, expire_on_commit=False)()
+    try:
+        workspace, _ = create_workspace(db)
+        preset = PRESETS["support"]
+        agent = create_agent(db, workspace, preset.config, preset.analysis)
+        db.add(
+            Run(agent_id=agent.id, prompt_version_id=agent.current_prompt_version_id, position=1, messages=[])
+        )
+        db.commit()
+        with warnings.catch_warnings():
+            warnings.simplefilter("error")
+            db.delete(workspace)
+            db.commit()
+        assert db.query(Run).count() == 0
+    finally:
+        db.close()
+        engine.dispose()
