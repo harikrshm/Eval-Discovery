@@ -75,3 +75,15 @@ def test_strip_thinking_leaves_clean_output_unchanged():
         result = groq_chat(system="sys", messages=[{"role": "user", "content": "hi"}])
 
     assert result == "Clean response with no thinking."
+
+
+def test_max_tokens_is_forwarded_only_when_given():
+    from backend.groq_client import groq_chat
+
+    mock_response = MagicMock()
+    mock_response.choices[0].message.content = "ok"
+    with patch("backend.groq_client.client.chat.completions.create", return_value=mock_response) as create:
+        groq_chat(system="s", messages=[{"role": "user", "content": "hi"}], max_tokens=123)
+        assert create.call_args.kwargs["max_tokens"] == 123
+        groq_chat(system="s", messages=[{"role": "user", "content": "hi"}])
+        assert "max_tokens" not in create.call_args.kwargs

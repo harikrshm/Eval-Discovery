@@ -411,3 +411,47 @@ def test_state_lists_runs_and_criteria_in_order(client, auth_headers, db_session
     assert state["run_count"] == 2
     assert state["pattern_summary"] == "summary"
     assert state["last_checked_at_run"] == 2
+
+
+def test_chat_accepts_long_assistant_turn_but_caps_user_turn(client, auth_headers):
+    agent = client.post("/agents", json={"preset_id": "support"}, headers=auth_headers).json()
+    url = f"/agents/{agent['id']}/chat"
+    history = [
+        {"role": "user", "content": "hi"},
+        {"role": "assistant", "content": "a" * 3000},
+        {"role": "user", "content": "go on"},
+    ]
+    with patch("backend.api.agents.groq_chat", return_value="ok"):
+        assert client.post(url, json={"messages": history}, headers=auth_headers).status_code == 200
+        too_long_user = [{"role": "user", "content": "x" * 2001}]
+        assert client.post(url, json={"messages": too_long_user}, headers=auth_headers).status_code == 422
+        too_long_assistant = [
+            {"role": "user", "content": "hi"},
+            {"role": "assistant", "content": "a" * 16001},
+            {"role": "user", "content": "go on"},
+        ]
+        assert client.post(url, json={"messages": too_long_assistant}, headers=auth_headers).status_code == 422
+
+
+def test_chat_rejects_oversized_total_request(client, auth_headers):
+    agent = client.post("/agents", json={"preset_id": "support"}, headers=auth_headers).json()
+    url = f"/agents/{agent['id']}/chat"
+    turns = []
+    for _ in range(9):  # 9 * 16000 = 144000 > 120000
+        turns += [{"role": "user", "content": "q"}, {"role": "assistant", "content": "a" * 16000}]
+    turns.append({"role": "user", "content": "q"})
+    with patch("backend.api.agents.groq_chat", return_value="ok"):
+        assert client.post(url, json={"messages": turns}, headers=auth_headers).status_code == 422
+
+
+def test_chat_reply_is_capped_and_asks_for_bounded_tokens(client, auth_headers):
+    agent = client.post("/agents", json={"preset_id": "support"}, headers=auth_headers).json()
+    with patch("backend.api.agents.groq_chat", return_value="z" * 20000) as chat:
+        r = client.post(
+            f"/agents/{agent['id']}/chat",
+            json={"messages": [{"role": "user", "content": "hi"}]},
+            headers=auth_headers,
+        )
+    assert r.status_code == 200
+    assert len(r.json()["reply"]) == 16000
+    assert chat.call_args.kwargs["max_tokens"] == 3000

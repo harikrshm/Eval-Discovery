@@ -8,7 +8,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from backend.api.deps import get_current_workspace
-from backend.api.limits import rate_limit_llm
+from backend.api.limits import MAX_ASSISTANT_MESSAGE_CHARS, rate_limit_llm
 from backend.api.schemas import (
     MAX_ROLE_LABEL_CHARS,
     AgentCreate,
@@ -43,6 +43,7 @@ router = APIRouter(tags=["agents"])
 
 ANALYSIS_FAILED = "Couldn't analyze that prompt. Try again."
 CHAT_FAILED = "The agent didn't respond. Try again."
+CHAT_MAX_TOKENS = 3000  # keeps replies (~4 chars/token) under the assistant message cap
 AGENT_LIMIT = "Agent limit reached for this workspace."
 
 
@@ -175,8 +176,9 @@ def chat(
     system = current_prompt(agent)
     messages = [m.model_dump() for m in body.messages]
     try:
-        reply = groq_chat(system, messages)
+        reply = groq_chat(system, messages, max_tokens=CHAT_MAX_TOKENS)
     except Exception:
         logger.warning("Agent chat failed", exc_info=True)
         raise HTTPException(status_code=502, detail=CHAT_FAILED) from None
-    return ChatResponse(reply=reply)
+    # Replies come back in later requests as assistant turns, so they must fit the cap.
+    return ChatResponse(reply=reply[:MAX_ASSISTANT_MESSAGE_CHARS])

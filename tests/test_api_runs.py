@@ -318,3 +318,24 @@ def test_check_pattern_marks_last_analysed_run_not_newer_count(client, auth_head
     db_session.refresh(row)
     assert db_session.query(Run).count() == 3
     assert row.last_checked_at_run == 2  # the unanalysed run 3 stays in the next delta
+
+
+def test_run_save_accepts_long_assistant_turn_and_state_round_trips(client, auth_headers):
+    agent_id = _agent(client, auth_headers)
+    msgs = _msgs(reply="a" * 3000)
+    r = _post_run(client, auth_headers, agent_id, msgs)
+    assert r.status_code == 201
+    assert len(r.json()["run"]["messages"][1]["content"]) == 3000
+    state = client.get(f"/agents/{agent_id}/state", headers=auth_headers)
+    assert state.status_code == 200
+    assert len(state.json()["runs"][0]["messages"][1]["content"]) == 3000
+
+
+def test_run_save_rejects_long_user_turn_and_oversized_total(client, auth_headers):
+    agent_id = _agent(client, auth_headers)
+    assert _post_run(client, auth_headers, agent_id, _msgs(first="x" * 2001)).status_code == 422
+    big = []
+    for _ in range(9):
+        big += [{"role": "user", "content": "q"}, {"role": "assistant", "content": "a" * 16000}]
+    big.append({"role": "user", "content": "q"})
+    assert _post_run(client, auth_headers, agent_id, big).status_code == 422

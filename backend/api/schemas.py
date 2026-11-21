@@ -6,9 +6,11 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from backend.api.limits import (
+    MAX_ASSISTANT_MESSAGE_CHARS,
     MAX_MESSAGE_CHARS,
     MAX_MESSAGES_PER_REQUEST,
     MAX_PROMPT_CHARS,
+    MAX_REQUEST_CHARS,
 )
 
 MAX_NAME_CHARS = 60
@@ -32,8 +34,29 @@ class _Strict(BaseModel):
 
 
 class Message(_Strict):
+    """A request message: user turns are capped at 2000 chars, assistant (model) turns at 16000."""
+
     role: Literal["user", "assistant"]
-    content: str = Field(max_length=MAX_MESSAGE_CHARS)
+    content: str
+
+    @model_validator(mode="after")
+    def _content_within_role_cap(self) -> "Message":
+        cap = MAX_MESSAGE_CHARS if self.role == "user" else MAX_ASSISTANT_MESSAGE_CHARS
+        if len(self.content) > cap:
+            raise ValueError(f"{self.role} messages must be at most {cap} characters")
+        return self
+
+
+class StoredMessage(BaseModel):
+    """A message read back from storage: no length cap, so a response can never fail validation."""
+
+    role: str
+    content: str
+
+
+def _check_total_size(messages: list[Message]) -> None:
+    if sum(len(m.content) for m in messages) > MAX_REQUEST_CHARS:
+        raise ValueError(f"messages must total at most {MAX_REQUEST_CHARS} characters")
 
 
 class AgentCreate(_Strict):
@@ -95,12 +118,17 @@ class PresetOut(BaseModel):
 class RunOut(BaseModel):
     id: str
     position: int
-    messages: list[Message]
+    messages: list[StoredMessage]
     created_at: datetime
 
 
 class RunCreate(_Strict):
     messages: list[Message] = Field(min_length=3, max_length=MAX_MESSAGES_PER_REQUEST)
+
+    @model_validator(mode="after")
+    def _total_size(self) -> "RunCreate":
+        _check_total_size(self.messages)
+        return self
 
 
 class RunSaved(BaseModel):
@@ -166,6 +194,7 @@ class ChatRequest(_Strict):
 
     @model_validator(mode="after")
     def _last_is_user(self) -> "ChatRequest":
+        _check_total_size(self.messages)
         if self.messages[-1].role != "user":
             raise ValueError("the last message must come from the user")
         return self

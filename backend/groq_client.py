@@ -18,10 +18,14 @@ def _strip_thinking(text: str) -> str:
     return re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL).strip()
 
 
-def groq_chat(system: str, messages: list[dict], model: str = MODEL_CHAT) -> str:
+def groq_chat(
+    system: str, messages: list[dict], model: str = MODEL_CHAT, max_tokens: int | None = None
+) -> str:
     """Send messages to Groq and return the assistant reply text, stripped of thinking blocks."""
     full_messages = [{"role": "system", "content": system}] + messages
     kwargs = {"model": model, "messages": full_messages}
+    if max_tokens is not None:
+        kwargs["max_tokens"] = max_tokens
     if model == MODEL_CRITERIA:
         kwargs["reasoning_format"] = "hidden"
     response = client.chat.completions.create(**kwargs)
