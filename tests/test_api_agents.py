@@ -249,6 +249,39 @@ def test_agent_limit_is_429(client, auth_headers, db_session):
     analyze.assert_not_called()
 
 
+def test_agent_limit_rechecked_at_insert_when_count_crosses_between_check_and_create(
+    client, auth_headers, db_session, monkeypatch
+):
+    for _ in range(5):
+        assert client.post("/agents", json={"preset_id": "support"}, headers=auth_headers).status_code == 201
+    # Simulate the early quota check having seen room (a concurrent request filled the last slot).
+    monkeypatch.setattr("backend.api.agents._check_agent_quota", lambda db, workspace: None)
+    before = (
+        db_session.query(Agent).count(),
+        db_session.query(PromptVersion).count(),
+        db_session.query(BehaviorMap).count(),
+    )
+    r = client.post("/agents", json={"preset_id": "support"}, headers=auth_headers)
+    assert r.status_code == 429
+    assert r.json()["detail"] == "Agent limit reached for this workspace."
+    after = (
+        db_session.query(Agent).count(),
+        db_session.query(PromptVersion).count(),
+        db_session.query(BehaviorMap).count(),
+    )
+    assert after == before
+
+
+def test_custom_agent_limit_rechecked_at_insert(client, auth_headers, db_session, monkeypatch):
+    for _ in range(5):
+        client.post("/agents", json={"preset_id": "support"}, headers=auth_headers)
+    monkeypatch.setattr("backend.api.agents._check_agent_quota", lambda db, workspace: None)
+    with patch("backend.api.agents.analyze_agent", return_value=_analysis()):
+        r = client.post("/agents", json=_custom(), headers=auth_headers)
+    assert r.status_code == 429
+    assert db_session.query(Agent).count() == 5
+
+
 def test_agent_limit_is_per_workspace(client, auth_headers, db_session):
     for _ in range(5):
         client.post("/agents", json={"preset_id": "support"}, headers=auth_headers)

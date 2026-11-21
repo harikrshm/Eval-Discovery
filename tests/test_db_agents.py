@@ -1,5 +1,9 @@
 from backend.core.config import PRESETS, AgentAnalysis, Behavior
-from backend.db.agents import create_agent, current_behaviors
+import pytest
+
+from backend.api.limits import MAX_AGENTS_PER_WORKSPACE
+from backend.db.agents import AgentLimitReached, create_agent, current_behaviors
+from backend.db.models import Agent, BehaviorMap, PromptVersion
 from backend.db.workspaces import create_workspace
 
 
@@ -24,3 +28,15 @@ def test_current_behaviors_custom_analysis(db_session):
     )
     agent = create_agent(db_session, workspace, preset.config, analysis)
     assert current_behaviors(agent) == [Behavior("Refunds", "No refunds.", ("refund", "money back"))]
+
+
+def test_create_agent_enforces_quota_with_no_partial_rows(db_session):
+    workspace, _ = create_workspace(db_session)
+    preset = PRESETS["support"]
+    for _ in range(MAX_AGENTS_PER_WORKSPACE):
+        create_agent(db_session, workspace, preset.config, preset.analysis)
+    with pytest.raises(AgentLimitReached):
+        create_agent(db_session, workspace, preset.config, preset.analysis)
+    assert db_session.query(Agent).count() == MAX_AGENTS_PER_WORKSPACE
+    assert db_session.query(PromptVersion).count() == MAX_AGENTS_PER_WORKSPACE
+    assert db_session.query(BehaviorMap).count() == MAX_AGENTS_PER_WORKSPACE

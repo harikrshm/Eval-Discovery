@@ -3,10 +3,16 @@
 import hashlib
 from dataclasses import asdict
 
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
+from backend.api.limits import MAX_AGENTS_PER_WORKSPACE
 from backend.core.config import AgentAnalysis, AgentConfig, Behavior
 from backend.db.models import Agent, BehaviorMap, PromptVersion, Workspace
+
+
+class AgentLimitReached(Exception):
+    """The workspace already has MAX_AGENTS_PER_WORKSPACE agents."""
 
 
 def create_agent(
@@ -16,8 +22,17 @@ def create_agent(
     analysis: AgentAnalysis,
     origin: str = "initial",
 ) -> Agent:
-    """Create an agent, its promoted prompt version and behavior map in one transaction."""
+    """Create an agent, its promoted prompt version and behavior map in one transaction.
+
+    Re-checks the per-workspace quota right before inserting (the caller's early check can be
+    stale); raises AgentLimitReached with nothing written.
+    """
     try:
+        count = db.scalar(
+            select(func.count()).select_from(Agent).where(Agent.workspace_id == workspace.id)
+        )
+        if count >= MAX_AGENTS_PER_WORKSPACE:
+            raise AgentLimitReached(workspace.id)
         agent = Agent(
             workspace_id=workspace.id,
             name=config.name,

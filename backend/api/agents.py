@@ -23,8 +23,8 @@ from backend.api.schemas import (
     sanitize_label,
 )
 from backend.core.analyze import analyze_agent
-from backend.core.config import PRESETS, AgentConfig
-from backend.db.agents import create_agent, current_prompt, get_owned_agent, latest_analysis
+from backend.core.config import PRESETS, AgentAnalysis, AgentConfig
+from backend.db.agents import AgentLimitReached, create_agent, current_prompt, get_owned_agent, latest_analysis
 from backend.db.events import try_log_event
 from backend.db.models import Agent, Criterion, Run, Workspace
 from backend.db.session import get_db
@@ -56,6 +56,15 @@ def _owned_or_404(db: Session, workspace: Workspace, agent_id: str) -> Agent:
         return get_owned_agent(db, workspace, agent_id)
     except LookupError:
         raise HTTPException(status_code=404, detail="Agent not found.") from None
+
+
+def _create_agent_or_429(
+    db: Session, workspace: Workspace, config: AgentConfig, analysis: AgentAnalysis
+) -> Agent:
+    try:
+        return create_agent(db, workspace, config, analysis)
+    except AgentLimitReached:
+        raise HTTPException(status_code=429, detail=AGENT_LIMIT) from None
 
 
 def _check_agent_quota(db: Session, workspace: Workspace) -> None:
@@ -90,7 +99,7 @@ def create(
         if preset is None:
             raise HTTPException(status_code=422, detail="Unknown preset.")
         _check_agent_quota(db, workspace)
-        agent = create_agent(db, workspace, preset.config, preset.analysis)
+        agent = _create_agent_or_429(db, workspace, preset.config, preset.analysis)
         source = "preset"
     else:
         _check_agent_quota(db, workspace)
@@ -106,7 +115,7 @@ def create(
             logger.warning("Prompt analysis failed", exc_info=True)
             raise HTTPException(status_code=502, detail=ANALYSIS_FAILED) from None
         config = AgentConfig(name=body.name, system_prompt=body.system_prompt, user_role_label=label)
-        agent = create_agent(db, workspace, config, replace(analysis, user_role_label=label))
+        agent = _create_agent_or_429(db, workspace, config, replace(analysis, user_role_label=label))
         source = "custom"
     try_log_event(db, workspace.id, "agent_created", {"source": source})
     return _agent_out(agent)
