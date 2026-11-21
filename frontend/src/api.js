@@ -1,37 +1,110 @@
+import { clearWorkspace, getToken, setToken } from "./lib/workspace.js";
+
 const BASE_URL = import.meta.env.VITE_API_URL || "http://localhost:8000";
 
-export async function sendMessage(messages) {
-  const res = await fetch(`${BASE_URL}/chat`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ messages }),
+export class ApiError extends Error {
+  constructor(message, status) {
+    super(message);
+    this.name = "ApiError";
+    this.status = status;
+  }
+}
+
+async function errorFromResponse(res) {
+  let message = `Request failed: ${res.status}`;
+  try {
+    const body = await res.json();
+    const detail = body && body.detail;
+    if (typeof detail === "string" && detail) {
+      message = detail;
+    } else if (Array.isArray(detail)) {
+      const msgs = detail
+        .map((d) => (d && typeof d.msg === "string" ? d.msg : null))
+        .filter(Boolean);
+      if (msgs.length) message = msgs.join("; ");
+    }
+  } catch {
+    // Non-JSON body: keep the status fallback.
+  }
+  return new ApiError(message, res.status);
+}
+
+// Shared in-flight promise so concurrent first calls create one workspace.
+let workspacePromise = null;
+
+function ensureToken() {
+  const existing = getToken();
+  if (existing) return Promise.resolve(existing);
+  if (!workspacePromise) {
+    workspacePromise = (async () => {
+      const res = await fetch(`${BASE_URL}/workspaces`, { method: "POST" });
+      if (!res.ok) throw await errorFromResponse(res);
+      const { token } = await res.json();
+      setToken(token);
+      return token;
+    })().finally(() => {
+      workspacePromise = null;
+    });
+  }
+  return workspacePromise;
+}
+
+async function request(path, { method = "GET", body, auth = true } = {}) {
+  const headers = {};
+  if (body !== undefined) headers["Content-Type"] = "application/json";
+  if (auth) headers["X-Workspace-Token"] = await ensureToken();
+
+  const res = await fetch(`${BASE_URL}${path}`, {
+    method,
+    headers,
+    body: body !== undefined ? JSON.stringify(body) : undefined,
   });
-  if (!res.ok) throw new Error(`Chat failed: ${res.status}`);
+
+  if (!res.ok) {
+    if (res.status === 401) clearWorkspace();
+    throw await errorFromResponse(res);
+  }
+  if (res.status === 204) return null;
   return res.json();
 }
 
-export async function checkPattern(transcripts) {
-  const res = await fetch(`${BASE_URL}/check-pattern`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ transcripts }),
-  });
-  if (!res.ok) {
-    const err = await res.json().catch(() => ({}));
-    throw new Error(err.detail || `Pattern check failed: ${res.status}`);
-  }
-  return res.json(); // { found: bool, pattern_summary: string }
+export function listPresets() {
+  return request("/presets", { auth: false });
 }
 
-export async function generateCriteria(patternSummary) {
-  const res = await fetch(`${BASE_URL}/generate-criteria`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ pattern_summary: patternSummary }),
-  });
-  if (!res.ok) {
-    const err = await res.json().catch(() => ({}));
-    throw new Error(err.detail || `Criteria generation failed: ${res.status}`);
-  }
-  return res.json(); // { name, definition, good_example, bad_example, why_discovered }
+export function createAgent(payload) {
+  return request("/agents", { method: "POST", body: payload });
+}
+
+export function getAgentState(agentId) {
+  return request(`/agents/${agentId}/state`);
+}
+
+export function sendMessage(agentId, messages) {
+  return request(`/agents/${agentId}/chat`, { method: "POST", body: { messages } });
+}
+
+export function saveRun(agentId, messages) {
+  return request(`/agents/${agentId}/runs`, { method: "POST", body: { messages } });
+}
+
+export function checkPattern(agentId) {
+  return request(`/agents/${agentId}/check-pattern`, { method: "POST" });
+}
+
+export function discoverCriterion(agentId) {
+  return request(`/agents/${agentId}/criteria/discover`, { method: "POST" });
+}
+
+export function addCriterion(agentId, fields) {
+  return request(`/agents/${agentId}/criteria`, { method: "POST", body: fields });
+}
+
+export function updateCriterion(criterionId, fields) {
+  return request(`/criteria/${criterionId}`, { method: "PATCH", body: fields });
+}
+
+export async function deleteWorkspace() {
+  await request("/workspaces/me", { method: "DELETE" });
+  clearWorkspace();
 }
