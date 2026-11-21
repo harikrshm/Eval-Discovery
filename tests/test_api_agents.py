@@ -144,6 +144,30 @@ def test_prompt_length_boundary(client, auth_headers):
     assert empty.status_code == 422
 
 
+def test_prompt_length_cap_counts_characters_not_bytes(client, auth_headers):
+    with patch("backend.api.agents.analyze_agent", return_value=_analysis()):
+        ok = client.post("/agents", json=_custom(system_prompt="🤖" * 4000), headers=auth_headers)
+        too_long = client.post("/agents", json=_custom(system_prompt="🤖" * 4001), headers=auth_headers)
+    assert ok.status_code == 201
+    assert too_long.status_code == 422
+
+
+@pytest.mark.parametrize("prompt", [" ", "   \n\t  ", "\u00a0\u2003"])
+def test_whitespace_only_prompt_is_422(client, auth_headers, prompt):
+    with patch("backend.api.agents.analyze_agent") as analyze:
+        r = client.post("/agents", json=_custom(system_prompt=prompt), headers=auth_headers)
+    assert r.status_code == 422
+    analyze.assert_not_called()
+
+
+def test_prompt_with_surrounding_whitespace_is_stored_unchanged(client, auth_headers):
+    prompt = "  You are a bot.\n"
+    with patch("backend.api.agents.analyze_agent", return_value=_analysis()):
+        r = client.post("/agents", json=_custom(system_prompt=prompt), headers=auth_headers)
+    assert r.status_code == 201
+    assert r.json()["system_prompt"] == prompt
+
+
 def test_name_and_label_length_limits(client, auth_headers):
     with patch("backend.api.agents.analyze_agent", return_value=_analysis()):
         post = lambda **kw: client.post("/agents", json=_custom(**kw), headers=auth_headers)  # noqa: E731

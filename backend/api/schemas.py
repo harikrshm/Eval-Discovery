@@ -42,6 +42,13 @@ class AgentCreate(_Strict):
     system_prompt: str | None = Field(default=None, min_length=1, max_length=MAX_PROMPT_CHARS)
     user_role_label: str | None = Field(default=None, min_length=1, max_length=MAX_ROLE_LABEL_CHARS)
 
+    @field_validator("system_prompt")
+    @classmethod
+    def _prompt_not_blank(cls, value: str | None) -> str | None:
+        if value is not None and not value.strip():
+            raise ValueError("must not be blank")
+        return value
+
     @field_validator("name")
     @classmethod
     def _clean_name(cls, value: str | None) -> str | None:
