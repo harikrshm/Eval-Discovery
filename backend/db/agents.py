@@ -5,7 +5,7 @@ from dataclasses import asdict
 
 from sqlalchemy.orm import Session
 
-from backend.core.config import AgentAnalysis, AgentConfig
+from backend.core.config import AgentAnalysis, AgentConfig, Behavior
 from backend.db.models import Agent, BehaviorMap, PromptVersion, Workspace
 
 
@@ -68,3 +68,15 @@ def latest_analysis(agent: Agent) -> dict:
     current_hash = hashlib.sha256(current_prompt(agent).encode("utf-8")).hexdigest()
     matching = [m for m in agent.behavior_maps if m.prompt_hash == current_hash]
     return (matching or agent.behavior_maps)[-1].analysis
+
+
+def current_behaviors(agent: Agent) -> list[Behavior]:
+    """Rebuild `Behavior` objects from the agent's stored analysis JSON."""
+    return [
+        Behavior(
+            name=b["name"],
+            description=b["description"],
+            trigger_terms=tuple(b.get("trigger_terms", ())),
+        )
+        for b in latest_analysis(agent)["behaviors"]
+    ]

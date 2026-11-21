@@ -92,6 +92,21 @@ class RunOut(BaseModel):
     created_at: datetime
 
 
+class RunCreate(_Strict):
+    messages: list[Message] = Field(min_length=3, max_length=MAX_MESSAGES_PER_REQUEST)
+
+
+class RunSaved(BaseModel):
+    run: RunOut
+    run_count: int
+    check_due: bool
+
+
+class PatternCheckOut(BaseModel):
+    found: bool
+    pattern_summary: str
+
+
 class CriterionOut(BaseModel):
     id: str
     name: str
