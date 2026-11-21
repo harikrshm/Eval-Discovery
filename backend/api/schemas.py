@@ -252,6 +252,9 @@ class EvalTestOut(BaseModel):
     baseline: EvalResultOut | None
     current: EvalResultOut | None
     active_job_id: str | None
+    origin: str  # "run" | "generated"
+    can_suggest_fix: bool
+    suggest_job_id: str | None
 
 
 class CriterionSuiteOut(BaseModel):
@@ -259,14 +262,48 @@ class CriterionSuiteOut(BaseModel):
     status: str
     judge_check: dict | None
     active_job_id: str | None
+    can_generate_heldout: bool
+    heldout_job_id: str | None
     tests: list[EvalTestOut]
+
+
+class CandidateProgress(BaseModel):
+    done: int
+    total: int
+
+
+class CandidateOut(BaseModel):
+    version_id: str
+    number: int
+    status: str
+    origin: str
+    strength: str | None
+    created_at: datetime
+    progress: CandidateProgress | None
+    parent_number: int | None
 
 
 class SuiteOut(BaseModel):
     prompt_version_id: str
     prompt_version_number: int
     stale_count: int
+    candidate: CandidateOut | None
     criteria: list[CriterionSuiteOut]
+
+
+class VersionOut(BaseModel):
+    id: str
+    number: int
+    origin: str
+    status: str
+    strength: str | None
+    created_at: datetime
+    is_current: bool
+
+
+class VersionDetailOut(VersionOut):
+    text: str
+    parent_text: str | None
 
 
 class JobOut(BaseModel):

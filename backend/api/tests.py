@@ -9,6 +9,8 @@ from sqlalchemy.orm import Session
 from backend.api.deps import get_current_workspace
 from backend.api.limits import rate_limit_llm
 from backend.api.schemas import (
+    CandidateOut,
+    CandidateProgress,
     CriterionSuiteOut,
     EvalResultOut,
     EvalTestOut,
@@ -18,8 +20,9 @@ from backend.api.schemas import (
     SuiteOut,
 )
 from backend.db.agents import current_prompt_version, get_owned_agent
+from backend.db.candidates import failing_result_for, open_candidate
 from backend.db.events import try_log_event
-from backend.db.models import Agent, Criterion, EvalResult, EvalTest, Job, Workspace, utcnow
+from backend.db.models import Agent, Criterion, EvalResult, EvalTest, Job, PromptVersion, Workspace, utcnow
 from backend.db.session import get_db
 from backend.db.testsuite import (
     agent_tests,
@@ -44,6 +47,10 @@ router = APIRouter(tags=["tests"])
 RUN_LIMIT = "Test run limit reached for this hour. Try again later."
 QUEUE_BUSY = "The test queue is busy. Try again in a minute."
 TESTS_EXIST = "Tests already exist for this criterion."
+SUGGEST_FROM_FIX_TEST = "Suggest a fix from the fix test."
+NOT_FAILING = "This test isn't failing on the current prompt."
+CANDIDATE_OPEN = "A fix is already proposed or being verified."
+NEEDS_FIX_TEST_ONLY = "This criterion needs a fix test and no held-out test."
 
 
 def _agent_or_404(db: Session, workspace: Workspace, agent_id: str) -> Agent:
@@ -87,6 +94,46 @@ def _active_id(job: Job | None) -> str | None:
     return job.id if job else None
 
 
+def _candidate_out(db: Session, agent: Agent, open_version: PromptVersion | None) -> CandidateOut | None:
+    """The open candidate, else the latest suggested version that ended `promoted` or
+    `failed_verification`; a `rejected` or merely `superseded` one is not shown."""
+    version = open_version
+    if version is None:
+        version = db.scalars(
+            select(PromptVersion)
+            .where(
+                PromptVersion.agent_id == agent.id,
+                PromptVersion.origin == "suggested",
+                PromptVersion.status.in_(("promoted", "failed_verification")),
+            )
+            .order_by(PromptVersion.number.desc())
+            .limit(1)
+        ).first()
+    if version is None:
+        return None
+    verification = version.verification or {}
+    progress = None
+    if version.status == "approved_verifying":
+        required = verification.get("required") or []
+        done = 0
+        for item in required:
+            test = db.get(EvalTest, item["test_id"])
+            if test is not None and current_replay(db, test, version.id) is not None:
+                done += 1
+        progress = CandidateProgress(done=done, total=len(required))
+    parent = db.get(PromptVersion, version.parent_id) if version.parent_id else None
+    return CandidateOut(
+        version_id=version.id,
+        number=version.number,
+        status=version.status,
+        origin=version.origin,
+        strength=verification.get("strength"),
+        created_at=version.created_at,
+        progress=progress,
+        parent_number=parent.number if parent is not None else None,
+    )
+
+
 @router.get("/agents/{agent_id}/tests", response_model=SuiteOut)
 def get_suite(
     agent_id: str,
@@ -95,12 +142,14 @@ def get_suite(
 ) -> SuiteOut:
     agent = _agent_or_404(db, workspace, agent_id)
     version = current_prompt_version(agent)
+    open_version = open_candidate(db, agent)
     tests_by_criterion: dict[str, list[EvalTest]] = {}
     for test in agent_tests(db, agent):
         tests_by_criterion.setdefault(test.criterion_id, []).append(test)
 
     criteria = []
     for criterion in sorted(agent.criteria, key=lambda c: c.position):
+        criterion_tests = tests_by_criterion.get(criterion.id, [])
         tests = [
             EvalTestOut(
                 id=test.id,
@@ -111,16 +160,26 @@ def get_suite(
                 active_job_id=_active_id(
                     active_job_for(db, workspace.id, "replay", _replay_payload(test, version.id))
                 ),
+                origin=test.origin,
+                # Held-out tests never offer a fix: that would feed them to the suggester.
+                can_suggest_fix=test.role == "fix"
+                and open_version is None
+                and failing_result_for(db, test, version.id) is not None,
+                suggest_job_id=_active_id(active_job_for(db, workspace.id, "suggest_fix", {"test_id": test.id})),
             )
-            for test in tests_by_criterion.get(criterion.id, [])
+            for test in criterion_tests
         ]
         build_job = active_job_for(db, workspace.id, "build_tests", {"criterion_id": criterion.id})
+        heldout_job = active_job_for(db, workspace.id, "generate_heldout", {"criterion_id": criterion.id})
+        roles = {test.role for test in criterion_tests}
         criteria.append(
             CriterionSuiteOut(
                 criterion_id=criterion.id,
                 status=criterion_status_for(db, criterion, version.id),
                 judge_check=criterion.judge_check,
                 active_job_id=_active_id(build_job),
+                can_generate_heldout="fix" in roles and "heldout" not in roles and heldout_job is None,
+                heldout_job_id=_active_id(heldout_job),
                 tests=tests,
             )
         )
@@ -128,6 +187,7 @@ def get_suite(
         prompt_version_id=version.id,
         prompt_version_number=version.number,
         stale_count=stale_test_count(db, agent),
+        candidate=_candidate_out(db, agent, open_version),
         criteria=criteria,
     )
 
@@ -209,6 +269,60 @@ def build_tests(
     _check_queue_room(db)
     rate_limit_llm(request)
     return JobAccepted(job_id=enqueue(db, workspace.id, "build_tests", payload).id)
+
+
+@router.post("/tests/{test_id}/suggest-fix", status_code=202, response_model=JobAccepted)
+def suggest_fix(
+    test_id: str,
+    request: Request,
+    workspace: Workspace = Depends(get_current_workspace),
+    db: Session = Depends(get_db),
+) -> JobAccepted:
+    try:
+        test = get_owned_test(db, workspace, test_id)
+    except LookupError:
+        raise HTTPException(status_code=404, detail="Test not found.") from None
+    agent = test.criterion.agent
+    if test.role != "fix":
+        raise HTTPException(status_code=409, detail=SUGGEST_FROM_FIX_TEST)
+    if failing_result_for(db, test, agent.current_prompt_version_id) is None:
+        raise HTTPException(status_code=409, detail=NOT_FAILING)
+    if open_candidate(db, agent) is not None:
+        raise HTTPException(status_code=409, detail=CANDIDATE_OPEN)
+    payload = {"test_id": test.id}
+    existing = active_job_for(db, workspace.id, "suggest_fix", payload)
+    if existing is not None:
+        return JobAccepted(job_id=existing.id)
+    if _jobs_left_this_hour(db, workspace) < 1:
+        raise HTTPException(status_code=429, detail=RUN_LIMIT)
+    _check_queue_room(db)
+    rate_limit_llm(request)
+    return JobAccepted(job_id=enqueue(db, workspace.id, "suggest_fix", payload).id)
+
+
+@router.post("/criteria/{criterion_id}/generate-heldout", status_code=202, response_model=JobAccepted)
+def generate_heldout(
+    criterion_id: str,
+    request: Request,
+    workspace: Workspace = Depends(get_current_workspace),
+    db: Session = Depends(get_db),
+) -> JobAccepted:
+    try:
+        criterion: Criterion = get_owned_criterion(db, workspace, criterion_id)
+    except LookupError:
+        raise HTTPException(status_code=404, detail="Criterion not found.") from None
+    roles = set(db.scalars(select(EvalTest.role).where(EvalTest.criterion_id == criterion.id)))
+    if "fix" not in roles or "heldout" in roles:
+        raise HTTPException(status_code=409, detail=NEEDS_FIX_TEST_ONLY)
+    payload = {"criterion_id": criterion.id}
+    existing = active_job_for(db, workspace.id, "generate_heldout", payload)
+    if existing is not None:
+        return JobAccepted(job_id=existing.id)
+    if _jobs_left_this_hour(db, workspace) < 1:
+        raise HTTPException(status_code=429, detail=RUN_LIMIT)
+    _check_queue_room(db)
+    rate_limit_llm(request)
+    return JobAccepted(job_id=enqueue(db, workspace.id, "generate_heldout", payload).id)
 
 
 @router.get("/jobs/{job_id}", response_model=JobOut)

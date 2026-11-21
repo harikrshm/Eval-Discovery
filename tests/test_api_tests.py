@@ -3,7 +3,7 @@ from datetime import timedelta
 import pytest
 
 from backend.api import limits
-from backend.db.models import Agent, Criterion, EvalResult, EvalTest, Event, Job, utcnow
+from backend.db.models import Agent, Criterion, EvalResult, EvalTest, Event, Job, PromptVersion, utcnow
 from backend.db.workspaces import create_workspace
 from backend.api.limits import RateLimiter
 from backend.jobs.queue import JOBS_PER_WORKSPACE_PER_HOUR, MAX_QUEUED_JOBS
@@ -554,3 +554,345 @@ def test_routes_require_auth(client):
     assert client.post("/agents/x/tests/run-all").status_code == 401
     assert client.post("/criteria/x/build-tests").status_code == 401
     assert client.get("/jobs/x").status_code == 401
+
+
+# ---------------------------------------------------------------- Phase 3: suggest-fix, generate-heldout
+
+
+SUGGEST_ONLY_FIX = "Suggest a fix from the fix test."
+NOT_FAILING = "This test isn't failing on the current prompt."
+CANDIDATE_OPEN = "A fix is already proposed or being verified."
+NEEDS_FIX_ONLY = "This criterion needs a fix test and no held-out test."
+
+
+def _failing_fix(client, auth_headers, db_session, agent_id=None, role="fix", **criterion):
+    """A criterion with one `role` test whose current replay fails; returns (agent_id, cid, test)."""
+    agent_id = agent_id or _agent(client, auth_headers)
+    cid = _criterion(client, auth_headers, agent_id, **criterion)
+    test = _test(db_session, cid, role)
+    _result(db_session, test, "replay", "fail", _version_id(db_session, agent_id))
+    return agent_id, cid, test
+
+
+def _candidate(db_session, agent_id, number=2, status="proposed", origin="suggested", **fields):
+    agent = db_session.get(Agent, agent_id)
+    version = PromptVersion(
+        agent_id=agent_id,
+        text=f"candidate text {number}",
+        parent_id=agent.current_prompt_version_id,
+        origin=origin,
+        status=status,
+        number=number,
+        **fields,
+    )
+    db_session.add(version)
+    db_session.commit()
+    return version
+
+
+def test_suggest_fix_enqueues_once_and_returns_the_active_job_on_repeat(client, auth_headers, db_session):
+    _, _, test = _failing_fix(client, auth_headers, db_session)
+    r = client.post(f"/tests/{test.id}/suggest-fix", headers=auth_headers)
+    assert r.status_code == 202
+    again = client.post(f"/tests/{test.id}/suggest-fix", headers=auth_headers)
+    assert again.status_code == 202
+    assert again.json() == r.json()
+    jobs = _jobs(db_session, "suggest_fix")
+    assert [j.id for j in jobs] == [r.json()["job_id"]]
+    assert jobs[0].payload == {"test_id": test.id}
+
+
+def test_suggest_fix_on_a_heldout_test_is_409(client, auth_headers, db_session):
+    _, _, test = _failing_fix(client, auth_headers, db_session, role="heldout")
+    r = client.post(f"/tests/{test.id}/suggest-fix", headers=auth_headers)
+    assert r.status_code == 409
+    assert r.json()["detail"] == SUGGEST_ONLY_FIX
+    assert _jobs(db_session) == []
+
+
+def test_suggest_fix_on_a_passing_or_unrun_test_is_409(client, auth_headers, db_session):
+    agent_id = _agent(client, auth_headers)
+    version = _version_id(db_session, agent_id)
+    passing = _test(db_session, _criterion(client, auth_headers, agent_id, name="a"))
+    _result(db_session, passing, "replay", "pass", version)
+    unrun = _test(db_session, _criterion(client, auth_headers, agent_id, name="b"))
+    old_baseline = _test(db_session, _criterion(client, auth_headers, agent_id, name="c"))
+    _result(db_session, old_baseline, "baseline", "fail", "older-version")
+    for test in (passing, unrun, old_baseline):
+        r = client.post(f"/tests/{test.id}/suggest-fix", headers=auth_headers)
+        assert r.status_code == 409
+        assert r.json()["detail"] == NOT_FAILING
+    assert _jobs(db_session) == []
+
+
+def test_suggest_fix_with_an_open_candidate_is_409(client, auth_headers, db_session):
+    agent_id, _, test = _failing_fix(client, auth_headers, db_session)
+    candidate = _candidate(db_session, agent_id, status="proposed")
+    r = client.post(f"/tests/{test.id}/suggest-fix", headers=auth_headers)
+    assert r.status_code == 409
+    assert r.json()["detail"] == CANDIDATE_OPEN
+    candidate.status = "approved_verifying"
+    db_session.commit()
+    r = client.post(f"/tests/{test.id}/suggest-fix", headers=auth_headers)
+    assert r.status_code == 409
+    assert r.json()["detail"] == CANDIDATE_OPEN
+    assert _jobs(db_session) == []
+
+
+def test_suggest_fix_is_allowed_after_a_candidate_was_rejected(client, auth_headers, db_session):
+    agent_id, _, test = _failing_fix(client, auth_headers, db_session)
+    _candidate(db_session, agent_id, status="rejected")
+    assert client.post(f"/tests/{test.id}/suggest-fix", headers=auth_headers).status_code == 202
+
+
+def test_suggest_fix_429_at_the_hourly_cap_and_not_for_a_dedupe_hit(client, auth_headers, db_session):
+    agent_id, _, test = _failing_fix(client, auth_headers, db_session)
+    job_id = client.post(f"/tests/{test.id}/suggest-fix", headers=auth_headers).json()["job_id"]
+    _fill_cap_for(db_session, _workspace_id(db_session, agent_id))
+    again = client.post(f"/tests/{test.id}/suggest-fix", headers=auth_headers)
+    assert again.status_code == 202
+    assert again.json() == {"job_id": job_id}
+
+    _, _, other_test = _failing_fix(client, auth_headers, db_session, agent_id=agent_id, name="Other")
+    r = client.post(f"/tests/{other_test.id}/suggest-fix", headers=auth_headers)
+    assert r.status_code == 429
+    assert r.json()["detail"] == CAP_DETAIL
+
+
+def test_suggest_fix_and_generate_heldout_429_when_the_queue_is_full(client, auth_headers, db_session):
+    agent_id, cid, test = _failing_fix(client, auth_headers, db_session)
+    _fill_queue(db_session)
+    for url in (f"/tests/{test.id}/suggest-fix", f"/criteria/{cid}/generate-heldout"):
+        r = client.post(url, headers=auth_headers)
+        assert r.status_code == 429, url
+        assert r.json()["detail"] == BUSY_DETAIL
+    assert len(_jobs(db_session)) == MAX_QUEUED_JOBS
+
+
+def test_suggest_fix_and_generate_heldout_are_rate_limited(client, auth_headers, db_session, monkeypatch):
+    _, cid, test = _failing_fix(client, auth_headers, db_session)
+    _exhaust_llm_limiter(monkeypatch)
+    for url in (f"/tests/{test.id}/suggest-fix", f"/criteria/{cid}/generate-heldout"):
+        r = client.post(url, headers=auth_headers)
+        assert r.status_code == 429, url
+        assert r.json()["detail"] == TOO_MANY_DETAIL
+    assert _jobs(db_session) == []
+
+
+def test_dedupe_hits_of_the_new_routes_ignore_limiter_and_full_queue(
+    client, auth_headers, db_session, monkeypatch
+):
+    _, cid, test = _failing_fix(client, auth_headers, db_session)
+    suggest_id = client.post(f"/tests/{test.id}/suggest-fix", headers=auth_headers).json()["job_id"]
+    generate_id = client.post(f"/criteria/{cid}/generate-heldout", headers=auth_headers).json()["job_id"]
+    _fill_queue(db_session)
+    _exhaust_llm_limiter(monkeypatch)
+    again = client.post(f"/tests/{test.id}/suggest-fix", headers=auth_headers)
+    assert (again.status_code, again.json()) == (202, {"job_id": suggest_id})
+    again = client.post(f"/criteria/{cid}/generate-heldout", headers=auth_headers)
+    assert (again.status_code, again.json()) == (202, {"job_id": generate_id})
+
+
+def test_generate_heldout_enqueues_once_with_the_criterion_payload(client, auth_headers, db_session):
+    _, cid, _ = _failing_fix(client, auth_headers, db_session)
+    r = client.post(f"/criteria/{cid}/generate-heldout", headers=auth_headers)
+    assert r.status_code == 202
+    again = client.post(f"/criteria/{cid}/generate-heldout", headers=auth_headers)
+    assert again.json() == r.json()
+    jobs = _jobs(db_session, "generate_heldout")
+    assert len(jobs) == 1
+    assert jobs[0].payload == {"criterion_id": cid}
+
+
+def test_generate_heldout_is_409_without_a_fix_test_or_with_a_heldout_test(client, auth_headers, db_session):
+    agent_id = _agent(client, auth_headers)
+    no_tests = _criterion(client, auth_headers, agent_id, name="none")
+    has_both = _criterion(client, auth_headers, agent_id, name="both")
+    _test(db_session, has_both, "fix")
+    _test(db_session, has_both, "heldout")
+    heldout_only = _criterion(client, auth_headers, agent_id, name="heldout only")
+    _test(db_session, heldout_only, "heldout")
+    for cid in (no_tests, has_both, heldout_only):
+        r = client.post(f"/criteria/{cid}/generate-heldout", headers=auth_headers)
+        assert r.status_code == 409, cid
+        assert r.json()["detail"] == NEEDS_FIX_ONLY
+    assert _jobs(db_session) == []
+
+
+def test_generate_heldout_429_at_the_hourly_cap(client, auth_headers, db_session):
+    agent_id, cid, _ = _failing_fix(client, auth_headers, db_session)
+    _fill_cap_for(db_session, _workspace_id(db_session, agent_id))
+    r = client.post(f"/criteria/{cid}/generate-heldout", headers=auth_headers)
+    assert r.status_code == 429
+    assert r.json()["detail"] == CAP_DETAIL
+
+
+def test_new_routes_check_ownership_before_anything_else(client, auth_headers, db_session, monkeypatch):
+    agent_id, cid, test = _failing_fix(client, auth_headers, db_session)
+    _fill_cap_for(db_session, _workspace_id(db_session, agent_id))
+    _exhaust_llm_limiter(monkeypatch)
+    other = _other_headers(db_session)
+    assert client.post(f"/tests/{test.id}/suggest-fix", headers=other).status_code == 404
+    assert client.post(f"/criteria/{cid}/generate-heldout", headers=other).status_code == 404
+    assert client.post("/tests/nope/suggest-fix", headers=auth_headers).status_code == 404
+    assert client.post("/criteria/nope/generate-heldout", headers=auth_headers).status_code == 404
+    assert _jobs(db_session, "suggest_fix") == []
+    assert _jobs(db_session, "generate_heldout") == []
+
+
+def test_new_routes_require_auth(client):
+    assert client.post("/tests/x/suggest-fix").status_code == 401
+    assert client.post("/criteria/x/generate-heldout").status_code == 401
+
+
+# ---------------------------------------------------------------- Phase 3: suite additions
+
+
+def test_suite_flags_origin_can_suggest_fix_and_can_generate_heldout(client, auth_headers, db_session):
+    agent_id = _agent(client, auth_headers)
+    version = _version_id(db_session, agent_id)
+    failing = _criterion(client, auth_headers, agent_id, name="failing")
+    fix = _test(db_session, failing, "fix")
+    _result(db_session, fix, "replay", "fail", version)
+    passing = _criterion(client, auth_headers, agent_id, name="passing")
+    pfix = _test(db_session, passing, "fix")
+    pheld = _test(db_session, passing, "heldout")
+    pheld.origin = "generated"
+    db_session.commit()
+    _result(db_session, pfix, "replay", "pass", version)
+    _result(db_session, pheld, "replay", "fail", version)
+    _criterion(client, auth_headers, agent_id, name="empty")
+
+    body = client.get(f"/agents/{agent_id}/tests", headers=auth_headers).json()
+    c_failing, c_passing, c_empty = body["criteria"]
+    assert c_failing["criterion_id"] == failing
+    assert c_failing["can_generate_heldout"] is True
+    assert c_failing["heldout_job_id"] is None
+    assert c_failing["tests"][0]["origin"] == "run"
+    assert c_failing["tests"][0]["can_suggest_fix"] is True
+    assert c_failing["tests"][0]["suggest_job_id"] is None
+    assert c_passing["can_generate_heldout"] is False
+    fix_row, held_row = c_passing["tests"]
+    assert fix_row["can_suggest_fix"] is False  # passing
+    # Review Focus 1: a failing held-out test never offers a fix.
+    assert held_row["origin"] == "generated"
+    assert held_row["can_suggest_fix"] is False
+    assert c_empty["can_generate_heldout"] is False
+    assert c_empty["tests"] == []
+
+
+def test_suite_can_suggest_fix_uses_an_unreplayed_failing_baseline_on_the_current_version(
+    client, auth_headers, db_session
+):
+    agent_id = _agent(client, auth_headers)
+    test = _test(db_session, _criterion(client, auth_headers, agent_id), "fix")
+    _result(db_session, test, "baseline", "fail", _version_id(db_session, agent_id))
+    row = client.get(f"/agents/{agent_id}/tests", headers=auth_headers).json()["criteria"][0]["tests"][0]
+    assert row["can_suggest_fix"] is True
+
+
+def test_suite_can_suggest_fix_is_false_with_an_open_candidate(client, auth_headers, db_session):
+    agent_id, _, _ = _failing_fix(client, auth_headers, db_session)
+    _candidate(db_session, agent_id, status="proposed")
+    row = client.get(f"/agents/{agent_id}/tests", headers=auth_headers).json()["criteria"][0]["tests"][0]
+    assert row["can_suggest_fix"] is False
+
+
+def test_suite_reports_active_suggest_and_generate_jobs(client, auth_headers, db_session):
+    agent_id, cid, test = _failing_fix(client, auth_headers, db_session)
+    suggest_id = client.post(f"/tests/{test.id}/suggest-fix", headers=auth_headers).json()["job_id"]
+    generate_id = client.post(f"/criteria/{cid}/generate-heldout", headers=auth_headers).json()["job_id"]
+    criterion = client.get(f"/agents/{agent_id}/tests", headers=auth_headers).json()["criteria"][0]
+    assert criterion["tests"][0]["suggest_job_id"] == suggest_id
+    assert criterion["heldout_job_id"] == generate_id
+    assert criterion["can_generate_heldout"] is False
+
+
+def _suite_candidate(client, auth_headers, agent_id):
+    return client.get(f"/agents/{agent_id}/tests", headers=auth_headers).json()["candidate"]
+
+
+def test_suite_candidate_is_null_without_versions_to_show(client, auth_headers, db_session):
+    agent_id = _agent(client, auth_headers)
+    assert _suite_candidate(client, auth_headers, agent_id) is None
+    _candidate(db_session, agent_id, number=2, status="rejected")
+    _candidate(db_session, agent_id, number=3, status="superseded")
+    _candidate(db_session, agent_id, number=4, status="promoted", origin="restored")
+    assert _suite_candidate(client, auth_headers, agent_id) is None
+
+
+def test_suite_candidate_proposed(client, auth_headers, db_session):
+    agent_id = _agent(client, auth_headers)
+    candidate = _candidate(db_session, agent_id, number=2, status="proposed")
+    shown = _suite_candidate(client, auth_headers, agent_id)
+    assert shown["version_id"] == candidate.id
+    assert shown["number"] == 2
+    assert shown["status"] == "proposed"
+    assert shown["origin"] == "suggested"
+    assert shown["strength"] is None
+    assert shown["progress"] is None
+    assert shown["parent_number"] == 1
+    assert shown["created_at"]
+
+
+def test_suite_candidate_verifying_reports_progress_on_that_version(client, auth_headers, db_session):
+    agent_id, _, fix = _failing_fix(client, auth_headers, db_session)
+    other = _test(db_session, _criterion(client, auth_headers, agent_id, name="reg"), "fix")
+    third = _test(db_session, _criterion(client, auth_headers, agent_id, name="reg2"), "fix")
+    candidate = _candidate(
+        db_session,
+        agent_id,
+        status="approved_verifying",
+        verification={
+            "strength": "weaker",
+            "fix_test_id": fix.id,
+            "approved_at": "2026-01-01T00:00:00",
+            "required": [
+                {"test_id": fix.id, "role": "fix", "before": "fail"},
+                {"test_id": other.id, "role": "regression", "before": "pass"},
+                {"test_id": third.id, "role": "regression", "before": "pass"},
+            ],
+        },
+    )
+    _result(db_session, fix, "replay", "pass", candidate.id)
+    _result(db_session, other, "replay", "pass", candidate.id, stale=True)  # stale: not counted
+    _result(db_session, third, "replay", "pass", _version_id(db_session, agent_id))  # other version
+    shown = _suite_candidate(client, auth_headers, agent_id)
+    assert shown["status"] == "approved_verifying"
+    assert shown["strength"] == "weaker"
+    assert shown["progress"] == {"done": 1, "total": 3}
+
+
+def test_suite_candidate_after_resolution_shows_the_latest_promoted_or_failed_suggestion(
+    client, auth_headers, db_session
+):
+    agent_id = _agent(client, auth_headers)
+    _candidate(
+        db_session, agent_id, number=2, status="failed_verification",
+        verification={"strength": "full", "required": []},
+    )
+    promoted = _candidate(
+        db_session, agent_id, number=3, status="promoted",
+        verification={"strength": "full", "required": []},
+    )
+    _candidate(db_session, agent_id, number=4, status="rejected")
+    shown = _suite_candidate(client, auth_headers, agent_id)
+    assert shown["version_id"] == promoted.id
+    assert shown["status"] == "promoted"
+    assert shown["strength"] == "full"
+    assert shown["progress"] is None
+
+
+def test_suite_candidate_failed_verification_is_shown(client, auth_headers, db_session):
+    agent_id = _agent(client, auth_headers)
+    failed = _candidate(db_session, agent_id, status="failed_verification")
+    shown = _suite_candidate(client, auth_headers, agent_id)
+    assert shown["version_id"] == failed.id
+    assert shown["status"] == "failed_verification"
+
+
+def test_suite_open_candidate_wins_over_a_resolved_one(client, auth_headers, db_session):
+    agent_id = _agent(client, auth_headers)
+    _candidate(db_session, agent_id, number=2, status="promoted")
+    open_one = _candidate(db_session, agent_id, number=3, status="proposed")
+    assert _suite_candidate(client, auth_headers, agent_id)["version_id"] == open_one.id
