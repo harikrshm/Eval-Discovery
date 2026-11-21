@@ -5,7 +5,11 @@ from sqlalchemy import select
 from sqlalchemy.orm import sessionmaker
 
 from backend.core.judge import JudgeCheck, JudgeFailed, JudgeResult
+from backend.core.heldout import GenerateFailed
 from backend.core.replay import ReplayFailed
+from backend.core.report import ReportFailed, ReportNarrative
+from backend.core.suggest import SuggestedFix, SuggestFailed
+from backend.db.candidates import VersionLimitReached
 from backend.db.models import (
     Agent,
     Criterion,
@@ -19,7 +23,15 @@ from backend.db.models import (
     utcnow,
 )
 from backend.jobs import handlers
-from backend.jobs.handlers import HANDLERS, JobFailed, handle_build_tests, handle_replay
+from backend.jobs.handlers import (
+    HANDLERS,
+    JobFailed,
+    handle_build_tests,
+    handle_change_report,
+    handle_generate_heldout,
+    handle_replay,
+    handle_suggest_fix,
+)
 from backend.db.testsuite import mark_criterion_results_stale
 from backend.jobs.queue import enqueue
 
@@ -100,7 +112,13 @@ def _events(db, name):
 
 
 def test_handlers_registry():
-    assert HANDLERS == {"build_tests": handle_build_tests, "replay": handle_replay}
+    assert HANDLERS == {
+        "build_tests": handle_build_tests,
+        "replay": handle_replay,
+        "suggest_fix": handle_suggest_fix,
+        "generate_heldout": handle_generate_heldout,
+        "change_report": handle_change_report,
+    }
 
 
 # ---------- build_tests ----------
@@ -822,3 +840,776 @@ def test_build_tests_discards_when_criterion_is_edited_during_the_job(db_session
     db_session.refresh(crit)
     assert crit.revision == 1
     assert crit.judge_check is None
+
+
+# ---------- suggest_fix ----------
+
+FAIL_TRANSCRIPT = [
+    {"role": "user", "content": "my order is late"},
+    {"role": "assistant", "content": "Not my problem."},
+]
+
+
+def _failing(db, transcript=FAIL_TRANSCRIPT, rationale="was rude"):
+    """An agent with a fix test that fails on the current version."""
+    ws, agent, pv = _agent(db)
+    crit = _criterion(db, agent)
+    test = _test(db, crit)
+    db.add(
+        EvalResult(
+            test_id=test.id,
+            prompt_version_id=pv.id,
+            kind="replay",
+            verdict="fail",
+            rationale=rationale,
+            transcript=transcript,
+        )
+    )
+    db.commit()
+    return ws, agent, pv, crit, test
+
+
+def _fix(**overrides):
+    values = dict(
+        prompt_text="be very nice",
+        failing_turn_index=1,
+        change_summary="Adds a politeness rule.",
+        touched_section="Tone",
+        expected_effect="Replies stay polite.",
+        risk="May sound stiff.",
+    )
+    values.update(overrides)
+    return SuggestedFix(**values)
+
+
+def _patch_suggest(monkeypatch, fix=None, exc=None):
+    mock = MagicMock(return_value=fix or _fix(), side_effect=exc)
+    monkeypatch.setattr(handlers, "suggest_fix", mock)
+    return mock
+
+
+def _proposed(db):
+    return list(db.scalars(select(PromptVersion).where(PromptVersion.status == "proposed")))
+
+
+def _other_session(db_session):
+    return sessionmaker(bind=db_session.get_bind(), expire_on_commit=False)()
+
+
+def test_suggest_fix_creates_one_proposed_version_with_the_why_report(db_session, monkeypatch):
+    ws, agent, pv, crit, test = _failing(db_session)
+    suggest = _patch_suggest(monkeypatch)
+    job = _job(db_session, ws, "suggest_fix", {"test_id": test.id})
+
+    result = handle_suggest_fix(db_session, job)
+
+    version = _proposed(db_session)[0]
+    assert len(_proposed(db_session)) == 1
+    assert result == {"version_id": version.id, "number": 2}
+    assert version.text == "be very nice"
+    assert version.origin == "suggested" and version.parent_id == pv.id
+    assert version.source_test_id == test.id and version.number == 2
+    assert version.change_report == {
+        "why": {
+            "criterion_name": "Stays polite",
+            "failing_test_id": test.id,
+            "failing_turn_index": 1,
+            "failing_quote": "Not my problem.",  # taken by code from the stored transcript
+            "change_summary": "Adds a politeness rule.",
+            "touched_section": "Tone",
+            "expected_effect": "Replies stay polite.",
+            "risk": "May sound stiff.",
+        },
+        "outcome": None,
+    }
+    db_session.refresh(agent)
+    assert agent.current_prompt_version_id == pv.id  # chat keeps the current version
+    config, spec, rationale, transcript = suggest.call_args.args
+    assert config.system_prompt == "be nice" and config.name == "Alex"
+    assert spec.name == "Stays polite"
+    assert rationale == "was rude" and transcript == FAIL_TRANSCRIPT
+    assert len(_events(db_session, "fix_suggested")) == 1
+
+
+def test_suggest_fix_quote_is_empty_when_the_index_is_out_of_range(db_session, monkeypatch):
+    ws, agent, pv, crit, test = _failing(db_session)
+    _patch_suggest(monkeypatch, _fix(failing_turn_index=9))
+
+    handle_suggest_fix(db_session, _job(db_session, ws, "suggest_fix", {"test_id": test.id}))
+
+    assert _proposed(db_session)[0].change_report["why"]["failing_quote"] == ""
+
+
+def test_suggest_fix_caps_the_model_summary_fields_at_600_characters(db_session, monkeypatch):
+    ws, agent, pv, crit, test = _failing(db_session)
+    long = "x" * 5000
+    _patch_suggest(monkeypatch, _fix(change_summary=long, touched_section=long, expected_effect=long, risk=long))
+
+    handle_suggest_fix(db_session, _job(db_session, ws, "suggest_fix", {"test_id": test.id}))
+
+    why = _proposed(db_session)[0].change_report["why"]
+    for key in ("change_summary", "touched_section", "expected_effect", "risk"):
+        assert len(why[key]) == 600
+
+
+def test_suggest_fix_never_passes_heldout_data_to_the_suggester(db_session, monkeypatch):
+    ws, agent, pv, crit, test = _failing(db_session)
+    heldout = _test(db_session, crit, messages=("HELDOUT-MSG-ONE", "HELDOUT-MSG-TWO"), role="heldout")
+    db_session.add(
+        EvalResult(
+            test_id=heldout.id,
+            prompt_version_id=pv.id,
+            kind="replay",
+            verdict="fail",
+            rationale="HELDOUT-RATIONALE",
+            transcript=[{"role": "user", "content": "HELDOUT-TRANSCRIPT"}],
+        )
+    )
+    db_session.commit()
+    suggest = _patch_suggest(monkeypatch)
+
+    handle_suggest_fix(db_session, _job(db_session, ws, "suggest_fix", {"test_id": test.id}))
+
+    sent = repr(suggest.call_args)
+    for marker in ("HELDOUT-MSG-ONE", "HELDOUT-MSG-TWO", "HELDOUT-RATIONALE", "HELDOUT-TRANSCRIPT"):
+        assert marker not in sent
+    assert "was rude" in sent  # the fix test's own failing result is what it does get
+
+
+def test_suggest_fix_reads_the_transcript_only_from_the_failing_result(db_session, monkeypatch):
+    ws, agent, pv, crit, test = _failing(db_session)
+    test.scripted_user_messages = ["SCRIPTED-ONLY"]
+    db_session.commit()
+    suggest = _patch_suggest(monkeypatch)
+
+    handle_suggest_fix(db_session, _job(db_session, ws, "suggest_fix", {"test_id": test.id}))
+
+    assert "SCRIPTED-ONLY" not in repr(suggest.call_args)
+
+
+def test_suggest_fix_refuses_a_heldout_test(db_session, monkeypatch):
+    ws, agent, pv, crit, test = _failing(db_session)
+    heldout = _test(db_session, crit, role="heldout")
+    suggest = _patch_suggest(monkeypatch)
+
+    with pytest.raises(JobFailed) as err:
+        handle_suggest_fix(db_session, _job(db_session, ws, "suggest_fix", {"test_id": heldout.id}))
+
+    assert str(err.value) == "Suggest a fix from the fix test."
+    suggest.assert_not_called()
+
+
+def test_suggest_fix_requires_a_failing_result_on_the_current_prompt(db_session, monkeypatch):
+    ws, agent, pv = _agent(db_session)
+    test = _test(db_session, _criterion(db_session, agent))  # never run
+    suggest = _patch_suggest(monkeypatch)
+
+    with pytest.raises(JobFailed) as err:
+        handle_suggest_fix(db_session, _job(db_session, ws, "suggest_fix", {"test_id": test.id}))
+
+    assert str(err.value) == "This test isn't failing on the current prompt."
+    suggest.assert_not_called()
+
+
+def test_suggest_fix_refuses_a_passing_result(db_session, monkeypatch):
+    ws, agent, pv = _agent(db_session)
+    test = _test(db_session, _criterion(db_session, agent))
+    db_session.add(
+        EvalResult(
+            test_id=test.id,
+            prompt_version_id=pv.id,
+            kind="replay",
+            verdict="pass",
+            rationale="ok",
+            transcript=FAIL_TRANSCRIPT,
+        )
+    )
+    db_session.commit()
+    suggest = _patch_suggest(monkeypatch)
+
+    with pytest.raises(JobFailed) as err:
+        handle_suggest_fix(db_session, _job(db_session, ws, "suggest_fix", {"test_id": test.id}))
+
+    assert str(err.value) == "This test isn't failing on the current prompt."
+    suggest.assert_not_called()
+
+
+def test_suggest_fix_refuses_a_failure_on_an_older_version(db_session, monkeypatch):
+    ws, agent, pv, crit, test = _failing(db_session)
+    new = PromptVersion(agent_id=agent.id, text="edited", origin="edit", status="promoted", number=2)
+    db_session.add(new)
+    db_session.flush()
+    agent.current_prompt_version_id = new.id
+    db_session.commit()
+    suggest = _patch_suggest(monkeypatch)
+
+    with pytest.raises(JobFailed) as err:
+        handle_suggest_fix(db_session, _job(db_session, ws, "suggest_fix", {"test_id": test.id}))
+
+    assert str(err.value) == "This test isn't failing on the current prompt."
+    suggest.assert_not_called()
+
+
+def test_suggest_fix_failing_result_without_a_transcript_fails_the_job(db_session, monkeypatch):
+    ws, agent, pv, crit, test = _failing(db_session, transcript=None)
+    suggest = _patch_suggest(monkeypatch)
+
+    with pytest.raises(JobFailed) as err:
+        handle_suggest_fix(db_session, _job(db_session, ws, "suggest_fix", {"test_id": test.id}))
+
+    assert str(err.value) == "This test isn't failing on the current prompt."
+    suggest.assert_not_called()
+
+
+def test_suggest_fix_fails_while_a_candidate_is_open(db_session, monkeypatch):
+    ws, agent, pv, crit, test = _failing(db_session)
+    suggest = _patch_suggest(monkeypatch)
+    handle_suggest_fix(db_session, _job(db_session, ws, "suggest_fix", {"test_id": test.id}))
+    suggest.reset_mock()
+
+    with pytest.raises(JobFailed) as err:
+        handle_suggest_fix(db_session, _job(db_session, ws, "suggest_fix", {"test_id": test.id}))
+
+    assert str(err.value) == "A fix is already proposed or being verified."
+    suggest.assert_not_called()
+    assert len(_proposed(db_session)) == 1
+
+
+def test_suggest_fix_candidate_opened_during_the_call_fails_the_job(db_session, monkeypatch):
+    ws, agent, pv, crit, test = _failing(db_session)
+    agent_id = agent.id
+
+    def suggest_while_candidate_appears(config, spec, rationale, transcript):
+        other = _other_session(db_session)
+        try:
+            other.add(PromptVersion(agent_id=agent_id, text="x", origin="suggested", status="proposed", number=2))
+            other.commit()
+        finally:
+            other.close()
+        return _fix()
+
+    monkeypatch.setattr(handlers, "suggest_fix", suggest_while_candidate_appears)
+
+    with pytest.raises(JobFailed) as err:
+        handle_suggest_fix(db_session, _job(db_session, ws, "suggest_fix", {"test_id": test.id}))
+
+    assert str(err.value) == "A fix is already proposed or being verified."
+    assert len(_proposed(db_session)) == 1
+    assert _events(db_session, "fix_suggested") == []
+
+
+def test_suggest_fix_failure_uses_a_fixed_message(db_session, monkeypatch):
+    ws, agent, pv, crit, test = _failing(db_session)
+    _patch_suggest(monkeypatch, exc=SuggestFailed("suggester call failed: key sk-SECRET rejected"))
+
+    with pytest.raises(JobFailed) as err:
+        handle_suggest_fix(db_session, _job(db_session, ws, "suggest_fix", {"test_id": test.id}))
+
+    assert str(err.value) == "Couldn't write a fix. Try again."
+    assert _proposed(db_session) == []
+    assert _events(db_session, "fix_suggested") == []
+
+
+def test_suggest_fix_version_limit_maps_to_a_fixed_message(db_session, monkeypatch):
+    ws, agent, pv, crit, test = _failing(db_session)
+    _patch_suggest(monkeypatch)
+    monkeypatch.setattr(handlers, "create_proposed_version", MagicMock(side_effect=VersionLimitReached("a")))
+
+    with pytest.raises(JobFailed) as err:
+        handle_suggest_fix(db_session, _job(db_session, ws, "suggest_fix", {"test_id": test.id}))
+
+    assert str(err.value) == "Prompt version limit reached for this agent."
+    assert _events(db_session, "fix_suggested") == []
+
+
+def test_suggest_fix_rejects_foreign_and_missing_tests(db_session, monkeypatch):
+    ws, agent, pv, crit, test = _failing(db_session)
+    other_ws = Workspace(token_hash="other", expires_at=utcnow())
+    db_session.add(other_ws)
+    db_session.commit()
+    suggest = _patch_suggest(monkeypatch)
+
+    for ws_, payload in ((other_ws, {"test_id": test.id}), (ws, {"test_id": "nope"}), (ws, {})):
+        with pytest.raises(JobFailed) as err:
+            handle_suggest_fix(db_session, _job(db_session, ws_, "suggest_fix", payload))
+        assert str(err.value) == "That test no longer exists."
+    suggest.assert_not_called()
+
+
+def test_suggest_fix_test_deleted_during_the_call_fails_the_job(db_session, monkeypatch):
+    ws, agent, pv, crit, test = _failing(db_session)
+    test_id = test.id
+
+    def suggest_while_deleted(config, spec, rationale, transcript):
+        other = _other_session(db_session)
+        try:
+            other.execute(EvalResult.__table__.delete())
+            other.execute(EvalTest.__table__.delete().where(EvalTest.id == test_id))
+            other.commit()
+        finally:
+            other.close()
+        return _fix()
+
+    monkeypatch.setattr(handlers, "suggest_fix", suggest_while_deleted)
+
+    with pytest.raises(JobFailed) as err:
+        handle_suggest_fix(db_session, _job(db_session, ws, "suggest_fix", {"test_id": test_id}))
+
+    assert str(err.value) == "That test no longer exists."
+    assert _proposed(db_session) == []
+
+
+def test_suggest_fix_fails_when_the_criterion_is_edited_during_the_call(db_session, monkeypatch):
+    ws, agent, pv, crit, test = _failing(db_session)
+    crit_id = crit.id
+
+    def suggest_while_edited(config, spec, rationale, transcript):
+        _edit_criterion_elsewhere(db_session, crit_id)
+        return _fix()
+
+    monkeypatch.setattr(handlers, "suggest_fix", suggest_while_edited)
+
+    with pytest.raises(JobFailed) as err:
+        handle_suggest_fix(db_session, _job(db_session, ws, "suggest_fix", {"test_id": test.id}))
+
+    assert str(err.value) == "That criterion changed while the fix was written. Try again."
+    assert _proposed(db_session) == []
+    assert _events(db_session, "fix_suggested") == []
+
+
+def test_suggest_fix_fails_when_the_current_version_changes_during_the_call(db_session, monkeypatch):
+    ws, agent, pv, crit, test = _failing(db_session)
+    agent_id = agent.id
+
+    def suggest_while_prompt_changes(config, spec, rationale, transcript):
+        other = _other_session(db_session)
+        try:
+            new = PromptVersion(agent_id=agent_id, text="edited", origin="edit", status="promoted", number=2)
+            other.add(new)
+            other.flush()
+            other.get(Agent, agent_id).current_prompt_version_id = new.id
+            other.commit()
+        finally:
+            other.close()
+        return _fix()
+
+    monkeypatch.setattr(handlers, "suggest_fix", suggest_while_prompt_changes)
+
+    with pytest.raises(JobFailed) as err:
+        handle_suggest_fix(db_session, _job(db_session, ws, "suggest_fix", {"test_id": test.id}))
+
+    assert str(err.value) == "This test isn't failing on the current prompt."
+    assert _proposed(db_session) == []
+
+
+def test_suggest_fix_holds_no_transaction_during_the_llm_call(db_session, monkeypatch):
+    ws, agent, pv, crit, test = _failing(db_session)
+    in_txn = []
+
+    def fake_suggest(config, spec, rationale, transcript):
+        in_txn.append(db_session.in_transaction())
+        return _fix()
+
+    monkeypatch.setattr(handlers, "suggest_fix", fake_suggest)
+
+    handle_suggest_fix(db_session, _job(db_session, ws, "suggest_fix", {"test_id": test.id}))
+
+    assert in_txn == [False]
+
+
+# ---------- generate_heldout ----------
+
+
+def _fix_only(db):
+    ws, agent, pv = _agent(db)
+    crit = _criterion(db, agent)
+    fix = _test(db, crit, messages=("u1", "u2"))
+    return ws, agent, pv, crit, fix
+
+
+def _patch_generate(monkeypatch, scenarios):
+    mock = MagicMock(side_effect=scenarios)
+    monkeypatch.setattr(handlers, "generate_scenario", mock)
+    return mock
+
+
+def _heldouts(db):
+    return list(db.scalars(select(EvalTest).where(EvalTest.role == "heldout")))
+
+
+def test_generate_heldout_keeps_the_first_failing_scenario(db_session, monkeypatch):
+    ws, agent, pv, crit, fix = _fix_only(db_session)
+    generate = _patch_generate(monkeypatch, [["a1", "a2"], ["b1", "b2", "b3"]])
+    replay_mock = _patch_replay(monkeypatch)
+    judge_mock = _verdicts(monkeypatch, ["pass", "fail"], rationale="r" * 3000)
+    job = _job(db_session, ws, "generate_heldout", {"criterion_id": crit.id})
+
+    result = handle_generate_heldout(db_session, job)
+
+    test = _heldouts(db_session)[0]
+    assert len(_heldouts(db_session)) == 1
+    assert result == {"created": True, "test_id": test.id}
+    assert test.criterion_id == crit.id and test.origin == "generated" and test.source_run_id is None
+    assert test.scripted_user_messages == ["b1", "b2", "b3"]
+    row = db_session.scalars(select(EvalResult).where(EvalResult.test_id == test.id)).one()
+    assert row.kind == "replay" and row.verdict == "fail" and row.stale is False
+    assert row.prompt_version_id == pv.id and row.transcript == TRANSCRIPT
+    assert len(row.rationale) == 2000
+    assert generate.call_count == 2 and judge_mock.call_count == 2
+    assert generate.call_args_list[0].args[2] == []
+    spec, fix_messages, avoid = generate.call_args_list[1].args
+    assert spec.name == "Stays polite" and fix_messages == ["u1", "u2"]
+    assert avoid == [["a1", "a2"]]
+    config, messages = replay_mock.call_args.args
+    assert config.system_prompt == "be nice" and messages == ["b1", "b2", "b3"]
+    assert judge_mock.call_args.args[0].system_prompt == ""  # blanked judge config
+    assert len(_events(db_session, "test_generated")) == 1
+    assert [e.properties for e in _events(db_session, "test_created")] == [{"role": "heldout"}]
+
+
+def test_generate_heldout_stops_after_three_passing_attempts(db_session, monkeypatch):
+    ws, agent, pv, crit, fix = _fix_only(db_session)
+    generate = _patch_generate(monkeypatch, [["a1", "a2"], ["b1", "b2"], ["c1", "c2"], ["d1", "d2"]])
+    _patch_replay(monkeypatch)
+    _verdicts(monkeypatch, ["pass", "not_applicable", "pass"])
+    job = _job(db_session, ws, "generate_heldout", {"criterion_id": crit.id})
+
+    result = handle_generate_heldout(db_session, job)
+
+    assert result == {"created": False, "reason": "agent_handles_it"}
+    assert generate.call_count == 3
+    assert _heldouts(db_session) == []
+    assert _events(db_session, "test_generated") == [] and _events(db_session, "test_created") == []
+
+
+def test_generate_heldout_failed_generation_counts_as_an_attempt(db_session, monkeypatch):
+    ws, agent, pv, crit, fix = _fix_only(db_session)
+    generate = _patch_generate(monkeypatch, [GenerateFailed("x"), GenerateFailed("x"), ["c1", "c2"], ["d1", "d2"]])
+    replay_mock = _patch_replay(monkeypatch)
+    _verdicts(monkeypatch, ["fail"])
+    job = _job(db_session, ws, "generate_heldout", {"criterion_id": crit.id})
+
+    result = handle_generate_heldout(db_session, job)
+
+    assert result["created"] is True
+    assert generate.call_count == 3
+    assert replay_mock.call_count == 1
+
+
+def test_generate_heldout_all_generations_failing_creates_nothing(db_session, monkeypatch):
+    ws, agent, pv, crit, fix = _fix_only(db_session)
+    generate = _patch_generate(monkeypatch, [GenerateFailed("x")] * 3)
+    replay_mock = _patch_replay(monkeypatch)
+    job = _job(db_session, ws, "generate_heldout", {"criterion_id": crit.id})
+
+    assert handle_generate_heldout(db_session, job) == {"created": False, "reason": "agent_handles_it"}
+    assert generate.call_count == 3
+    replay_mock.assert_not_called()
+
+
+def test_generate_heldout_scenario_equal_to_the_fix_messages_is_a_failed_attempt(db_session, monkeypatch):
+    from backend.core import heldout as heldout_core
+
+    ws, agent, pv, crit, fix = _fix_only(db_session)
+    replies = iter(['{"messages": ["U1", " u2 "]}', '{"messages": ["new one", "new two"]}'])
+    monkeypatch.setattr(heldout_core, "groq_chat", lambda *a, **k: next(replies))
+    replay_mock = _patch_replay(monkeypatch)
+    _verdicts(monkeypatch, ["fail"])
+    job = _job(db_session, ws, "generate_heldout", {"criterion_id": crit.id})
+
+    result = handle_generate_heldout(db_session, job)
+
+    assert result["created"] is True
+    assert replay_mock.call_count == 1  # the copy of the fix test was never replayed
+    assert _heldouts(db_session)[0].scripted_user_messages == ["new one", "new two"]
+
+
+def test_generate_heldout_needs_a_fix_test_and_no_heldout_test(db_session, monkeypatch):
+    ws, agent, pv = _agent(db_session)
+    crit = _criterion(db_session, agent)  # no tests yet
+    generate = _patch_generate(monkeypatch, [])
+
+    with pytest.raises(JobFailed) as err:
+        handle_generate_heldout(db_session, _job(db_session, ws, "generate_heldout", {"criterion_id": crit.id}))
+    assert str(err.value) == "This criterion needs a fix test and no held-out test."
+
+    _test(db_session, crit, role="fix")
+    _test(db_session, crit, messages=("h1", "h2"), role="heldout")
+    with pytest.raises(JobFailed) as err:
+        handle_generate_heldout(db_session, _job(db_session, ws, "generate_heldout", {"criterion_id": crit.id}))
+    assert str(err.value) == "This criterion needs a fix test and no held-out test."
+    generate.assert_not_called()
+
+
+def test_generate_heldout_rejects_foreign_or_missing_criterion(db_session, monkeypatch):
+    ws, agent, pv, crit, fix = _fix_only(db_session)
+    other_ws = Workspace(token_hash="other", expires_at=utcnow())
+    db_session.add(other_ws)
+    db_session.commit()
+    generate = _patch_generate(monkeypatch, [])
+
+    for ws_, payload in ((other_ws, {"criterion_id": crit.id}), (ws, {"criterion_id": "nope"}), (ws, {})):
+        with pytest.raises(JobFailed) as err:
+            handle_generate_heldout(db_session, _job(db_session, ws_, "generate_heldout", payload))
+        assert str(err.value) == "That criterion no longer exists."
+    generate.assert_not_called()
+
+
+def test_generate_heldout_replay_failure_uses_a_fixed_message(db_session, monkeypatch):
+    ws, agent, pv, crit, fix = _fix_only(db_session)
+    _patch_generate(monkeypatch, [["a1", "a2"]])
+    monkeypatch.setattr(handlers, "replay", MagicMock(side_effect=ReplayFailed("boom SECRET")))
+
+    with pytest.raises(JobFailed) as err:
+        handle_generate_heldout(db_session, _job(db_session, ws, "generate_heldout", {"criterion_id": crit.id}))
+
+    assert str(err.value) == "The agent didn't respond. Try again."
+    assert _heldouts(db_session) == []
+
+
+def test_generate_heldout_judge_failure_uses_a_fixed_message(db_session, monkeypatch):
+    ws, agent, pv, crit, fix = _fix_only(db_session)
+    _patch_generate(monkeypatch, [["a1", "a2"]])
+    _patch_replay(monkeypatch)
+    monkeypatch.setattr(handlers, "judge", MagicMock(side_effect=JudgeFailed("boom SECRET")))
+
+    with pytest.raises(JobFailed) as err:
+        handle_generate_heldout(db_session, _job(db_session, ws, "generate_heldout", {"criterion_id": crit.id}))
+
+    assert str(err.value) == "The judge was unavailable. Try again."
+    assert _heldouts(db_session) == []
+
+
+def test_generate_heldout_discards_when_the_criterion_is_edited_during_the_job(db_session, monkeypatch):
+    ws, agent, pv, crit, fix = _fix_only(db_session)
+    crit_id = crit.id
+    _patch_generate(monkeypatch, [["a1", "a2"]])
+    _patch_replay(monkeypatch)
+
+    def judge_while_edited(config, spec, transcript):
+        _edit_criterion_elsewhere(db_session, crit_id)
+        return JudgeResult("fail", "r")
+
+    monkeypatch.setattr(handlers, "judge", judge_while_edited)
+
+    result = handle_generate_heldout(db_session, _job(db_session, ws, "generate_heldout", {"criterion_id": crit_id}))
+
+    assert result == {"created": False, "discarded": True}
+    assert _heldouts(db_session) == []
+    assert _events(db_session, "test_generated") == []
+
+
+def test_generate_heldout_discards_when_the_current_version_changes_during_the_job(db_session, monkeypatch):
+    ws, agent, pv, crit, fix = _fix_only(db_session)
+    agent_id = agent.id
+    _patch_generate(monkeypatch, [["a1", "a2"]])
+    _patch_replay(monkeypatch)
+
+    def judge_while_prompt_changes(config, spec, transcript):
+        other = _other_session(db_session)
+        try:
+            new = PromptVersion(agent_id=agent_id, text="edited", origin="edit", status="promoted", number=2)
+            other.add(new)
+            other.flush()
+            other.get(Agent, agent_id).current_prompt_version_id = new.id
+            other.commit()
+        finally:
+            other.close()
+        return JudgeResult("fail", "r")
+
+    monkeypatch.setattr(handlers, "judge", judge_while_prompt_changes)
+
+    result = handle_generate_heldout(db_session, _job(db_session, ws, "generate_heldout", {"criterion_id": crit.id}))
+
+    assert result == {"created": False, "discarded": True}
+    assert _heldouts(db_session) == []
+
+
+def test_generate_heldout_holds_no_transaction_during_llm_calls(db_session, monkeypatch):
+    ws, agent, pv, crit, fix = _fix_only(db_session)
+    in_txn = []
+
+    def fake_generate(spec, fix_messages, avoid):
+        in_txn.append(db_session.in_transaction())
+        return ["a1", "a2"]
+
+    def fake_replay(config, messages):
+        in_txn.append(db_session.in_transaction())
+        return TRANSCRIPT
+
+    def fake_judge(config, spec, transcript):
+        in_txn.append(db_session.in_transaction())
+        return JudgeResult("fail", "r")
+
+    monkeypatch.setattr(handlers, "generate_scenario", fake_generate)
+    monkeypatch.setattr(handlers, "replay", fake_replay)
+    monkeypatch.setattr(handlers, "judge", fake_judge)
+
+    result = handle_generate_heldout(db_session, _job(db_session, ws, "generate_heldout", {"criterion_id": crit.id}))
+
+    assert result["created"] is True
+    assert in_txn == [False, False, False]
+
+
+# ---------- change_report ----------
+
+OUTCOME_TABLE = [
+    {
+        "test_id": "t-fix",
+        "role": "fix",
+        "criterion_name": "Stays polite",
+        "before": "fail",
+        "after": "pass",
+        "rationale": "now polite",
+        "transcript": [{"role": "user", "content": "TRANSCRIPT-NOT-FOR-WRITER"}],
+    }
+]
+
+
+def _candidate(db, agent, pv, text="be very nice", outcome="default", number=2):
+    if outcome == "default":
+        outcome = {
+            "status": "promoted",
+            "reason": "All required tests passed.",
+            "table": OUTCOME_TABLE,
+            "narrative": None,
+            "explanation_unavailable": False,
+        }
+    version = PromptVersion(
+        agent_id=agent.id,
+        text=text,
+        parent_id=pv.id,
+        origin="suggested",
+        status="promoted",
+        number=number,
+        change_report={"why": {"criterion_name": "Stays polite"}, "outcome": outcome},
+    )
+    db.add(version)
+    db.commit()
+    return version
+
+
+def _patch_report(monkeypatch, narrative=None, exc=None):
+    narrative = narrative or ReportNarrative("It now stays polite.", "Keep monitoring.", ("t-fix",))
+    mock = MagicMock(return_value=narrative, side_effect=exc)
+    monkeypatch.setattr(handlers, "write_report", mock)
+    return mock
+
+
+def test_change_report_stores_the_narrative(db_session, monkeypatch):
+    ws, agent, pv = _agent(db_session)
+    version = _candidate(db_session, agent, pv)
+    write = _patch_report(monkeypatch)
+    job = _job(db_session, ws, "change_report", {"prompt_version_id": version.id})
+
+    result = handle_change_report(db_session, job)
+
+    assert result == {"explained": True}
+    db_session.refresh(version)
+    outcome = version.change_report["outcome"]
+    assert outcome["narrative"] == {
+        "explanation": "It now stays polite.",
+        "next_step": "Keep monitoring.",
+        "cited_test_ids": ["t-fix"],
+    }
+    assert outcome["explanation_unavailable"] is False
+    assert outcome["status"] == "promoted" and outcome["table"] == OUTCOME_TABLE
+    assert version.change_report["why"] == {"criterion_name": "Stays polite"}
+    diff_text, rows, status, reason = write.call_args.args
+    assert status == "promoted" and reason == "All required tests passed."
+    assert rows == [
+        {
+            "test_id": "t-fix",
+            "role": "fix",
+            "criterion_name": "Stays polite",
+            "before": "fail",
+            "after": "pass",
+            "rationale": "now polite",
+        }
+    ]
+    assert "TRANSCRIPT-NOT-FOR-WRITER" not in repr(write.call_args)
+    assert "-be nice" in diff_text and "+be very nice" in diff_text
+
+
+def test_change_report_caps_the_diff_at_8000_characters(db_session, monkeypatch):
+    ws, agent, pv = _agent(db_session)
+    version = _candidate(db_session, agent, pv, text="\n".join(f"line {i} " + "y" * 50 for i in range(500)))
+    write = _patch_report(monkeypatch)
+
+    handle_change_report(db_session, _job(db_session, ws, "change_report", {"prompt_version_id": version.id}))
+
+    assert len(write.call_args.args[0]) == 8000
+
+
+def test_change_report_failure_marks_the_explanation_unavailable(db_session, monkeypatch):
+    ws, agent, pv = _agent(db_session)
+    version = _candidate(db_session, agent, pv)
+    _patch_report(monkeypatch, exc=ReportFailed("report call failed"))
+
+    result = handle_change_report(db_session, _job(db_session, ws, "change_report", {"prompt_version_id": version.id}))
+
+    assert result == {"explained": False}
+    db_session.refresh(version)
+    outcome = version.change_report["outcome"]
+    assert outcome["explanation_unavailable"] is True and outcome["narrative"] is None
+    assert outcome["status"] == "promoted" and outcome["table"] == OUTCOME_TABLE
+
+
+def test_change_report_rejects_foreign_missing_and_outcomeless_versions(db_session, monkeypatch):
+    ws, agent, pv = _agent(db_session)
+    version = _candidate(db_session, agent, pv)
+    pending = _candidate(db_session, agent, pv, outcome=None, number=3)
+    other_ws = Workspace(token_hash="other", expires_at=utcnow())
+    db_session.add(other_ws)
+    db_session.commit()
+    write = _patch_report(monkeypatch)
+
+    for ws_, payload in (
+        (other_ws, {"prompt_version_id": version.id}),
+        (ws, {"prompt_version_id": "nope"}),
+        (ws, {}),
+        (ws, {"prompt_version_id": pending.id}),
+        (ws, {"prompt_version_id": pv.id}),  # a manual version has no change report
+    ):
+        with pytest.raises(JobFailed) as err:
+            handle_change_report(db_session, _job(db_session, ws_, "change_report", payload))
+        assert str(err.value) == "That prompt version no longer exists."
+    write.assert_not_called()
+
+
+def test_change_report_version_deleted_during_the_call_fails_the_job(db_session, monkeypatch):
+    ws, agent, pv = _agent(db_session)
+    version = _candidate(db_session, agent, pv)
+    version_id = version.id
+
+    def write_while_deleted(diff_text, rows, status, reason):
+        other = _other_session(db_session)
+        try:
+            other.execute(PromptVersion.__table__.delete().where(PromptVersion.id == version_id))
+            other.commit()
+        finally:
+            other.close()
+        return ReportNarrative("e", "n", ())
+
+    monkeypatch.setattr(handlers, "write_report", write_while_deleted)
+
+    with pytest.raises(JobFailed) as err:
+        handle_change_report(db_session, _job(db_session, ws, "change_report", {"prompt_version_id": version_id}))
+
+    assert str(err.value) == "That prompt version no longer exists."
+
+
+def test_change_report_holds_no_transaction_during_the_llm_call(db_session, monkeypatch):
+    ws, agent, pv = _agent(db_session)
+    version = _candidate(db_session, agent, pv)
+    in_txn = []
+
+    def fake_write(diff_text, rows, status, reason):
+        in_txn.append(db_session.in_transaction())
+        return ReportNarrative("e", "n", ())
+
+    monkeypatch.setattr(handlers, "write_report", fake_write)
+
+    handle_change_report(db_session, _job(db_session, ws, "change_report", {"prompt_version_id": version.id}))
+
+    assert in_txn == [False]
