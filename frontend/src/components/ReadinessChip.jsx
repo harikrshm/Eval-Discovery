@@ -18,10 +18,13 @@ export default function ReadinessChip({ readiness, live = true, className }) {
     <span
       data-testid="readiness-chip"
       role={live ? "status" : undefined}
-      className={cn(
-        "inline-block rounded-md border border-border bg-muted px-2 py-0.5 text-xs text-foreground empty:hidden",
-        className
-      )}
+      className={
+        // Empty: visually hidden but still in the accessibility tree (display:none would drop the
+        // live region, and its first text might then go unannounced); no space, padding or margin.
+        text
+          ? cn("inline-block rounded-md border border-border bg-muted px-2 py-0.5 text-xs text-foreground", className)
+          : "sr-only"
+      }
     >
       {text}
     </span>

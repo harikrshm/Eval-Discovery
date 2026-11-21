@@ -351,12 +351,15 @@ describe("PromptEditor stale draft protection", () => {
     expect(container.querySelector("textarea").value).toBe("A v2-based draft."); // never silently replaced
     expect(buttonByText("Save").disabled).toBe(true);
 
+    buttonByText("Discard edit").focus();
     await act(async () => {
       buttonByText("Discard edit").click();
     });
     expect(container.textContent).not.toContain(NOTICE);
     expect(container.querySelector("textarea").value).toBe("You are Alex, fixed.");
     expect(buttonByText("Save").disabled).toBe(true); // unchanged from the live prompt
+    // The Discard button is gone with the notice, so focus goes to the textarea, not <body>.
+    expect(document.activeElement).toBe(container.querySelector("textarea"));
 
     await type("Built on the fix.");
     await act(async () => {

@@ -71,4 +71,15 @@ describe("ReadinessChip", () => {
     expect(chip().getAttribute("aria-live")).toBeNull();
     expect(chip().textContent).toBe("1 of 2 criteria passing");
   });
+
+  it("keeps an empty live region in the accessibility tree (never display:none) and takes no space", async () => {
+    await render({ readiness: null, className: "mx-4 mb-2" });
+    expect(chip().className).not.toMatch(/(^|\s)(empty:)?hidden(\s|$)/);
+    expect(chip().className).toContain("sr-only");
+    expect(chip().className).not.toContain("mx-4");
+
+    await render({ readiness: { passing: 0, total: 1, withoutTests: 0, allPassing: false }, className: "mx-4 mb-2" });
+    expect(chip().className).not.toContain("sr-only");
+    expect(chip().className).toContain("mx-4");
+  });
 });

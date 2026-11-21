@@ -43,6 +43,8 @@ export default function PromptEditor({
   const verifyingRef = useRef(verifying);
   const openingRef = useRef(false);
   const refocusAfterOpen = useRef(false);
+  const refocusText = useRef(false);
+  const textRef = useRef(null);
   const editRef = useRef(null);
   const mounted = useRef(true);
   const refocus = useRef(false);
@@ -65,6 +67,15 @@ export default function PromptEditor({
       editRef.current?.focus();
     }
   }, [editing]);
+
+  // Discard removes the notice (and its focused button); focus moves to the textarea, which now
+  // shows the live prompt.
+  useEffect(() => {
+    if (!stale && refocusText.current) {
+      refocusText.current = false;
+      textRef.current?.focus();
+    }
+  }, [stale]);
 
   useEffect(() => {
     verifyingRef.current = verifying;
@@ -120,6 +131,7 @@ export default function PromptEditor({
 
   // Drops the draft and shows the live prompt again.
   function discard() {
+    refocusText.current = true;
     setDraft(null);
     setError(null);
   }
@@ -193,6 +205,7 @@ export default function PromptEditor({
             <Label htmlFor={textId} className="mb-1 block">System prompt</Label>
             <Textarea
               id={textId}
+              ref={textRef}
               value={text}
               onChange={(e) => handleChange(e.target.value)}
               readOnly={saving}

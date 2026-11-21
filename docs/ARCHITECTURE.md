@@ -568,7 +568,7 @@ Build detail worth knowing: the build job judges at most the 8 most recent saved
 | `/criteria/{id}/build-tests` | POST | Queue `build_tests` for a criterion (202, `{job_id}`; 409 if it already has tests) |
 | `/jobs/{id}` | GET | Job status: `{id, type, status, result, error}` |
 
-**Error codes:** `400` nothing or too little to check, `401` unknown or expired token, `404` agent, criterion, test or job not found in this workspace, `409` run-save race, no pattern to build from, or tests already exist, `422` invalid input, `429` quota, rate limit or hourly job cap, `502` upstream LLM failure.
+**Error codes:** `400` nothing or too little to check, `401` unknown or expired token, `404` agent, criterion, test or job not found in this workspace, `409` run-save race, no pattern to build from, tests already exist, or a prompt edit whose `base_version_id` is no longer the current version ("The prompt changed to v{n} while you were editing. Reload the prompt to continue."), `422` invalid input, `429` quota, rate limit or hourly job cap, `502` upstream LLM failure.
 
 ---
 
