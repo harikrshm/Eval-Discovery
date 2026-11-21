@@ -10,6 +10,7 @@ import {
 } from "../api";
 import { clearWorkspace } from "../lib/workspace";
 import { derivePatternState } from "../lib/patternState";
+import { remainingDraft } from "../lib/draft";
 
 // The server owns everything except the in-progress run, which is a draft kept
 // per agent in sessionStorage so a reload mid-conversation does not lose it.
@@ -150,8 +151,10 @@ export function useSession(agentId) {
     }
     if (agentIdRef.current !== id) return;
 
-    applyDraft([]);
-    writeDraft(id, []);
+    // Keep anything added to the draft while the save was in flight.
+    const rest = remainingDraft(draftRef.current, messages.length);
+    applyDraft(rest);
+    writeDraft(id, rest);
     setTranscripts((prev) => [...prev, saved.run.messages]);
     setRunCount(saved.run_count);
 
