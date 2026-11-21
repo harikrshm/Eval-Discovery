@@ -49,7 +49,7 @@ def test_keys_are_independent():
 
 def test_constants():
     assert limits.MAX_PROMPT_CHARS == config.MAX_PROMPT_CHARS
-    assert limits.MAX_AGENTS_PER_WORKSPACE == 5
+    assert limits.MAX_AGENTS_PER_WORKSPACE == config.MAX_AGENTS_PER_WORKSPACE == 5
     assert limits.MAX_RUNS_PER_WORKSPACE == 50
     assert limits.MAX_MESSAGES_PER_REQUEST == 40
     assert limits.MAX_MESSAGE_CHARS == 2000

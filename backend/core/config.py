@@ -6,6 +6,7 @@ Pure data: this package must never import a persona or any web/DB code.
 from dataclasses import dataclass
 
 MAX_PROMPT_CHARS = 4000
+MAX_AGENTS_PER_WORKSPACE = 5
 
 
 @dataclass(frozen=True)

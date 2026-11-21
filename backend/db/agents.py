@@ -6,13 +6,17 @@ from dataclasses import asdict
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from backend.api.limits import MAX_AGENTS_PER_WORKSPACE
-from backend.core.config import AgentAnalysis, AgentConfig, Behavior
+from backend.core.config import MAX_AGENTS_PER_WORKSPACE, AgentAnalysis, AgentConfig, Behavior
 from backend.db.models import Agent, BehaviorMap, PromptVersion, Workspace
 
 
 class AgentLimitReached(Exception):
     """The workspace already has MAX_AGENTS_PER_WORKSPACE agents."""
+
+
+def agent_count(db: Session, workspace: Workspace) -> int:
+    """Number of agents the workspace currently owns."""
+    return db.scalar(select(func.count()).select_from(Agent).where(Agent.workspace_id == workspace.id))
 
 
 def create_agent(
@@ -28,10 +32,7 @@ def create_agent(
     stale); raises AgentLimitReached with nothing written.
     """
     try:
-        count = db.scalar(
-            select(func.count()).select_from(Agent).where(Agent.workspace_id == workspace.id)
-        )
-        if count >= MAX_AGENTS_PER_WORKSPACE:
+        if agent_count(db, workspace) >= MAX_AGENTS_PER_WORKSPACE:
             raise AgentLimitReached(workspace.id)
         agent = Agent(
             workspace_id=workspace.id,

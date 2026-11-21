@@ -4,11 +4,11 @@ import logging
 from dataclasses import replace
 
 from fastapi import APIRouter, Depends, HTTPException, Request
-from sqlalchemy import func, select
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from backend.api.deps import get_current_workspace
-from backend.api.limits import MAX_AGENTS_PER_WORKSPACE, rate_limit_llm
+from backend.api.limits import rate_limit_llm
 from backend.api.schemas import (
     MAX_ROLE_LABEL_CHARS,
     AgentCreate,
@@ -23,8 +23,15 @@ from backend.api.schemas import (
     sanitize_label,
 )
 from backend.core.analyze import analyze_agent
-from backend.core.config import PRESETS, AgentAnalysis, AgentConfig
-from backend.db.agents import AgentLimitReached, create_agent, current_prompt, get_owned_agent, latest_analysis
+from backend.core.config import MAX_AGENTS_PER_WORKSPACE, PRESETS, AgentAnalysis, AgentConfig
+from backend.db.agents import (
+    AgentLimitReached,
+    agent_count,
+    create_agent,
+    current_prompt,
+    get_owned_agent,
+    latest_analysis,
+)
 from backend.db.events import try_log_event
 from backend.db.models import Agent, Criterion, Run, Workspace
 from backend.db.session import get_db
@@ -68,8 +75,7 @@ def _create_agent_or_429(
 
 
 def _check_agent_quota(db: Session, workspace: Workspace) -> None:
-    count = db.scalar(select(func.count()).select_from(Agent).where(Agent.workspace_id == workspace.id))
-    if count >= MAX_AGENTS_PER_WORKSPACE:
+    if agent_count(db, workspace) >= MAX_AGENTS_PER_WORKSPACE:
         raise HTTPException(status_code=429, detail=AGENT_LIMIT)
 
 

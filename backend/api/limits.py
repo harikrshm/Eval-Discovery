@@ -7,9 +7,11 @@ from collections.abc import Callable
 
 from fastapi import HTTPException, Request
 
-from backend.core.config import MAX_PROMPT_CHARS  # noqa: F401  (single source; re-exported)
+from backend.core.config import (  # noqa: F401  (single source; re-exported)
+    MAX_AGENTS_PER_WORKSPACE,
+    MAX_PROMPT_CHARS,
+)
 
-MAX_AGENTS_PER_WORKSPACE = 5
 MAX_RUNS_PER_WORKSPACE = 50
 MAX_MESSAGES_PER_REQUEST = 40
 MAX_MESSAGE_CHARS = 2000
