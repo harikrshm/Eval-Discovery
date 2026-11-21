@@ -75,7 +75,7 @@ Phase 2 closes the loop from a discovered criterion to a verdict on a prompt cha
 
 **The judge.** Model `openai/gpt-oss-120b` at temperature 0. It never sees the agent's system prompt, only the criterion and the transcript, both wrapped in delimiter tags and treated as data. The first time tests are built for a criterion, a sanity check makes the judge grade the criterion's own good example (expected pass) and bad example (expected fail). If it gets either wrong the criterion shows "low confidence". Replays run on `openai/gpt-oss-20b` at temperature 0.
 
-**Jobs.** A database-backed queue with one worker loop inside the web process. A job running longer than 180 s is treated as abandoned and requeued; a job gets at most 3 attempts. Each workspace may start at most 30 jobs per hour (a replay or build beyond that gets a 429; a discover still returns the criterion, just without a job).
+**Jobs.** A database-backed queue with one worker loop inside the web process. A job running longer than 180 s is treated as abandoned and requeued; a job gets at most 3 attempts. Each workspace may start at most 30 jobs per hour and at most 100 jobs may be queued across all workspaces (a replay, run-all or build beyond either gets a 429; a discover still returns the criterion, just without a job). The LLM calls a job makes are not counted by the per-IP LLM limiter; they are bounded by those two caps and a 45 s Groq timeout.
 
 Operational notes:
 
@@ -88,7 +88,7 @@ Operational notes:
 
 **Limitations.** The judge sanity check is weak by construction: the good and bad examples appear both inside the criterion and as the transcript, so the judge is partly graded on text it was just given. The check is not re-run after you edit a criterion's definition or examples (the old result is cleared instead). A pass is a signal, not proof. LLM output is not deterministic even at temperature 0, so a verdict can flip between runs.
 
-**Deferred to later phases:** suggested prompt fixes, a diff and change report, a held-out/regression promotion gate, prompt version history and restore, an aggregate readiness chip, picking a specific run for a manual criterion, the export endpoint and CI gate, event-derived metrics and the simulation script, and deleting a single agent.
+**Deferred to later phases:** suggested prompt fixes, a diff and change report, a held-out/regression promotion gate, prompt version history and restore, an aggregate readiness chip, picking a specific run for a manual criterion, the export endpoint and CI gate, event-derived metrics and the simulation script, deleting a single agent, and sliding expiry for workspace tokens.
 
 ## Tests
 
@@ -103,7 +103,7 @@ Operational notes:
 - **Behavior map instead of hardcoded keywords.** Each agent has a stored map of behaviors with trigger terms (presets ship theirs; pasted prompts get one from the analysis call). The pattern pre-filter checks those terms in user messages and only asks the LLM when a term appears in at least 2 new runs.
 - **Delta batching on the server.** Each agent remembers the last run it checked; a check only sends the runs saved since then. `check_due` in the save-run response tells the UI when to run it.
 - **Pasted text is data.** Agent prompts, transcripts and pattern summaries are wrapped in delimiter tags, and the system text says tagged content is data, not instructions. Delimiter tags inside pasted text are neutralized.
-- **Limits.** 5 agents and 50 runs per workspace, 4000-character prompts, 2000-character messages, at most 40 messages per request (a saved run may hold one more, the reply to the last message), 30 criteria and 20 prompt versions per agent, 30 background jobs per workspace per hour, and 30 LLM-backed calls per minute per client IP (in-memory, per process).
+- **Limits.** 5 agents and 50 runs per workspace, 4000-character prompts, 2000-character messages, at most 40 messages per request (a saved run may hold one more, the reply to the last message), 30 criteria and 20 prompt versions per agent, 30 background jobs per workspace per hour, at most 100 queued jobs across all workspaces (beyond that replay, run-all and build-tests get a 429 "The test queue is busy"), a 45 s timeout on each Groq call, and 30 LLM-backed calls per minute per client IP (in-memory, per process; the replay, run-all and build-tests routes count against it, but the LLM calls a job makes in the worker do not).
 - **Events.** A small product event log (`agent_created`, `run_saved`, `loop_detected`, `criterion_created`, `test_created`, `replay_started`, `replay_passed`, `replay_failed`) is written best-effort: a failed write never fails a request.
 - **Models.** `openai/gpt-oss-20b` plays the agent (and runs replays), `openai/gpt-oss-120b` analyzes prompts, detects patterns and judges, `qwen/qwen3.8-27b` writes criteria.
 
@@ -127,7 +127,7 @@ Backend on Render (web service):
 
    Seeing 429 means a forged header does not buy a fresh key. If it never returns 429, the header chain is longer than assumed: raise `TRUSTED_PROXY_HOPS`. If ordinary users start getting 429 together, everyone is sharing one key: lower it (or set `0` if the proxy adds no usable header). Each LLM route allows 30 calls per minute per client plus a process-wide `LLM_GLOBAL_PER_MINUTE` budget (default 600).
 
-Frontend (Cloudflare Worker with static assets): rebuild with the backend URL baked in, then deploy.
+Frontend (Cloudflare Worker with static assets): deploy the backend first, and let its start command run `alembic upgrade head`, before rebuilding the frontend. A new frontend against an old backend shows "Chat uses prompt vundefined" and no tests. Rebuild with the backend URL baked in, then deploy.
 
     cd frontend
     VITE_API_URL=https://your-backend.onrender.com npm run build

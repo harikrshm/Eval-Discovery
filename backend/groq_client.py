@@ -11,7 +11,16 @@ MODEL_CRITERIA = "qwen/qwen3.8-27b"
 MODEL_JUDGE = "openai/gpt-oss-120b"
 
 _api_key = os.getenv("GROQ_API_KEY") or "sk-test-placeholder"
-client = Groq(api_key=_api_key)
+# Bound every call: the SDK defaults (10 min timeout) could hold the single job worker for minutes.
+GROQ_TIMEOUT_SECONDS = 45.0
+GROQ_MAX_RETRIES = 2
+
+
+def _make_client(api_key: str) -> Groq:
+    return Groq(api_key=api_key, timeout=GROQ_TIMEOUT_SECONDS, max_retries=GROQ_MAX_RETRIES)
+
+
+client = _make_client(_api_key)
 
 
 def _strip_thinking(text: str) -> str:

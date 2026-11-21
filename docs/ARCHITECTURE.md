@@ -469,7 +469,7 @@ Each agent keeps `last_checked_at_run`. A pattern check only sends runs with `po
 
 ### 6.4 Prompt-Injection Handling
 
-Pasted agent prompts, transcripts and pattern summaries are untrusted. Prompt builders wrap them in delimiter tags (`<agent_prompt>`, `<transcripts>`, `<pattern_summary>`), neutralize any such tag inside the content (the angle brackets are escaped, so it cannot close the wrapper), and the system text states that tagged content is data to analyze, never instructions.
+Pasted agent prompts, transcripts and pattern summaries are untrusted. Prompt builders wrap them in delimiter tags (`<agent_prompt>`, `<transcripts>`, `<pattern_summary>`, `<criterion>`), neutralize any such tag inside the content (the angle brackets are escaped, so it cannot close the wrapper), and the system text states that tagged content is data to analyze, never instructions.
 
 ### 6.5 Events
 
@@ -486,11 +486,15 @@ A minimal product event log records `agent_created`, `run_saved`, `loop_detected
 | Criteria per agent | 30 |
 | Prompt versions per agent | 20 |
 | Background jobs | 30 started per workspace per hour (429 beyond that; discover still returns the criterion, with `job_id: null`) |
+| Job queue depth | 100 queued jobs across all workspaces (429 "The test queue is busy" beyond that; run-all is all-or-nothing; discover still returns the criterion, with `job_id: null`) |
 | Job staleness / attempts | a `running` job older than 180 s is requeued; at most 3 attempts |
 | Replay length | the first 20 user messages of the saved run |
 | Runs sent to pattern detection | the most recent 10 unchecked |
-| LLM-backed calls | 30 per minute per client, plus a process-wide budget of 600 per minute (`LLM_GLOBAL_PER_MINUTE`) |
+| LLM-backed calls | 30 per minute per client, plus a process-wide budget of 600 per minute (`LLM_GLOBAL_PER_MINUTE`). The replay, run-all and build-tests enqueue routes spend one of these per accepted request (a dedupe hit that returns an existing job does not) |
+| Groq client | 45 s timeout and 2 retries per call |
 | Workspace creation | 20 per minute per client |
+
+The LLM calls a background job makes are NOT counted by the per-client or process-wide limiters above (they happen in the worker, not in a request). They are bounded instead by the hourly per-workspace job cap, the global queue-depth cap and the Groq client timeout, so a single stuck call cannot hold the one worker for more than a few minutes.
 
 Limiters are in-memory sliding windows, per process: they reset on restart and are not shared across instances. The client key is derived from `X-Forwarded-For` by taking the Nth entry from the right, where N is `TRUSTED_PROXY_HOPS` (default 1; 0 uses the direct peer address; a missing or too-short header also falls back to the peer address). Entries to the left of that are client-supplied and ignored.
 
@@ -660,6 +664,7 @@ Phases 1 and 2 (persistence, saved tests, replay, judging and the manual prompt 
 - The export endpoint and CI gate
 - Event-derived metrics and the simulation script
 - Per-agent delete
+- Sliding expiry for workspace tokens
 
 ---
 

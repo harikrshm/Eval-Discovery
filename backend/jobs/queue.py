@@ -13,6 +13,7 @@ from backend.db.models import Job, utcnow
 MAX_JOB_ATTEMPTS = 3
 JOB_STALE_AFTER_SECONDS = 180
 JOBS_PER_WORKSPACE_PER_HOUR = 30
+MAX_QUEUED_JOBS = 100  # global backlog cap: one FIFO worker serves every workspace
 
 _ACTIVE_STATUSES = ("queued", "running")
 _INTERRUPTED_ERROR = "The job was interrupted too many times. Try again."
@@ -34,6 +35,11 @@ def jobs_started_since(db: Session, workspace_id: str, since: datetime) -> int:
         .select_from(Job)
         .where(Job.workspace_id == workspace_id, Job.created_at >= since)
     )
+
+
+def queued_job_count(db: Session) -> int:
+    """Jobs waiting for the worker, across all workspaces (for the global backlog cap)."""
+    return db.scalar(select(func.count()).select_from(Job).where(Job.status == "queued"))
 
 
 def active_job_for(db: Session, workspace_id: str, job_type: str, payload: dict) -> Job | None:

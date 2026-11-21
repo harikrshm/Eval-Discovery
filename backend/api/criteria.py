@@ -23,7 +23,13 @@ from backend.db.events import try_log_event
 from backend.db.models import Agent, Criterion, Workspace, utcnow
 from backend.db.session import get_db
 from backend.db.testsuite import mark_criterion_results_stale
-from backend.jobs.queue import JOBS_PER_WORKSPACE_PER_HOUR, enqueue, jobs_started_since
+from backend.jobs.queue import (
+    JOBS_PER_WORKSPACE_PER_HOUR,
+    MAX_QUEUED_JOBS,
+    enqueue,
+    jobs_started_since,
+    queued_job_count,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -66,11 +72,16 @@ def _out(criterion: Criterion) -> CriterionOut:
 
 
 def _enqueue_build_tests(db: Session, workspace: Workspace, criterion: Criterion) -> str | None:
-    """Queue the test-building job; None when the hourly cap is reached (the criterion still stands)."""
-    used = jobs_started_since(db, workspace.id, utcnow() - timedelta(hours=1))
-    if used >= JOBS_PER_WORKSPACE_PER_HOUR:
+    """Queue the test-building job; None when a cap is reached or queueing fails (the criterion still stands)."""
+    try:
+        used = jobs_started_since(db, workspace.id, utcnow() - timedelta(hours=1))
+        if used >= JOBS_PER_WORKSPACE_PER_HOUR or queued_job_count(db) >= MAX_QUEUED_JOBS:
+            return None
+        return enqueue(db, workspace.id, "build_tests", {"criterion_id": criterion.id}).id
+    except Exception:
+        logger.warning("Could not queue test building for criterion %s", criterion.id, exc_info=True)
+        db.rollback()
         return None
-    return enqueue(db, workspace.id, "build_tests", {"criterion_id": criterion.id}).id
 
 
 @router.post("/agents/{agent_id}/criteria/discover", status_code=201, response_model=DiscoveredCriterionOut)

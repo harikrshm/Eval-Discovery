@@ -5,9 +5,12 @@ import pytest
 from backend.api import limits
 from backend.db.models import Agent, Criterion, EvalResult, EvalTest, Event, Job, utcnow
 from backend.db.workspaces import create_workspace
-from backend.jobs.queue import JOBS_PER_WORKSPACE_PER_HOUR
+from backend.api.limits import RateLimiter
+from backend.jobs.queue import JOBS_PER_WORKSPACE_PER_HOUR, MAX_QUEUED_JOBS
 
 CAP_DETAIL = "Test run limit reached for this hour. Try again later."
+BUSY_DETAIL = "The test queue is busy. Try again in a minute."
+TOO_MANY_DETAIL = "Too many requests. Wait a minute, then try again."
 
 CRITERION = {
     "name": "Answers the pricing question",
@@ -328,6 +331,121 @@ def test_build_tests_is_409_when_tests_exist(client, auth_headers, db_session):
     assert r.status_code == 409
     assert r.json()["detail"] == "Tests already exist for this criterion."
     assert _jobs(db_session) == []
+
+
+# ---------------------------------------------------------------- LLM rate limit and queue depth
+
+
+def _exhaust_llm_limiter(monkeypatch):
+    monkeypatch.setattr(limits, "llm_limiter", RateLimiter(0, 60))
+
+
+def _fill_queue(db_session, count=MAX_QUEUED_JOBS):
+    """Queued jobs from other workspaces, so the per-workspace hourly cap is untouched."""
+    for _i in range(count):
+        workspace, _ = create_workspace(db_session)
+        db_session.add(Job(workspace_id=workspace.id, type="replay", payload={"x": 1}, status="queued"))
+    db_session.commit()
+
+
+def test_enqueue_routes_are_rate_limited(client, auth_headers, db_session, monkeypatch):
+    agent_id = _agent(client, auth_headers)
+    cid = _criterion(client, auth_headers, agent_id)
+    empty_cid = _criterion(client, auth_headers, agent_id, name="No tests")
+    test = _test(db_session, cid)
+    _exhaust_llm_limiter(monkeypatch)
+    for url in (
+        f"/tests/{test.id}/replay",
+        f"/agents/{agent_id}/tests/run-all",
+        f"/criteria/{empty_cid}/build-tests",
+    ):
+        r = client.post(url, headers=auth_headers)
+        assert r.status_code == 429, url
+        assert r.json()["detail"] == TOO_MANY_DETAIL
+    assert _jobs(db_session) == []
+
+
+def test_rate_limit_is_checked_after_ownership(client, auth_headers, db_session, monkeypatch):
+    agent_id = _agent(client, auth_headers)
+    test = _test(db_session, _criterion(client, auth_headers, agent_id))
+    _exhaust_llm_limiter(monkeypatch)
+    other = _other_headers(db_session)
+    assert client.post(f"/tests/{test.id}/replay", headers=other).status_code == 404
+    assert client.post(f"/agents/{agent_id}/tests/run-all", headers=other).status_code == 404
+
+
+def test_dedupe_hits_are_not_rate_limited(client, auth_headers, db_session, monkeypatch):
+    agent_id = _agent(client, auth_headers)
+    cid = _criterion(client, auth_headers, agent_id)
+    empty_cid = _criterion(client, auth_headers, agent_id, name="No tests")
+    test = _test(db_session, cid)
+    replay_id = client.post(f"/tests/{test.id}/replay", headers=auth_headers).json()["job_id"]
+    build_id = client.post(f"/criteria/{empty_cid}/build-tests", headers=auth_headers).json()["job_id"]
+    _exhaust_llm_limiter(monkeypatch)
+    again = client.post(f"/tests/{test.id}/replay", headers=auth_headers)
+    assert again.status_code == 202
+    assert again.json() == {"job_id": replay_id}
+    again = client.post(f"/criteria/{empty_cid}/build-tests", headers=auth_headers)
+    assert again.status_code == 202
+    assert again.json() == {"job_id": build_id}
+    # Nothing left to enqueue for run-all either.
+    assert client.post(f"/agents/{agent_id}/tests/run-all", headers=auth_headers).json() == {"job_ids": []}
+
+
+def test_dedupe_hits_ignore_a_full_queue(client, auth_headers, db_session):
+    agent_id = _agent(client, auth_headers)
+    test = _test(db_session, _criterion(client, auth_headers, agent_id))
+    job_id = client.post(f"/tests/{test.id}/replay", headers=auth_headers).json()["job_id"]
+    _fill_queue(db_session)
+    again = client.post(f"/tests/{test.id}/replay", headers=auth_headers)
+    assert again.status_code == 202
+    assert again.json() == {"job_id": job_id}
+
+
+def test_replay_and_build_return_429_when_the_queue_is_full(client, auth_headers, db_session):
+    agent_id = _agent(client, auth_headers)
+    cid = _criterion(client, auth_headers, agent_id)
+    empty_cid = _criterion(client, auth_headers, agent_id, name="No tests")
+    test = _test(db_session, cid)
+    _fill_queue(db_session)
+    for url in (f"/tests/{test.id}/replay", f"/criteria/{empty_cid}/build-tests"):
+        r = client.post(url, headers=auth_headers)
+        assert r.status_code == 429, url
+        assert r.json()["detail"] == BUSY_DETAIL
+    r = client.post(f"/agents/{agent_id}/tests/run-all", headers=auth_headers)
+    assert r.status_code == 429
+    assert r.json()["detail"] == BUSY_DETAIL
+    assert len(_jobs(db_session)) == MAX_QUEUED_JOBS
+
+
+def test_replay_is_accepted_just_below_the_queue_cap(client, auth_headers, db_session):
+    agent_id = _agent(client, auth_headers)
+    test = _test(db_session, _criterion(client, auth_headers, agent_id))
+    _fill_queue(db_session, MAX_QUEUED_JOBS - 1)
+    assert client.post(f"/tests/{test.id}/replay", headers=auth_headers).status_code == 202
+
+
+def test_run_all_is_all_or_nothing_against_the_queue_cap(client, auth_headers, db_session):
+    agent_id = _agent(client, auth_headers)
+    cid = _criterion(client, auth_headers, agent_id)
+    _test(db_session, cid, "fix")
+    _test(db_session, cid, "heldout")
+    _fill_queue(db_session, MAX_QUEUED_JOBS - 1)
+    r = client.post(f"/agents/{agent_id}/tests/run-all", headers=auth_headers)
+    assert r.status_code == 429
+    assert r.json()["detail"] == BUSY_DETAIL
+    assert len(_jobs(db_session)) == MAX_QUEUED_JOBS - 1  # nothing partially enqueued
+
+
+def test_run_all_fits_exactly_up_to_the_queue_cap(client, auth_headers, db_session):
+    agent_id = _agent(client, auth_headers)
+    cid = _criterion(client, auth_headers, agent_id)
+    _test(db_session, cid, "fix")
+    _test(db_session, cid, "heldout")
+    _fill_queue(db_session, MAX_QUEUED_JOBS - 2)
+    r = client.post(f"/agents/{agent_id}/tests/run-all", headers=auth_headers)
+    assert r.status_code == 202
+    assert len(r.json()["job_ids"]) == 2
 
 
 # ---------------------------------------------------------------- jobs

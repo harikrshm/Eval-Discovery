@@ -6,7 +6,7 @@ from backend.api import limits
 from backend.core.criteria import CriterionDraft, CriterionGenerationFailed
 from backend.db.models import Agent, Criterion, EvalResult, EvalTest, Event, Job
 from backend.db.workspaces import create_workspace
-from backend.jobs.queue import JOBS_PER_WORKSPACE_PER_HOUR
+from backend.jobs.queue import JOBS_PER_WORKSPACE_PER_HOUR, MAX_QUEUED_JOBS
 
 DRAFT = CriterionDraft(
     name="Answers the pricing question",
@@ -100,6 +100,40 @@ def test_discover_at_the_hourly_job_cap_still_creates_the_criterion_without_a_jo
     assert r.json()["job_id"] is None
     assert db_session.query(Criterion).count() == 1
     assert db_session.query(Job).filter(Job.type == "build_tests").count() == 0
+
+
+def test_discover_with_a_full_queue_still_creates_the_criterion_without_a_job(
+    client, auth_headers, db_session
+):
+    agent_id = _agent(client, auth_headers)
+    _set_summary(db_session, agent_id)
+    for _ in range(MAX_QUEUED_JOBS):
+        other, _token = create_workspace(db_session)
+        db_session.add(Job(workspace_id=other.id, type="replay", payload={}, status="queued"))
+    db_session.commit()
+    with patch("backend.api.criteria.generate_criterion", return_value=DRAFT):
+        r = _discover(client, auth_headers, agent_id)
+    assert r.status_code == 201
+    assert r.json()["job_id"] is None
+    assert db_session.query(Criterion).count() == 1
+    assert db_session.query(Job).filter(Job.type == "build_tests").count() == 0
+
+
+def test_discover_survives_an_enqueue_failure(client, auth_headers, db_session):
+    agent_id = _agent(client, auth_headers)
+    _set_summary(db_session, agent_id)
+    with (
+        patch("backend.api.criteria.generate_criterion", return_value=DRAFT),
+        patch("backend.api.criteria.enqueue", side_effect=RuntimeError("db hiccup")),
+    ):
+        r = _discover(client, auth_headers, agent_id)
+    assert r.status_code == 201
+    body = r.json()
+    assert body["name"] == DRAFT.name
+    assert body["job_id"] is None
+    db_session.expire_all()
+    assert db_session.query(Criterion).one().id == body["id"]
+    assert db_session.query(Job).count() == 0
 
 
 def test_discover_without_summary_is_409(client, auth_headers, db_session):

@@ -2,11 +2,12 @@
 
 from datetime import timedelta
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from backend.api.deps import get_current_workspace
+from backend.api.limits import rate_limit_llm
 from backend.api.schemas import (
     CriterionSuiteOut,
     EvalResultOut,
@@ -29,11 +30,19 @@ from backend.db.testsuite import (
     latest_baseline,
     stale_test_count,
 )
-from backend.jobs.queue import JOBS_PER_WORKSPACE_PER_HOUR, active_job_for, enqueue, jobs_started_since
+from backend.jobs.queue import (
+    JOBS_PER_WORKSPACE_PER_HOUR,
+    MAX_QUEUED_JOBS,
+    active_job_for,
+    enqueue,
+    jobs_started_since,
+    queued_job_count,
+)
 
 router = APIRouter(tags=["tests"])
 
 RUN_LIMIT = "Test run limit reached for this hour. Try again later."
+QUEUE_BUSY = "The test queue is busy. Try again in a minute."
 TESTS_EXIST = "Tests already exist for this criterion."
 
 
@@ -47,6 +56,12 @@ def _agent_or_404(db: Session, workspace: Workspace, agent_id: str) -> Agent:
 def _jobs_left_this_hour(db: Session, workspace: Workspace) -> int:
     used = jobs_started_since(db, workspace.id, utcnow() - timedelta(hours=1))
     return max(JOBS_PER_WORKSPACE_PER_HOUR - used, 0)
+
+
+def _check_queue_room(db: Session, needed: int = 1) -> None:
+    """429 when enqueueing `needed` more jobs would push the global backlog past MAX_QUEUED_JOBS."""
+    if queued_job_count(db) + needed > MAX_QUEUED_JOBS:
+        raise HTTPException(status_code=429, detail=QUEUE_BUSY)
 
 
 def _result_out(result: EvalResult | None) -> EvalResultOut | None:
@@ -120,6 +135,7 @@ def get_suite(
 @router.post("/tests/{test_id}/replay", status_code=202, response_model=JobAccepted)
 def replay(
     test_id: str,
+    request: Request,
     workspace: Workspace = Depends(get_current_workspace),
     db: Session = Depends(get_db),
 ) -> JobAccepted:
@@ -133,6 +149,8 @@ def replay(
         return JobAccepted(job_id=existing.id)
     if _jobs_left_this_hour(db, workspace) < 1:
         raise HTTPException(status_code=429, detail=RUN_LIMIT)
+    _check_queue_room(db)
+    rate_limit_llm(request)
     job = enqueue(db, workspace.id, "replay", payload)
     try_log_event(db, workspace.id, "replay_started", {"role": test.role})
     return JobAccepted(job_id=job.id)
@@ -141,6 +159,7 @@ def replay(
 @router.post("/agents/{agent_id}/tests/run-all", status_code=202, response_model=RunAllOut)
 def run_all(
     agent_id: str,
+    request: Request,
     workspace: Workspace = Depends(get_current_workspace),
     db: Session = Depends(get_db),
 ) -> RunAllOut:
@@ -153,6 +172,10 @@ def run_all(
     ]
     if len(pending) > _jobs_left_this_hour(db, workspace):
         raise HTTPException(status_code=429, detail=RUN_LIMIT)
+    if not pending:
+        return RunAllOut(job_ids=[])
+    _check_queue_room(db, len(pending))
+    rate_limit_llm(request)
     job_ids = []
     for test in pending:
         job_ids.append(enqueue(db, workspace.id, "replay", _replay_payload(test, version_id)).id)
@@ -163,6 +186,7 @@ def run_all(
 @router.post("/criteria/{criterion_id}/build-tests", status_code=202, response_model=JobAccepted)
 def build_tests(
     criterion_id: str,
+    request: Request,
     workspace: Workspace = Depends(get_current_workspace),
     db: Session = Depends(get_db),
 ) -> JobAccepted:
@@ -181,6 +205,8 @@ def build_tests(
         return JobAccepted(job_id=existing.id)
     if _jobs_left_this_hour(db, workspace) < 1:
         raise HTTPException(status_code=429, detail=RUN_LIMIT)
+    _check_queue_room(db)
+    rate_limit_llm(request)
     return JobAccepted(job_id=enqueue(db, workspace.id, "build_tests", payload).id)
 
 

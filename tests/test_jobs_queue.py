@@ -7,12 +7,14 @@ from backend.jobs.queue import (
     JOB_STALE_AFTER_SECONDS,
     JOBS_PER_WORKSPACE_PER_HOUR,
     MAX_JOB_ATTEMPTS,
+    MAX_QUEUED_JOBS,
     active_job_for,
     claim_next,
     complete,
     enqueue,
     fail,
     jobs_started_since,
+    queued_job_count,
     requeue_stale,
 )
 
@@ -35,6 +37,7 @@ def test_constants():
     assert MAX_JOB_ATTEMPTS == 3
     assert JOB_STALE_AFTER_SECONDS == 180
     assert JOBS_PER_WORKSPACE_PER_HOUR == 30
+    assert MAX_QUEUED_JOBS == 100
     assert queue.MAX_JOB_ATTEMPTS == 3
 
 
@@ -221,3 +224,15 @@ def test_active_job_for_ignores_finished_and_other_workspaces(db_session):
     enqueue(db_session, other, "replay", {"a": 1})
     assert active_job_for(db_session, ws, "replay", {"a": 1}) is None
     assert active_job_for(db_session, other, "replay", {"a": 1}) is not None
+
+
+def test_queued_job_count_counts_only_queued_jobs_across_workspaces(db_session):
+    first, second = _ws(db_session), _ws(db_session)
+    assert queued_job_count(db_session) == 0
+    enqueue(db_session, first, "replay", {"n": 1})
+    enqueue(db_session, second, "replay", {"n": 2})
+    for status in ("running", "done", "failed"):
+        job = enqueue(db_session, first, "replay", {"n": status})
+        job.status = status
+    db_session.commit()
+    assert queued_job_count(db_session) == 2
