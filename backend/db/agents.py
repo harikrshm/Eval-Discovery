@@ -69,6 +69,20 @@ def get_owned_agent(db: Session, workspace: Workspace, agent_id: str) -> Agent:
     return agent
 
 
+def locked_agent_statement(agent_id: str):
+    """SELECT ... FOR UPDATE on one agent row (a no-op on SQLite, which serializes writers anyway)."""
+    return select(Agent).where(Agent.id == agent_id).with_for_update()
+
+
+def lock_agent(db: Session, agent: Agent) -> None:
+    """Lock the agent row for the rest of the transaction and reload its prompt state.
+
+    Serializes concurrent prompt edits: the second one waits, then sees the first one's version.
+    """
+    db.execute(locked_agent_statement(agent.id).execution_options(populate_existing=True))
+    db.expire(agent, ["prompt_versions"])
+
+
 def current_prompt(agent: Agent) -> str:
     """Text of the agent's current prompt version."""
     for version in agent.prompt_versions:

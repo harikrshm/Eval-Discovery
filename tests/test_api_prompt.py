@@ -163,3 +163,13 @@ def test_existing_runs_keep_their_original_prompt_version(client, auth_headers, 
     assert runs[0].prompt_version_id == first_version
     assert runs[1].prompt_version_id == db_session.get(Agent, agent_id).current_prompt_version_id
     assert runs[0].prompt_version_id != runs[1].prompt_version_id
+
+
+def test_two_sequential_puts_of_the_same_text_make_one_version(client, auth_headers, db_session):
+    agent_id = _agent(client, auth_headers)
+    first = _put(client, auth_headers, agent_id, "Same new text.")
+    second = _put(client, auth_headers, agent_id, "Same new text.")
+    assert first.json()["changed"] is True
+    assert second.json()["changed"] is False
+    assert second.json()["version_id"] == first.json()["version_id"]
+    assert db_session.query(PromptVersion).filter_by(agent_id=agent_id).count() == 2

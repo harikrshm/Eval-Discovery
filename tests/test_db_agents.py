@@ -106,3 +106,28 @@ def test_db_layer_does_not_import_the_api_layer():
             if isinstance(node, ast.ImportFrom) and node.module:
                 names.append(node.module)
             assert not any(n.startswith("backend.api") for n in names), path.name
+
+
+def test_locked_agent_statement_selects_for_update_on_postgres():
+    from sqlalchemy.dialects import postgresql
+
+    from backend.db.agents import locked_agent_statement
+
+    sql = str(locked_agent_statement("agent-1").compile(dialect=postgresql.dialect()))
+    assert "FOR UPDATE" in sql
+    assert "FROM agent" in sql
+
+
+def test_lock_agent_reloads_prompt_versions_written_by_another_session(db_session):
+    from backend.db.agents import lock_agent
+
+    workspace, _ = create_workspace(db_session)
+    preset = PRESETS["alex-sales"]
+    agent = create_agent(db_session, workspace, preset.config, preset.analysis)
+    assert len(agent.prompt_versions) == 1  # populate the collection cache
+    db_session.add(
+        PromptVersion(agent_id=agent.id, text="elsewhere", origin="manual", status="promoted", number=2)
+    )
+    db_session.commit()
+    lock_agent(db_session, agent)
+    assert [v.number for v in agent.prompt_versions] == [1, 2]

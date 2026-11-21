@@ -9,6 +9,7 @@ from backend.api.schemas import PromptUpdate, PromptUpdated
 from backend.db.agents import (
     current_prompt_version,
     get_owned_agent,
+    lock_agent,
     new_prompt_version,
     prompt_version_count,
 )
@@ -31,6 +32,8 @@ def update_prompt(
         agent = get_owned_agent(db, workspace, agent_id)
     except LookupError:
         raise HTTPException(status_code=404, detail="Agent not found.") from None
+    # Lock first: a concurrent edit must not read the same current version and number.
+    lock_agent(db, agent)
     current = current_prompt_version(agent)
     if body.text == current.text:
         return PromptUpdated(
