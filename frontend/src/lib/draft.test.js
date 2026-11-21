@@ -17,3 +17,20 @@ describe("remainingDraft", () => {
     expect(remainingDraft([m("a")], 5)).toEqual([]);
   });
 });
+
+import { beforeEach } from "vitest";
+import { clearAllDrafts, draftKey } from "./draft.js";
+
+describe("clearAllDrafts", () => {
+  beforeEach(() => sessionStorage.clear());
+
+  it("removes every stored draft and nothing else", () => {
+    sessionStorage.setItem(draftKey("a1"), "[]");
+    sessionStorage.setItem(draftKey("a2"), "[]");
+    sessionStorage.setItem("other", "keep");
+    clearAllDrafts();
+    expect(sessionStorage.getItem(draftKey("a1"))).toBeNull();
+    expect(sessionStorage.getItem(draftKey("a2"))).toBeNull();
+    expect(sessionStorage.getItem("other")).toBe("keep");
+  });
+});

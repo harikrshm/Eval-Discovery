@@ -209,6 +209,39 @@ describe("api client", () => {
     expect(workspace.getAgentId()).toBeNull();
   });
 
+  it("deleteWorkspace with no stored token makes no request", async () => {
+    const { workspace, api } = await load();
+    workspace.setAgentId("orphan");
+
+    await api.deleteWorkspace();
+
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(workspace.getToken()).toBeNull();
+    expect(workspace.getAgentId()).toBeNull();
+  });
+
+  it("deleteWorkspace treats a 401 as success and clears local state", async () => {
+    const { workspace, api } = await load();
+    workspace.setToken("stale");
+    workspace.setAgentId("a");
+    fetchMock.mockResolvedValueOnce(jsonResponse(401, { detail: "Workspace not found or expired." }));
+
+    await expect(api.deleteWorkspace()).resolves.toBeUndefined();
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(workspace.getToken()).toBeNull();
+    expect(workspace.getAgentId()).toBeNull();
+  });
+
+  it("deleteWorkspace still rejects on other failures and keeps local state", async () => {
+    const { workspace, api } = await load();
+    workspace.setToken("t");
+    fetchMock.mockResolvedValueOnce(jsonResponse(500, { detail: "boom" }));
+
+    await expect(api.deleteWorkspace()).rejects.toThrow("boom");
+    expect(workspace.getToken()).toBe("t");
+  });
+
   it("builds the right requests for the other endpoints", async () => {
     const { workspace, api } = await load();
     workspace.setToken("t");

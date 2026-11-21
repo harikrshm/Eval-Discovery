@@ -1,7 +1,9 @@
 import { useState, useEffect, useId, useRef } from "react";
 import { listPresets, createAgent } from "../api";
-import { setAgentId } from "../lib/workspace";
+import { getToken, setAgentId } from "../lib/workspace";
+import { isAgentLimitError } from "../lib/chatLimits";
 import { buildAgentPayload } from "../lib/agentPayload";
+import DeleteDataControl from "./DeleteDataControl";
 import { Button } from "./ui/button";
 import { Input } from "./ui/input";
 import { Textarea } from "./ui/textarea";
@@ -17,7 +19,7 @@ function messageOf(err, fallback) {
   return err instanceof Error && err.message ? err.message : fallback;
 }
 
-export default function AgentSetup({ onCreated, onCancel, notice }) {
+export default function AgentSetup({ onCreated, onCancel, onDeleted, notice }) {
   const [presets, setPresets] = useState([]);
   const [presetsState, setPresetsState] = useState("loading"); // loading | ready | error
   const [preset, setPreset] = useState(null);
@@ -27,6 +29,7 @@ export default function AgentSetup({ onCreated, onCancel, notice }) {
   const [submitting, setSubmitting] = useState(false);
   const [slow, setSlow] = useState(false);
   const [error, setError] = useState(null);
+  const [limitHit, setLimitHit] = useState(false);
   const [presetsAttempt, setPresetsAttempt] = useState(0);
 
   const nameId = useId();
@@ -86,6 +89,9 @@ export default function AgentSetup({ onCreated, onCancel, notice }) {
     setError(null);
   }
 
+  // Only offer deletion when this browser has a workspace to delete.
+  const hasStoredData = Boolean(getToken());
+
   const canSubmit = name.trim().length > 0 && prompt.trim().length > 0;
 
   async function handleSubmit(e) {
@@ -95,6 +101,7 @@ export default function AgentSetup({ onCreated, onCancel, notice }) {
     setSubmitting(true);
     setSlow(false);
     setError(null);
+    setLimitHit(false);
     try {
       const agent = await createAgent(buildAgentPayload(preset, { name, prompt, roleLabel }));
       // Cancelled while the request was in flight: do not switch agents behind the user's back.
@@ -104,6 +111,7 @@ export default function AgentSetup({ onCreated, onCancel, notice }) {
     } catch (err) {
       if (mounted.current) {
         setError(messageOf(err, "Couldn't create the agent. Try again."));
+        setLimitHit(isAgentLimitError(err));
       }
     } finally {
       if (mounted.current) {
@@ -198,6 +206,9 @@ export default function AgentSetup({ onCreated, onCancel, notice }) {
             <p id={counterId} className="mt-1 text-xs text-muted-foreground">
               {prompt.length} / {PROMPT_MAX} characters
             </p>
+            <p className="mt-1 text-xs text-muted-foreground">
+              Your prompts and chats are stored for 30 days, tied to this browser.
+            </p>
           </div>
 
           <div>
@@ -220,7 +231,13 @@ export default function AgentSetup({ onCreated, onCancel, notice }) {
 
           {error && (
             <div role="alert" className="text-sm text-red-700">
-              {error}
+              <p>{error}</p>
+              {limitHit && onDeleted && (
+                <div className="mt-2">
+                  <p>Delete your data to clear your agents and start over.</p>
+                  <DeleteDataControl onDeleted={onDeleted} className="mt-2" />
+                </div>
+              )}
             </div>
           )}
 
@@ -246,6 +263,18 @@ export default function AgentSetup({ onCreated, onCancel, notice }) {
             )}
           </div>
         </form>
+
+        {onDeleted && hasStoredData && !limitHit && (
+          <section aria-labelledby="delete-heading" className="mt-10 border-t border-border pt-6">
+            <h3 id="delete-heading" className="text-sm font-medium text-foreground">
+              Your data
+            </h3>
+            <p className="mt-1 text-sm text-muted-foreground">
+              Remove all your agents, runs and criteria from this browser and our server.
+            </p>
+            <DeleteDataControl onDeleted={onDeleted} className="mt-3" />
+          </section>
+        )}
       </main>
     </div>
   );
