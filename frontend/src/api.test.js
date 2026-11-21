@@ -268,3 +268,56 @@ describe("api client", () => {
     ]);
   });
 });
+
+describe("tests api", () => {
+  let fetchMock;
+
+  beforeEach(() => {
+    localStorage.clear();
+    fetchMock = vi.fn();
+    globalThis.fetch = fetchMock;
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+    delete globalThis.fetch;
+  });
+
+  it("calls the right method, path and body, with the token header", async () => {
+    const { workspace, api } = await load();
+    workspace.setToken("tok");
+    fetchMock.mockImplementation(async () => jsonResponse(200, {}));
+
+    await api.getTests("a1");
+    await api.replayTest("t1");
+    await api.runAllTests("a1");
+    await api.buildTests("c1");
+    await api.getJob("j1");
+    await api.updatePrompt("a1", "You are Alex.");
+
+    const calls = fetchMock.mock.calls.map(([u, o]) => [
+      o.method,
+      String(u).replace(/^.*?(?=\/(agents|criteria|tests|jobs))/, ""),
+      o.body === undefined ? undefined : JSON.parse(o.body),
+    ]);
+    expect(calls).toEqual([
+      ["GET", "/agents/a1/tests", undefined],
+      ["POST", "/tests/t1/replay", undefined],
+      ["POST", "/agents/a1/tests/run-all", undefined],
+      ["POST", "/criteria/c1/build-tests", undefined],
+      ["GET", "/jobs/j1", undefined],
+      ["PUT", "/agents/a1/prompt", { text: "You are Alex." }],
+    ]);
+    for (const call of fetchMock.mock.calls) {
+      expect(headerOf(call, "X-Workspace-Token")).toBe("tok");
+    }
+  });
+
+  it("returns the parsed body", async () => {
+    const { workspace, api } = await load();
+    workspace.setToken("tok");
+    fetchMock.mockResolvedValueOnce(jsonResponse(202, { job_id: "j9" }));
+
+    await expect(api.replayTest("t1")).resolves.toEqual({ job_id: "j9" });
+  });
+});

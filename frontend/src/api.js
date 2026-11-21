@@ -104,6 +104,30 @@ export function updateCriterion(criterionId, fields) {
   return request(`/criteria/${criterionId}`, { method: "PATCH", body: fields });
 }
 
+export function getTests(agentId) {
+  return request(`/agents/${agentId}/tests`);
+}
+
+export function replayTest(testId) {
+  return request(`/tests/${testId}/replay`, { method: "POST" });
+}
+
+export function runAllTests(agentId) {
+  return request(`/agents/${agentId}/tests/run-all`, { method: "POST" });
+}
+
+export function buildTests(criterionId) {
+  return request(`/criteria/${criterionId}/build-tests`, { method: "POST" });
+}
+
+export function getJob(jobId) {
+  return request(`/jobs/${jobId}`);
+}
+
+export function updatePrompt(agentId, text) {
+  return request(`/agents/${agentId}/prompt`, { method: "PUT", body: { text } });
+}
+
 // Deletes the stored workspace. With no stored token there is nothing to delete (and
 // request() would create a workspace just to delete it), so do nothing. A 401 means the
 // workspace is already gone or expired, so its data is unreachable: that counts as success.
