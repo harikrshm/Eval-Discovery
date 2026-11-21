@@ -100,6 +100,30 @@ describe("api client", () => {
     }
   });
 
+  it("creates the workspace once across sequential calls when setItem throws", async () => {
+    const { api } = await load();
+    vi.spyOn(Storage.prototype, "setItem").mockImplementation(() => {
+      throw new Error("quota exceeded");
+    });
+    fetchMock.mockImplementation(async (url) =>
+      String(url).endsWith("/workspaces")
+        ? jsonResponse(201, { token: "mem-tok" })
+        : jsonResponse(200, {}),
+    );
+
+    await api.getAgentState("a1");
+    await api.getAgentState("a1");
+
+    const creates = fetchMock.mock.calls.filter(([u]) =>
+      String(u).endsWith("/workspaces"),
+    );
+    expect(creates).toHaveLength(1);
+    const others = fetchMock.mock.calls.filter(
+      ([u]) => !String(u).endsWith("/workspaces"),
+    );
+    expect(headerOf(others[1], "X-Workspace-Token")).toBe("mem-tok");
+  });
+
   it("on 401 clears token and agent id and throws ApiError with status 401", async () => {
     const { workspace, api } = await load();
     workspace.setToken("stale");

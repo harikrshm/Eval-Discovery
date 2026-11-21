@@ -47,6 +47,20 @@ describe("workspace storage", () => {
     expect(ws.getAgentId()).toBeNull();
   });
 
+  it("round-trips token and agent id when only setItem throws", async () => {
+    const ws = await load();
+    vi.spyOn(Storage.prototype, "setItem").mockImplementation(() => {
+      throw new Error("quota exceeded");
+    });
+    ws.setToken("mem-token");
+    ws.setAgentId("mem-agent");
+    expect(ws.getToken()).toBe("mem-token");
+    expect(ws.getAgentId()).toBe("mem-agent");
+    ws.clearWorkspace();
+    expect(ws.getToken()).toBeNull();
+    expect(ws.getAgentId()).toBeNull();
+  });
+
   it("round-trips token and agent id when localStorage throws", async () => {
     const ws = await load();
     vi.spyOn(Storage.prototype, "getItem").mockImplementation(() => {

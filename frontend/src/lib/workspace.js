@@ -10,13 +10,15 @@ const AGENT_KEY = "ed_agent_id";
 const memory = { [TOKEN_KEY]: null, [AGENT_KEY]: null };
 
 function read(key) {
+  let value = null;
   try {
-    const value = localStorage.getItem(key);
-    if (value !== null && value !== undefined) return value;
-    return null;
+    value = localStorage.getItem(key);
   } catch {
-    return memory[key];
+    value = null;
   }
+  // Fall back to memory whenever storage yields nothing (it threw, or a prior
+  // setItem failed). remove() clears memory, so a stale value cannot survive a clear.
+  return value ?? memory[key];
 }
 
 function write(key, value) {
