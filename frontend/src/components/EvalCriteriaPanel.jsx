@@ -8,6 +8,7 @@ import { ScrollArea } from "./ui/scroll-area";
 import { ChevronDown, ChevronUp, Plus, X } from "lucide-react";
 import PromptEditor from "./PromptEditor";
 import TestsSection from "./TestsSection";
+import { ChangeReviewContainer } from "./ChangeReview";
 import { staleMessage } from "../lib/testStatus";
 
 const TEXT_FIELDS = [
@@ -130,6 +131,8 @@ export default function EvalCriteriaPanel({
   onReplay,
   onBuildTests,
   onRunAll,
+  onApprove,
+  onReject,
   promptEditor,
   testsError = null,
   testsLoading = false,
@@ -139,6 +142,7 @@ export default function EvalCriteriaPanel({
   const hasTests = (suite?.criteria ?? []).some((c) => c.tests.length > 0);
   // A failed load must not make the tests vanish silently; a stale suite stays visible beside it.
   const showTestsError = Boolean(testsError) && !testsLoading;
+  const candidate = suite?.candidate ?? null;
   const showStale = (suite?.stale_count ?? 0) > 0 && hasTests;
   const replayActive = Object.entries(jobs).some(
     ([key, job]) => key.startsWith("replay:") && (job.status === "queued" || job.status === "running")
@@ -217,6 +221,18 @@ export default function EvalCriteriaPanel({
                 Run all tests
               </Button>
             </div>
+          )}
+
+          {candidate && (
+            <ChangeReviewContainer
+              key={`${candidate.version_id}:${candidate.status}`}
+              candidate={candidate}
+              jobs={jobs}
+              onApprove={onApprove}
+              onReject={onReject}
+              agentName={agentName}
+              userRoleLabel={userRoleLabel}
+            />
           )}
 
           {promptEditor && <Separator />}

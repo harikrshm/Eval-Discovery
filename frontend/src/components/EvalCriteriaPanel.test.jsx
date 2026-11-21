@@ -1,6 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, createElement } from "react";
 import { createRoot } from "react-dom/client";
+
+vi.mock("../hooks/useReport", () => ({ useReport: vi.fn() }));
+
+import { useReport } from "../hooks/useReport";
 import EvalCriteriaPanel from "./EvalCriteriaPanel";
 
 globalThis.IS_REACT_ACT_ENVIRONMENT = true;
@@ -69,6 +73,8 @@ function buttonByText(text) {
 
 beforeEach(() => {
   document.body.innerHTML = "";
+  vi.mocked(useReport).mockReset();
+  vi.mocked(useReport).mockReturnValue({ report: null, version: null, loading: true, error: null });
 });
 
 afterEach(async () => {
@@ -182,5 +188,110 @@ describe("EvalCriteriaPanel announcements", () => {
     );
     expect(banner).toBeDefined();
     expect(banner.textContent).toContain("Run all tests");
+  });
+});
+
+describe("EvalCriteriaPanel change review", () => {
+  const CANDIDATE = {
+    version_id: "v3",
+    number: 3,
+    status: "proposed",
+    origin: "suggested",
+    strength: "full",
+    created_at: "2026-11-22T10:00:00",
+    progress: null,
+    parent_number: 2,
+  };
+
+  const REPORT = {
+    version_id: "v3",
+    number: 3,
+    status: "proposed",
+    strength: "full",
+    why: { criterion_name: "Stays on topic", failing_quote: "q", change_summary: "s", touched_section: "t", expected_effect: "e", risk: "r" },
+    outcome: null,
+  };
+
+  it("shows no change review without a candidate", async () => {
+    await render({ suite: { ...suiteWith(), candidate: null } });
+    expect(container.textContent).not.toContain("Suggested fix");
+    expect(useReport).not.toHaveBeenCalled();
+  });
+
+  it("shows no change review before the suite has loaded", async () => {
+    await render({ suite: null });
+    expect(container.textContent).not.toContain("Suggested fix");
+  });
+
+  it("renders the change review for the candidate, above the criteria", async () => {
+    vi.mocked(useReport).mockReturnValue({
+      report: REPORT,
+      version: { id: "v3", number: 3, text: "new", parent_text: "old" },
+      loading: false,
+      error: null,
+    });
+    await render({ suite: { ...suiteWith(), candidate: CANDIDATE } });
+    expect(useReport).toHaveBeenCalledWith("v3", { enabled: true });
+    const heading = [...container.querySelectorAll("h3")].find((h) => h.textContent === "Suggested fix v3");
+    expect(heading).toBeDefined();
+    const criterion = [...container.querySelectorAll("button")].find((b) => b.textContent.includes("Stays on topic"));
+    expect(heading.compareDocumentPosition(criterion) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    const editor = container.querySelector('section[aria-label="Agent prompt"]');
+    expect(editor.compareDocumentPosition(heading) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+
+  const LOADED = {
+    report: REPORT,
+    version: { id: "v3", number: 3, text: "new", parent_text: "old" },
+    loading: false,
+    error: null,
+  };
+
+  it("passes the approve and reject handlers through by version id", async () => {
+    vi.mocked(useReport).mockReturnValue(LOADED);
+    const onApprove = vi.fn();
+    const onReject = vi.fn();
+    await render({ suite: { ...suiteWith(), candidate: CANDIDATE }, onApprove, onReject });
+    await act(async () => {
+      buttonByText("Approve and verify").click();
+    });
+    await act(async () => {
+      buttonByText("Reject").click();
+    });
+    expect(onApprove).toHaveBeenCalledWith("v3");
+    expect(onReject).toHaveBeenCalledWith("v3");
+  });
+
+  it("disables the actions while the version's action is queued", async () => {
+    vi.mocked(useReport).mockReturnValue(LOADED);
+    await render({
+      suite: { ...suiteWith(), candidate: CANDIDATE },
+      jobs: { "version:v3": { status: "queued", error: null } },
+    });
+    expect(buttonByText("Approve and verify").disabled).toBe(true);
+    expect(buttonByText("Reject").disabled).toBe(true);
+  });
+
+  it("remounts the review when the candidate changes status so the report is fetched again", async () => {
+    await render({ suite: { ...suiteWith(), candidate: CANDIDATE } });
+    const before = container.querySelector('[aria-label="Change review"]');
+    expect(before).not.toBeNull();
+    vi.mocked(useReport).mockClear();
+    await act(async () => {
+      root.render(
+        createElement(EvalCriteriaPanel, {
+          evalCriteria: [CRITERION],
+          patternState: "complete",
+          discoverPending: false,
+          onDismiss: vi.fn(),
+          onUpdate: vi.fn(),
+          onAdd: vi.fn(),
+          onExportAll: vi.fn(),
+          suite: { ...suiteWith(), candidate: { ...CANDIDATE, status: "approved_verifying", progress: { done: 0, total: 2 } } },
+          jobs: {},
+        })
+      );
+    });
+    expect(container.querySelector('[aria-label="Change review"]')).not.toBe(before);
   });
 });
