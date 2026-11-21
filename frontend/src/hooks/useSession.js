@@ -10,13 +10,14 @@ import {
 } from "../api";
 import { clearAgentId, clearWorkspace } from "../lib/workspace";
 import { derivePatternState } from "../lib/patternState";
-import { remainingDraft } from "../lib/draft";
+import { draftKey, remainingDraft } from "../lib/draft";
+import { runSaveErrorMessage } from "../lib/chatLimits";
+import { criteriaAddError, criteriaUpdateError } from "../lib/criteriaError";
 import { isAgentGone } from "../lib/loadError";
 import { targetsCurrentAgent } from "../lib/messageTarget";
 
 // The server owns everything except the in-progress run, which is a draft kept
 // per agent in sessionStorage so a reload mid-conversation does not lose it.
-const draftKey = (agentId) => `current_transcript:${agentId}`;
 
 function readDraft(agentId) {
   try {
@@ -64,7 +65,7 @@ export function useSession(agentId) {
   const [patternState, setPatternStateRaw] = useState("idle");
   const [patternSummary, setPatternSummary] = useState(EMPTY.patternSummary);
   const [criteriaSaveError, setCriteriaSaveError] = useState(null);
-  const [runSaveFailed, setRunSaveFailed] = useState(false);
+  const [runSaveMessage, setRunSaveMessage] = useState(null);
 
   // Refs let async callbacks read the latest values after an await.
   const patternStateRef = useRef("idle");
@@ -111,7 +112,7 @@ export function useSession(agentId) {
         );
         applyDraft(readDraft(agentId));
         setCriteriaSaveError(null);
-        setRunSaveFailed(false);
+        setRunSaveMessage(null);
         setLoaded({ agentId, error: null, gone: false });
       })
       .catch((err) => {
@@ -155,6 +156,15 @@ export function useSession(agentId) {
     [applyDraft]
   );
 
+  // Throws the in-progress run away without saving it.
+  const discardDraft = useCallback(() => {
+    const id = agentIdRef.current;
+    if (id == null) return;
+    applyDraft([]);
+    writeDraft(id, []);
+    setRunSaveMessage(null);
+  }, [applyDraft]);
+
   // Posts the draft as a run; when the server says a pattern check is due,
   // runs it and moves the state machine accordingly.
   const saveRun = useCallback(async () => {
@@ -162,15 +172,13 @@ export function useSession(agentId) {
     if (id == null) return;
     const messages = draftRef.current;
 
-    setRunSaveFailed(false);
+    setRunSaveMessage(null);
     let saved;
     try {
       saved = await apiSaveRun(id, messages);
-    } catch {
-      if (agentIdRef.current === id) {
-        setRunSaveFailed(true);
-        setPatternState("error");
-      }
+    } catch (err) {
+      // Only the save failed: the pattern check state is unrelated, so leave it alone.
+      if (agentIdRef.current === id) setRunSaveMessage(runSaveErrorMessage(err));
       return;
     }
     if (agentIdRef.current !== id) return;
@@ -230,7 +238,7 @@ export function useSession(agentId) {
         applyCriteria([...criteriaRef.current, criterion]);
         return criterion;
       } catch (err) {
-        setCriteriaSaveError(errorMessage(err));
+        setCriteriaSaveError(criteriaAddError(errorMessage(err)));
         return null;
       }
     },
@@ -253,7 +261,7 @@ export function useSession(agentId) {
         await apiUpdateCriterion(id, fields);
       } catch (err) {
         applyCriteria(criteriaRef.current.map((c) => (c.id === id ? { ...c, ...previous } : c)));
-        setCriteriaSaveError(errorMessage(err));
+        setCriteriaSaveError(criteriaUpdateError(errorMessage(err)));
       }
     },
     [applyCriteria]
@@ -277,9 +285,11 @@ export function useSession(agentId) {
     patternState: ready && !loadError ? patternState : "idle",
     patternSummary: view.patternSummary,
     criteriaSaveError,
-    runSaveFailed: ready && !loadError ? runSaveFailed : false,
+    runSaveFailed: ready && !loadError && runSaveMessage !== null,
+    runSaveMessage: ready && !loadError ? runSaveMessage : null,
     addMessage,
     saveRun,
+    discardDraft,
     discover,
     addCriteria,
     updateCriteria,

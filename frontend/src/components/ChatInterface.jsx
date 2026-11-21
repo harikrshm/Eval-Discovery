@@ -1,5 +1,11 @@
 import { useState, useRef, useEffect } from "react";
 import { sendMessage } from "../api";
+import {
+  MAX_USER_MESSAGE_CHARS,
+  chatErrorMessage,
+  draftLimitHint,
+  draftLimitReason,
+} from "../lib/chatLimits";
 import { Button } from "./ui/button";
 import { Input } from "./ui/input";
 
@@ -48,7 +54,14 @@ function EmptyState({ agent, onPick }) {
   );
 }
 
-export default function ChatInterface({ agent, agentId, currentTranscript, onMessage, disabled }) {
+export default function ChatInterface({
+  agent,
+  agentId,
+  currentTranscript,
+  onMessage,
+  onDiscard,
+  disabled,
+}) {
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
   const [slow, setSlow] = useState(false);
@@ -86,8 +99,8 @@ export default function ChatInterface({ agent, agentId, currentTranscript, onMes
     try {
       const { reply } = await sendMessage(agentId, messages);
       onMessage({ role: "assistant", content: reply }, agentId);
-    } catch {
-      setError(`${agent.name} didn't respond. Check your connection, then try again.`);
+    } catch (err) {
+      setError(chatErrorMessage(err, agent.name));
     } finally {
       setLoading(false);
     }
@@ -95,12 +108,20 @@ export default function ChatInterface({ agent, agentId, currentTranscript, onMes
 
   function handleSend() {
     const text = input.trim();
-    if (!text || loading) return;
+    if (!text || loading || limitReason) return;
 
     const userMsg = { role: "user", content: text };
     onMessage(userMsg);
     setInput("");
     requestReply([...currentTranscript, userMsg]);
+  }
+
+  function handleDiscard() {
+    if (loading) return;
+    if (!window.confirm("Discard this run without saving it and start a new one?")) return;
+    onDiscard();
+    setInput("");
+    setError(null);
   }
 
   function handleRetry() {
@@ -122,7 +143,10 @@ export default function ChatInterface({ agent, agentId, currentTranscript, onMes
 
   const firstStarter = agent.starter_messages?.[0];
   const placeholder = firstStarter ? `e.g. ${firstStarter}` : "Type a message";
-  const canSend = !disabled && !loading && input.trim().length > 0;
+  // A draft at its message or size cap can only be saved or discarded: another turn would be rejected.
+  const limitReason = draftLimitReason(currentTranscript, "x");
+  const limitHint = draftLimitHint(limitReason);
+  const canSend = !disabled && !loading && !limitReason && input.trim().length > 0;
   const canRetry = error !== null && currentTranscript.at(-1)?.role === "user";
 
   return (
@@ -203,6 +227,12 @@ export default function ChatInterface({ agent, agentId, currentTranscript, onMes
             </div>
           )}
 
+          {limitHint && (
+            <p role="status" className="mb-2 text-sm text-amber-800">
+              {limitHint}
+            </p>
+          )}
+
           <div className="flex items-center gap-2 rounded-full border border-input bg-[#fafafa] px-4 py-1.5 focus-within:border-[var(--ring)] focus-within:ring-2 focus-within:ring-[var(--ring)]">
             <Input
               ref={inputRef}
@@ -211,7 +241,8 @@ export default function ChatInterface({ agent, agentId, currentTranscript, onMes
               onKeyDown={handleKeyDown}
               aria-label={`Message ${agent.name}`}
               placeholder={disabled ? "Generating eval — please wait…" : placeholder}
-              disabled={disabled || loading}
+              disabled={disabled || loading || Boolean(limitReason)}
+              maxLength={MAX_USER_MESSAGE_CHARS}
               className="flex-1 border-0 bg-transparent shadow-none focus-visible:ring-0 h-8 px-0"
             />
             <Button
@@ -237,6 +268,20 @@ export default function ChatInterface({ agent, agentId, currentTranscript, onMes
               </svg>
             </Button>
           </div>
+
+          {currentTranscript.length > 0 && onDiscard && (
+            <div className="mt-2 flex justify-end">
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={handleDiscard}
+                disabled={loading}
+                className="text-muted-foreground"
+              >
+                Discard run / Start new run
+              </Button>
+            </div>
+          )}
         </div>
       </div>
     </div>

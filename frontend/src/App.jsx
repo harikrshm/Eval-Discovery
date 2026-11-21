@@ -16,7 +16,7 @@ const isNarrow = () => window.matchMedia("(max-width: 1279px)").matches;
 
 // Status badge config keyed by patternState + evalCriteria.length
 // "New pattern found" when criteria already exist (evalCriteriaCount > 0), "Pattern found" on first discovery
-function PatternBadge({ patternState, criteriaError, runSaveFailed, evalCriteriaCount }) {
+function PatternBadge({ patternState, criteriaError, evalCriteriaCount }) {
   if (patternState === "idle" || patternState === "pattern_not_found") return null;
 
   if (patternState === "checking") {
@@ -43,7 +43,6 @@ function PatternBadge({ patternState, criteriaError, runSaveFailed, evalCriteria
   if (patternState === "error") {
     let msg = "Pattern check failed — retrying automatically";
     if (criteriaError !== null) msg = "Eval generation failed — retry";
-    else if (runSaveFailed) msg = "Couldn't save the run. Try again.";
     return (
       <Badge variant="outline" className="bg-red-50 text-red-700 border border-red-200 whitespace-nowrap">
         {msg}
@@ -72,7 +71,9 @@ export default function App() {
     patternSummary,
     criteriaSaveError,
     runSaveFailed,
+    runSaveMessage,
     addMessage,
+    discardDraft,
     saveRun,
     discover,
     addCriteria,
@@ -162,6 +163,16 @@ export default function App() {
     openEvalPanel();
   }
 
+  function handleDataDeleted() {
+    // Back to the first-run state: no agent, no stored token, clean UI.
+    setHistoryVisible(false);
+    setPanelVisible(false);
+    setCriteriaError(null);
+    setSaving(false);
+    setChangingAgent(false);
+    setActiveAgentId(null);
+  }
+
   function handleAgentCreated(created) {
     // Start the new agent from a clean UI; the hook hydrates its server state.
     setHistoryVisible(false);
@@ -173,7 +184,7 @@ export default function App() {
   }
 
   if (agentId == null) {
-    return <AgentSetup onCreated={handleAgentCreated} />;
+    return <AgentSetup onCreated={handleAgentCreated} onDeleted={handleDataDeleted} />;
   }
 
   if (loadError && loadErrorGone) {
@@ -181,6 +192,7 @@ export default function App() {
     return (
       <AgentSetup
         onCreated={handleAgentCreated}
+        onDeleted={handleDataDeleted}
         notice={`Couldn't load your agent: ${loadError}`}
       />
     );
@@ -204,6 +216,7 @@ export default function App() {
     return (
       <AgentSetup
         onCreated={handleAgentCreated}
+        onDeleted={handleDataDeleted}
         onCancel={() => setChangingAgent(false)}
       />
     );
@@ -254,7 +267,12 @@ export default function App() {
 
         <div className="ml-auto flex flex-wrap items-center justify-end gap-2">
           <div role="status">
-            <PatternBadge patternState={patternState} criteriaError={criteriaError} runSaveFailed={runSaveFailed} evalCriteriaCount={evalCriteria.length} />
+            <PatternBadge patternState={patternState} criteriaError={criteriaError} evalCriteriaCount={evalCriteria.length} />
+            {runSaveFailed && (
+              <Badge variant="outline" className="bg-red-50 text-red-700 border border-red-200 whitespace-normal text-left">
+                {runSaveMessage}
+              </Badge>
+            )}
           </div>
 
           {showDiscoverButton && (
@@ -330,6 +348,7 @@ export default function App() {
             agentId={agentId}
             currentTranscript={currentTranscript}
             onMessage={addMessage}
+            onDiscard={discardDraft}
             disabled={isGenerating}
           />
         </main>

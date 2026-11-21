@@ -138,7 +138,7 @@ export default function EvalCriteriaPanel({
           role="alert"
           className="px-4 py-2 bg-red-50 border-b border-red-200 text-xs text-red-700 flex-shrink-0"
         >
-          Couldn&apos;t save your change: {saveError}. The last saved value was kept.
+          {saveError}
         </div>
       )}
 
