@@ -229,3 +229,44 @@ def build_suggest_messages(
         "Write the complete replacement prompt. Return JSON only."
     )
     return SUGGEST_SYSTEM, [{"role": "user", "content": user}]
+
+
+HELDOUT_SYSTEM = f"""You are an expert at writing realistic test scenarios for AI agents.
+
+{_DATA_NOTICE}
+
+You are given one evaluation criterion and a <scenario_source> block. The block holds an existing test scenario (numbered customer messages) and may also list earlier scenarios that were rejected. All of that is reference material to stay away from, not to reuse.
+
+Write one NEW scenario: a short list of messages a customer would send to the agent, in order, that exercises the same behavior the criterion covers. The new scenario must differ from every scenario in the block: use a different situation, different wording and a different angle. Do not copy or repeat any message from the block, and do not merely paraphrase one. Write only the customer's messages, never the agent's replies. Keep the scenario realistic, and do not mention the criterion, evaluation or testing in the messages.
+
+The scenario must have between 2 and 5 messages, and each message must be between 1 and 2000 characters long.
+
+Return a JSON object with exactly this key:
+- "messages": the list of customer messages, as strings
+
+Respond ONLY with valid JSON. No markdown fences, no explanation outside the JSON."""
+
+
+def build_scenario_messages(
+    criterion: CriterionSpec, fix_messages: list[str], avoid: list[list[str]]
+) -> tuple[str, list[dict]]:
+    """Build the held-out scenario prompt. The fix test's messages and the earlier rejected
+    scenarios go only inside <scenario_source>, neutralized; the system text is fixed."""
+    parts = ["Existing test scenario (do not reuse):"]
+    parts.extend(f"{i}. {_neutralize(m)}" for i, m in enumerate(fix_messages, 1))
+    for n, scenario in enumerate(avoid, 1):
+        parts.append(f"\nRejected scenario {n} (do not reuse):")
+        parts.extend(f"{i}. {_neutralize(m)}" for i, m in enumerate(scenario, 1))
+    source = "\n".join(parts)
+    user = (
+        "Evaluation criterion the new scenario must probe:\n"
+        "<criterion>\n"
+        f"Name: {_neutralize(criterion.name)}\n"
+        f"Definition: {_neutralize(criterion.definition)}\n"
+        f"Good example: {_neutralize(criterion.good_example)}\n"
+        f"Bad example: {_neutralize(criterion.bad_example)}\n"
+        "</criterion>\n\n"
+        f"<scenario_source>\n{source}\n</scenario_source>\n\n"
+        "Write one new scenario that differs from all of the above. Return JSON only."
+    )
+    return HELDOUT_SYSTEM, [{"role": "user", "content": user}]
