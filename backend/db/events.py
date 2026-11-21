@@ -1,8 +1,12 @@
 """Minimal product event log (Phase 1 names only)."""
 
+import logging
+
 from sqlalchemy.orm import Session
 
 from backend.db.models import Event
+
+logger = logging.getLogger(__name__)
 
 EVENT_NAMES: frozenset[str] = frozenset(
     {"agent_created", "run_saved", "loop_detected", "criterion_created"}
@@ -17,3 +21,14 @@ def log_event(db: Session, workspace_id: str, name: str, properties: dict | None
     db.commit()
     db.refresh(event)
     return event
+
+
+def try_log_event(
+    db: Session, workspace_id: str, name: str, properties: dict | None = None
+) -> None:
+    """Best-effort `log_event`: analytics must never fail a request."""
+    try:
+        log_event(db, workspace_id, name, properties)
+    except Exception:
+        db.rollback()
+        logger.exception("Failed to log event %r for workspace %s", name, workspace_id)
