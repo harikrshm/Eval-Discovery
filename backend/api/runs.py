@@ -8,7 +8,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from backend.api.deps import get_current_workspace
-from backend.api.limits import MAX_RUNS_PER_WORKSPACE, rate_limit_llm
+from backend.api.limits import MAX_PATTERN_RUNS, MAX_RUNS_PER_WORKSPACE, rate_limit_llm
 from backend.api.schemas import PatternCheckOut, RunCreate, RunOut, RunSaved
 from backend.core.config import AgentConfig
 from backend.core.pattern import PatternCheckFailed, TranscriptTooShort, detect_pattern, keyword_prefilter
@@ -40,14 +40,14 @@ def _run_count(db: Session, agent: Agent) -> int:
 
 
 def _delta_runs(db: Session, agent: Agent) -> list[Run]:
-    """Runs saved since the last pattern check, in position order."""
-    return list(
-        db.scalars(
-            select(Run)
-            .where(Run.agent_id == agent.id, Run.position > agent.last_checked_at_run)
-            .order_by(Run.position)
-        ).all()
-    )
+    """The most recent runs (at most MAX_PATTERN_RUNS) saved since the last pattern check, in position order."""
+    newest_first = db.scalars(
+        select(Run)
+        .where(Run.agent_id == agent.id, Run.position > agent.last_checked_at_run)
+        .order_by(Run.position.desc())
+        .limit(MAX_PATTERN_RUNS)
+    ).all()
+    return list(reversed(newest_first))
 
 
 def _transcripts(runs: list[Run]) -> list[list[dict]]:
@@ -87,8 +87,15 @@ def save_run(
     try_log_event(db, workspace.id, "run_saved", {"position": position})
 
     check_due = False
-    if position - agent.last_checked_at_run >= CHECK_DUE_MIN_NEW_RUNS:
-        check_due = keyword_prefilter(current_behaviors(agent), _transcripts(_delta_runs(db, agent)))
+    unchecked = position - agent.last_checked_at_run
+    if unchecked >= CHECK_DUE_MIN_NEW_RUNS:
+        window = _delta_runs(db, agent)
+        check_due = keyword_prefilter(current_behaviors(agent), _transcripts(window))
+        if not check_due and unchecked > MAX_PATTERN_RUNS:
+            # Older runs can never be analysed (only the newest MAX_PATTERN_RUNS are sent), so skip
+            # past them; otherwise the unchecked backlog would only ever grow.
+            agent.last_checked_at_run = window[-1].position
+            db.commit()
     return RunSaved(
         run=RunOut(id=run.id, position=run.position, messages=run.messages, created_at=run.created_at),
         run_count=position,

@@ -339,3 +339,52 @@ def test_run_save_rejects_long_user_turn_and_oversized_total(client, auth_header
         big += [{"role": "user", "content": "q"}, {"role": "assistant", "content": "a" * 16000}]
     big.append({"role": "user", "content": "q"})
     assert _post_run(client, auth_headers, agent_id, big).status_code == 422
+
+
+def test_check_pattern_sends_only_the_ten_most_recent_runs(client, auth_headers, db_session):
+    agent_id = _agent(client, auth_headers)
+    for i in range(1, 16):
+        _post_run(client, auth_headers, agent_id, _msgs(first=f"run {i} price"))
+    with patch(
+        "backend.api.runs.detect_pattern", return_value=PatternResult(found=False, pattern_summary="")
+    ) as detect:
+        assert _check(client, auth_headers, agent_id).status_code == 200
+    transcripts = detect.call_args.args[1]
+    assert len(transcripts) == 10
+    assert transcripts[0][0]["content"] == "run 6 price"
+    assert transcripts[-1][0]["content"] == "run 15 price"
+    row = db_session.get(Agent, agent_id)
+    db_session.refresh(row)
+    assert row.last_checked_at_run == 15
+
+
+def test_check_pattern_failure_with_many_runs_does_not_advance_marker(client, auth_headers, db_session):
+    agent_id = _agent(client, auth_headers)
+    for i in range(1, 13):
+        _post_run(client, auth_headers, agent_id, _msgs(first=f"run {i} price"))
+    with patch("backend.api.runs.detect_pattern", side_effect=PatternCheckFailed("boom")):
+        assert _check(client, auth_headers, agent_id).status_code == 502
+    row = db_session.get(Agent, agent_id)
+    db_session.refresh(row)
+    assert row.last_checked_at_run == 0
+
+
+def test_prefilter_rejecting_a_batch_over_the_cap_advances_the_marker(client, auth_headers, db_session):
+    agent_id = _agent(client, auth_headers)
+    # Distinct, trigger-free user text: no two runs share a trigger term.
+    for i in range(1, 12):
+        _post_run(client, auth_headers, agent_id, _msgs(first=f"zzz{i}", reply="ok"))
+    row = db_session.get(Agent, agent_id)
+    db_session.refresh(row)
+    assert row.last_checked_at_run == 11  # the 11th run exceeded the cap and was rejected: advanced
+    last = _post_run(client, auth_headers, agent_id, _msgs(first="zzz12", reply="ok")).json()
+    assert last["check_due"] is False
+
+
+def test_prefilter_rejection_within_the_cap_leaves_the_marker(client, auth_headers, db_session):
+    agent_id = _agent(client, auth_headers)
+    for i in range(1, 6):
+        _post_run(client, auth_headers, agent_id, _msgs(first=f"zzz{i}", reply="ok"))
+    row = db_session.get(Agent, agent_id)
+    db_session.refresh(row)
+    assert row.last_checked_at_run == 0

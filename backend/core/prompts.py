@@ -10,7 +10,7 @@ from backend.core.config import AgentConfig
 
 _DELIMITER_TAGS = ("agent_prompt", "transcripts", "pattern_summary")
 _DELIMITER_RE = re.compile(
-    r"<\s*/?\s*(?:" + "|".join(_DELIMITER_TAGS) + r")\s*>", re.IGNORECASE
+    r"<\s*/?\s*(?:" + "|".join(_DELIMITER_TAGS) + r")(?!\w)[^>]*>", re.IGNORECASE
 )
 
 _DATA_NOTICE = (

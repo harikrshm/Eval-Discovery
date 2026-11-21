@@ -244,3 +244,26 @@ def test_criteria_routes_require_auth(client):
     assert client.post("/agents/x/criteria/discover").status_code == 401
     assert client.post("/agents/x/criteria", json=MANUAL).status_code == 401
     assert client.patch("/criteria/x", json={}).status_code == 401
+
+
+def test_manual_criteria_are_capped_per_agent(client, auth_headers, db_session):
+    agent_id = _agent(client, auth_headers)
+    for _ in range(limits.MAX_CRITERIA_PER_AGENT):
+        r = client.post(f"/agents/{agent_id}/criteria", json=MANUAL, headers=auth_headers)
+        assert r.status_code == 201
+    r = client.post(f"/agents/{agent_id}/criteria", json=MANUAL, headers=auth_headers)
+    assert r.status_code == 429
+    assert r.json()["detail"] == "Criteria limit reached for this agent."
+    other = _agent(client, auth_headers)
+    assert client.post(f"/agents/{other}/criteria", json=MANUAL, headers=auth_headers).status_code == 201
+
+
+def test_discover_is_capped_before_any_llm_call(client, auth_headers, db_session):
+    agent_id = _agent(client, auth_headers)
+    for _ in range(limits.MAX_CRITERIA_PER_AGENT):
+        client.post(f"/agents/{agent_id}/criteria", json=MANUAL, headers=auth_headers)
+    _set_summary(db_session, agent_id)
+    with patch("backend.api.criteria.generate_criterion") as gen:
+        r = _discover(client, auth_headers, agent_id)
+    assert r.status_code == 429
+    gen.assert_not_called()

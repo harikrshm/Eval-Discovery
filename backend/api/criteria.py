@@ -7,7 +7,7 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from backend.api.deps import get_current_workspace
-from backend.api.limits import rate_limit_llm
+from backend.api.limits import MAX_CRITERIA_PER_AGENT, rate_limit_llm
 from backend.api.schemas import (
     MAX_CRITERION_NAME_CHARS,
     CriterionCreate,
@@ -28,6 +28,7 @@ router = APIRouter(tags=["criteria"])
 NO_PATTERN = "No pattern to build from yet."
 GENERATION_FAILED = "Criteria generation unavailable, try again."
 MANUAL_WHY = "(manually added)"
+CRITERIA_LIMIT = "Criteria limit reached for this agent."
 
 
 def _owned_or_404(db: Session, workspace: Workspace, agent_id: str) -> Agent:
@@ -39,6 +40,11 @@ def _owned_or_404(db: Session, workspace: Workspace, agent_id: str) -> Agent:
 
 def _criterion_count(db: Session, agent: Agent) -> int:
     return db.scalar(select(func.count()).select_from(Criterion).where(Criterion.agent_id == agent.id))
+
+
+def _check_criteria_cap(db: Session, agent: Agent) -> None:
+    if _criterion_count(db, agent) >= MAX_CRITERIA_PER_AGENT:
+        raise HTTPException(status_code=429, detail=CRITERIA_LIMIT)
 
 
 def _out(criterion: Criterion) -> CriterionOut:
@@ -61,6 +67,7 @@ def discover(
     db: Session = Depends(get_db),
 ) -> CriterionOut:
     agent = _owned_or_404(db, workspace, agent_id)
+    _check_criteria_cap(db, agent)
     rate_limit_llm(request)
     if not agent.pattern_summary:
         raise HTTPException(status_code=409, detail=NO_PATTERN)
@@ -98,6 +105,7 @@ def add_manual(
     db: Session = Depends(get_db),
 ) -> CriterionOut:
     agent = _owned_or_404(db, workspace, agent_id)
+    _check_criteria_cap(db, agent)
     criterion = Criterion(
         agent_id=agent.id,
         position=_criterion_count(db, agent) + 1,
