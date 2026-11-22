@@ -35,6 +35,12 @@ class Workspace(Base):
     agents: Mapped[list["Agent"]] = relationship(back_populates="workspace", cascade="all, delete-orphan")
     events: Mapped[list["Event"]] = relationship(back_populates="workspace", cascade="all, delete-orphan")
     jobs: Mapped[list["Job"]] = relationship(back_populates="workspace", cascade="all, delete-orphan")
+    assist_page_views: Mapped[list["AssistPageView"]] = relationship(
+        back_populates="workspace", cascade="all, delete-orphan"
+    )
+    assist_questions: Mapped[list["AssistQuestion"]] = relationship(
+        back_populates="workspace", cascade="all, delete-orphan"
+    )
 
 
 class Agent(Base):
@@ -48,6 +54,8 @@ class Agent(Base):
     current_prompt_version_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
     last_checked_at_run: Mapped[int] = mapped_column(Integer, default=0)
     pattern_summary: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # "general" for every agent made through the app; "assist" for the Patent Assist agent.
+    kind: Mapped[str] = mapped_column(String(16), default="general", server_default="general")
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
 
     workspace: Mapped[Workspace] = relationship(back_populates="agents")
@@ -96,13 +104,22 @@ class BehaviorMap(Base):
 
 class Run(Base):
     __tablename__ = "run"
-    __table_args__ = (UniqueConstraint("agent_id", "position", name="uq_run_agent_position"),)
+    __table_args__ = (
+        UniqueConstraint("agent_id", "position", name="uq_run_agent_position"),
+        UniqueConstraint("agent_id", "session_id", name="uq_run_agent_session"),
+    )
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
     agent_id: Mapped[str] = _fk("agent.id")
     prompt_version_id: Mapped[str] = _fk("prompt_version.id")
     position: Mapped[int] = mapped_column(Integer)  # 1-based per agent
     messages: Mapped[list] = mapped_column(JSON)
+    # "manual" for runs saved in the app; otherwise where a flagged assistant answer came from.
+    source: Mapped[str] = mapped_column(String(32), default="manual", server_default="manual")
+    # Assist runs only: the visitor's session and the brief the answer was given against (plain columns,
+    # no foreign keys). NULL session ids are distinct, so manual runs never collide on the unique constraint.
+    session_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    brief_snapshot: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
 
     agent: Mapped[Agent] = relationship(back_populates="runs")
@@ -156,6 +173,8 @@ class EvalTest(Base):
     role: Mapped[str] = mapped_column(String(16))  # "fix" | "heldout"
     origin: Mapped[str] = mapped_column(String(16), default="run", server_default="run")  # "run" | "generated"
     scripted_user_messages: Mapped[list] = mapped_column(JSON)
+    # The brief of the assist run this test came from, so a replay can rebuild the same context.
+    brief_snapshot: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
 
     criterion: Mapped[Criterion] = relationship(back_populates="tests")
@@ -194,3 +213,47 @@ class Job(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
 
     workspace: Mapped[Workspace] = relationship(back_populates="jobs")
+
+
+class AssistPageView(Base):
+    """One visitor session's time on one patent page (upserted by session id)."""
+
+    __tablename__ = "assist_page_view"
+
+    session_id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    workspace_id: Mapped[str] = _fk("workspace.id")
+    patent_number: Mapped[str] = mapped_column(String(64))
+    started_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+    dwell_ms: Mapped[int] = mapped_column(Integer, default=0)
+    sections: Mapped[dict] = mapped_column(JSON, default=dict)
+    bounce: Mapped[bool] = mapped_column(Boolean, default=False)
+    source: Mapped[str] = mapped_column(String(32))
+    assist_version: Mapped[int | None] = mapped_column(Integer, nullable=True)
+
+    workspace: Mapped[Workspace] = relationship(back_populates="assist_page_views")
+
+
+class AssistQuestion(Base):
+    """One question put to the assistant, its answer and the signals around it."""
+
+    __tablename__ = "assist_question"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    # Not a foreign key to assist_page_view: a question can be logged before (or without) its page view row.
+    session_id: Mapped[str] = mapped_column(String(64), index=True)
+    workspace_id: Mapped[str] = _fk("workspace.id")
+    patent_number: Mapped[str] = mapped_column(String(64))
+    text: Mapped[str] = mapped_column(Text)
+    intent: Mapped[str] = mapped_column(String(32))
+    section_focus: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    answer: Mapped[str] = mapped_column(Text)
+    rating: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    rating_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    reasked: Mapped[bool] = mapped_column(Boolean, default=False)
+    citation_ok: Mapped[bool] = mapped_column(Boolean, default=True)
+    source: Mapped[str] = mapped_column(String(32))
+    assist_version: Mapped[int] = mapped_column(Integer)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+
+    workspace: Mapped[Workspace] = relationship(back_populates="assist_questions")

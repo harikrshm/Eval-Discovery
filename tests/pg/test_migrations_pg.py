@@ -26,6 +26,8 @@ TABLES = [
     "job",
 ]
 
+ASSIST_TABLES = ["assist_page_view", "assist_question"]
+
 # Valid at revision 0002 and at head (the columns added by 0003 are nullable or have server defaults).
 ROWS_0002 = [
     "INSERT INTO workspace (id, token_hash, created_at, expires_at) "
@@ -52,6 +54,20 @@ ROWS_0002 = [
 ]
 
 
+# Valid at head only: an assist run (session id, source, brief) plus both signal tables.
+ROWS_ASSIST = [
+    "INSERT INTO run (id, agent_id, prompt_version_id, position, messages, source, session_id, brief_snapshot, "
+    "created_at) VALUES ('r2', 'a', 'p2', 2, '[]', 'extension', 's1', '{}', '2026-01-02')",
+    "INSERT INTO assist_page_view (session_id, workspace_id, patent_number, started_at, updated_at, dwell_ms, "
+    "sections, bounce, source, assist_version) "
+    "VALUES ('s1', 'w', 'US1', '2026-01-02', '2026-01-02', 10, '{}', false, 'extension', null)",
+    "INSERT INTO assist_question (id, session_id, workspace_id, patent_number, text, intent, section_focus, "
+    "answer, rating, rating_reason, reasked, citation_ok, source, assist_version, created_at) "
+    "VALUES ('q', 's1', 'w', 'US1', 'what?', 'other', null, 'that', null, null, false, true, 'extension', 1, "
+    "'2026-01-02')",
+]
+
+
 def _fresh(pg_engine, pg_url, revision):
     pgutil.reset_schema(pg_engine)
     pgutil.alembic_upgrade(pg_url, revision)
@@ -63,9 +79,15 @@ def _insert_rows(engine):
             conn.execute(text(sql))
 
 
-def _counts(engine):
+def _insert_assist_rows(engine):
+    with engine.begin() as conn:
+        for sql in ROWS_ASSIST:
+            conn.execute(text(sql))
+
+
+def _counts(engine, tables=TABLES):
     with engine.connect() as conn:
-        return {t: conn.execute(text(f'SELECT count(*) FROM "{t}"')).scalar_one() for t in TABLES}
+        return {t: conn.execute(text(f'SELECT count(*) FROM "{t}"')).scalar_one() for t in tables}
 
 
 def _columns(engine, table):
@@ -90,8 +112,48 @@ def test_upgrade_from_0002_backfills_and_keeps_rows(pg_engine, pg_url):
             text("SELECT id, number, change_report, verification, source_test_id FROM prompt_version ORDER BY number")
         ).all()
         assert [tuple(r) for r in rows] == [("p1", 1, None, None, None), ("p2", 2, None, None, None)]
-        assert conn.execute(text("SELECT version_num FROM alembic_version")).scalar_one() == "0003"
+        assert conn.execute(text("SELECT kind FROM agent WHERE id = 'a'")).scalar_one() == "general"
+        assert conn.execute(text("SELECT source FROM run WHERE id = 'r'")).scalar_one() == "manual"
+        assert conn.execute(text("SELECT version_num FROM alembic_version")).scalar_one() == "0004"
     assert _counts(pg_engine)["prompt_version"] == 2
+
+
+def test_upgrade_from_0003_defaults_the_new_columns_and_keeps_rows(pg_engine, pg_url):
+    _fresh(pg_engine, pg_url, "0003")
+    _insert_rows(pg_engine)
+    before = _counts(pg_engine)
+
+    pgutil.alembic_upgrade(pg_url, "head")
+
+    with pg_engine.connect() as conn:
+        assert conn.execute(text("SELECT kind FROM agent")).scalars().all() == ["general"]
+        row = conn.execute(text("SELECT source, session_id, brief_snapshot FROM run WHERE id = 'r'")).one()
+        assert tuple(row) == ("manual", None, None)
+        assert conn.execute(text("SELECT brief_snapshot FROM test_case WHERE id = 't'")).scalar_one() is None
+    assert _counts(pg_engine) == before
+    assert _counts(pg_engine, ASSIST_TABLES) == {"assist_page_view": 0, "assist_question": 0}
+
+
+def test_unique_run_agent_session_allows_many_nulls_and_rejects_a_duplicate(pg_engine, pg_url):
+    _fresh(pg_engine, pg_url, "0003")
+    _insert_rows(pg_engine)
+    pgutil.alembic_upgrade(pg_url, "head")
+    assert "uq_run_agent_session" in _uniques(pg_engine, "run")
+
+    def insert_run(run_id, position, session):
+        with pg_engine.begin() as conn:
+            conn.execute(
+                text(
+                    "INSERT INTO run (id, agent_id, prompt_version_id, position, messages, session_id, created_at) "
+                    f"VALUES ('{run_id}', 'a', 'p2', {position}, '[]', {session}, '2026-01-03')"
+                )
+            )
+
+    insert_run("r3", 3, "null")
+    insert_run("r4", 4, "null")  # NULL session ids are distinct
+    insert_run("r5", 5, "'s1'")
+    with pytest.raises(IntegrityError):
+        insert_run("r6", 6, "'s1'")
 
 
 def test_unique_agent_number_rejects_a_duplicate(pg_engine, pg_url):
@@ -134,12 +196,14 @@ def test_deleting_a_workspace_cascades_through_every_table_in_the_database(pg_en
     _fresh(pg_engine, pg_url, "0002")
     _insert_rows(pg_engine)
     pgutil.alembic_upgrade(pg_url, "head")
-    assert all(count >= 1 for count in _counts(pg_engine).values())
+    _insert_assist_rows(pg_engine)
+    every_table = TABLES + ASSIST_TABLES
+    assert all(count >= 1 for count in _counts(pg_engine, every_table).values())
 
     with pg_engine.begin() as conn:
         conn.execute(text("DELETE FROM workspace WHERE id = 'w'"))
 
-    assert _counts(pg_engine) == {table: 0 for table in TABLES}
+    assert _counts(pg_engine, every_table) == {table: 0 for table in every_table}
 
 
 def test_deleting_a_workspace_cascades_through_the_orm_too(pg_engine, pg_url):
@@ -147,12 +211,15 @@ def test_deleting_a_workspace_cascades_through_the_orm_too(pg_engine, pg_url):
     _fresh(pg_engine, pg_url, "0002")
     _insert_rows(pg_engine)
     pgutil.alembic_upgrade(pg_url, "head")
+    _insert_assist_rows(pg_engine)
+    every_table = TABLES + ASSIST_TABLES
+    assert all(count >= 1 for count in _counts(pg_engine, every_table).values())
 
     with Session(pg_engine) as db:
         db.delete(db.get(Workspace, "w"))
         db.commit()
 
-    assert _counts(pg_engine) == {table: 0 for table in TABLES}
+    assert _counts(pg_engine, every_table) == {table: 0 for table in every_table}
 
 
 def test_downgrade_to_0002_then_upgrade_again(pg_engine, pg_url):
@@ -176,3 +243,27 @@ def test_downgrade_to_0002_then_upgrade_again(pg_engine, pg_url):
         assert compare_metadata(MigrationContext.configure(conn), Base.metadata) == []
     assert "uq_prompt_version_agent_number" in _uniques(pg_engine, "prompt_version")
     assert _counts(pg_engine)["prompt_version"] == 2
+
+
+def test_downgrade_to_0003_then_upgrade_again(pg_engine, pg_url):
+    _fresh(pg_engine, pg_url, "0003")
+    _insert_rows(pg_engine)
+    pgutil.alembic_upgrade(pg_url, "head")
+
+    pgutil.alembic_downgrade(pg_url, "0003")
+
+    assert not set(ASSIST_TABLES) & set(inspect(pg_engine).get_table_names())
+    assert "kind" not in _columns(pg_engine, "agent")
+    assert not {"source", "session_id", "brief_snapshot"} & _columns(pg_engine, "run")
+    assert "brief_snapshot" not in _columns(pg_engine, "test_case")
+    assert "uq_run_agent_session" not in _uniques(pg_engine, "run")
+    assert _counts(pg_engine)["run"] == 1
+
+    pgutil.alembic_upgrade(pg_url, "head")
+
+    with pg_engine.connect() as conn:
+        assert conn.execute(text("SELECT kind FROM agent WHERE id = 'a'")).scalar_one() == "general"
+        assert conn.execute(text("SELECT source FROM run WHERE id = 'r'")).scalar_one() == "manual"
+        assert compare_metadata(MigrationContext.configure(conn), Base.metadata) == []
+    assert "uq_run_agent_session" in _uniques(pg_engine, "run")
+    assert _counts(pg_engine)["run"] == 1

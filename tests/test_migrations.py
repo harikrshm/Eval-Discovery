@@ -205,3 +205,104 @@ def test_downgrade_to_0002_then_upgrade_again(tmp_path, monkeypatch):
             assert compare_metadata(MigrationContext.configure(conn), Base.metadata) == []
     finally:
         engine.dispose()
+
+
+def _insert_0003_rows(engine):
+    """Populate a database at revision 0003: two runs (no session) on one agent."""
+    from sqlalchemy import text
+
+    _insert_0002_rows(engine)
+    with engine.begin() as conn:
+        for position in (1, 2):
+            conn.execute(
+                text(
+                    "INSERT INTO run (id, agent_id, prompt_version_id, position, messages, created_at) "
+                    f"VALUES ('r{position}', 'a', 'p1', {position}, '[]', '2026-01-01')"
+                )
+            )
+
+
+def test_upgrade_0004_keeps_0003_rows_and_applies_defaults(tmp_path, monkeypatch):
+    from sqlalchemy import text
+
+    url = f"sqlite:///{tmp_path / 'a.db'}"
+    monkeypatch.setenv("DATABASE_URL", url)
+    cfg = Config(str(ROOT / "alembic.ini"))
+    command.upgrade(cfg, "0003")
+    engine = create_engine(url)
+    try:
+        _insert_0003_rows(engine)
+        command.upgrade(cfg, "head")
+        with engine.connect() as conn:
+            assert conn.execute(text("SELECT kind FROM agent WHERE id = 'a'")).scalar() == "general"
+            rows = conn.execute(
+                text("SELECT id, source, session_id, brief_snapshot FROM run ORDER BY position")
+            ).all()
+            assert [tuple(r) for r in rows] == [("r1", "manual", None, None), ("r2", "manual", None, None)]
+            assert conn.execute(text("SELECT brief_snapshot FROM test_case WHERE id = 't'")).scalar() is None
+            assert conn.execute(text("SELECT count(*) FROM assist_page_view")).scalar() == 0
+            assert conn.execute(text("SELECT count(*) FROM assist_question")).scalar() == 0
+    finally:
+        engine.dispose()
+
+
+def test_0004_run_session_unique_constraint_after_upgrade(tmp_path, monkeypatch):
+    import pytest
+    from sqlalchemy import text
+    from sqlalchemy.exc import IntegrityError
+
+    url = f"sqlite:///{tmp_path / 'r.db'}"
+    monkeypatch.setenv("DATABASE_URL", url)
+    cfg = Config(str(ROOT / "alembic.ini"))
+    command.upgrade(cfg, "0003")
+    engine = create_engine(url)
+    try:
+        _insert_0003_rows(engine)
+        command.upgrade(cfg, "head")
+        assert "uq_run_agent_session" in {u["name"] for u in inspect(engine).get_unique_constraints("run")}
+
+        def insert(run_id, position, session):
+            with engine.begin() as conn:
+                conn.execute(
+                    text(
+                        "INSERT INTO run (id, agent_id, prompt_version_id, position, messages, session_id, created_at) "
+                        f"VALUES ('{run_id}', 'a', 'p1', {position}, '[]', {session}, '2026-01-01')"
+                    )
+                )
+
+        insert("r3", 3, "NULL")  # several NULL session ids coexist
+        insert("r4", 4, "NULL")
+        insert("r5", 5, "'s1'")
+        with pytest.raises(IntegrityError):
+            insert("r6", 6, "'s1'")
+    finally:
+        engine.dispose()
+
+
+def test_downgrade_to_0003_then_upgrade_again(tmp_path, monkeypatch):
+    from sqlalchemy import text
+
+    url = f"sqlite:///{tmp_path / 'z.db'}"
+    monkeypatch.setenv("DATABASE_URL", url)
+    cfg = Config(str(ROOT / "alembic.ini"))
+    command.upgrade(cfg, "0003")
+    engine = create_engine(url)
+    try:
+        _insert_0003_rows(engine)
+        command.upgrade(cfg, "head")
+        command.downgrade(cfg, "0003")
+        insp = inspect(engine)
+        assert not {"assist_page_view", "assist_question"} & set(insp.get_table_names())
+        assert "kind" not in {c["name"] for c in insp.get_columns("agent")}
+        assert not {"source", "session_id", "brief_snapshot"} & {c["name"] for c in insp.get_columns("run")}
+        assert "brief_snapshot" not in {c["name"] for c in insp.get_columns("test_case")}
+        assert "uq_run_agent_session" not in {u["name"] for u in insp.get_unique_constraints("run")}
+        with engine.connect() as conn:
+            assert conn.execute(text("SELECT count(*) FROM run")).scalar() == 2
+        command.upgrade(cfg, "head")
+        with engine.connect() as conn:
+            assert conn.execute(text("SELECT kind FROM agent WHERE id = 'a'")).scalar() == "general"
+            assert conn.execute(text("SELECT source FROM run WHERE id = 'r1'")).scalar() == "manual"
+            assert compare_metadata(MigrationContext.configure(conn), Base.metadata) == []
+    finally:
+        engine.dispose()

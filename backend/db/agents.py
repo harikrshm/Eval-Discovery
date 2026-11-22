@@ -31,6 +31,7 @@ def create_agent(
     config: AgentConfig,
     analysis: AgentAnalysis,
     origin: str = "initial",
+    kind: str = "general",
 ) -> Agent:
     """Create an agent, its promoted prompt version and behavior map in one transaction.
 
@@ -44,6 +45,7 @@ def create_agent(
             workspace_id=workspace.id,
             name=config.name,
             user_role_label=config.user_role_label,
+            kind=kind,
         )
         db.add(agent)
         db.flush()
