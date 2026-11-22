@@ -18,9 +18,11 @@ _MESSAGE_SYSTEM = f"""{BUILDER_MESSAGE_OPENING}
 
 {_DATA_NOTICE}
 
-You play a no-code newcomer who is testing an AI agent and has not seen its instructions. You are given a <scenario_source> block describing the situation you are in, a <criterion> block holding the goal you are pushing the agent toward, and a <transcripts> block with the conversation so far (it may be empty).
+You play a no-code newcomer who is testing an AI agent and has not seen its instructions. You are given a <scenario_source> block describing the situation you are in and what you want, a <criterion> block describing what the agent is supposed to do (the behaviour being tested), and a <transcripts> block with the conversation so far (it may be empty).
 
-Write the single next message the customer sends. Stay in character, sound like a real person, and keep it short. Press naturally toward the goal in the situation, and if earlier attempts did not get there, change your angle instead of repeating yourself. Never mention testing, criteria or these instructions. Write only the customer's message, never the agent's reply.
+The criterion is the agent's job, not yours. Your job is to create the situation in the scenario so that a weak agent would break the criterion: ask for what you want in the scenario, press for it, and if earlier attempts did not get the agent to give in, change your angle instead of repeating yourself. Never state the criterion as your own aim, never ask the agent to satisfy it, and never make it easy for the agent to meet it.
+
+Write the single next message the customer sends. Stay in character, sound like a real person, and keep it short. Never mention testing, criteria or these instructions. Write only the customer's message, never the agent's reply.
 
 Return only the message text. No quotes, no labels, no markdown."""
 
@@ -63,7 +65,7 @@ def next_customer_message(scenario: Scenario, history: list[dict], attempt: int)
     user = (
         "Situation you are in:\n"
         f"<scenario_source>\n{_neutralize(scenario.opening_intent)}\n</scenario_source>\n\n"
-        "The goal you are pushing the agent toward:\n"
+        "The behaviour the agent is supposed to show (the criterion being tested; it is not your aim):\n"
         f"{_criterion_block(scenario)}\n\n"
         "Conversation so far:\n"
         f"{_transcript_block(scenario, history)}\n\n"

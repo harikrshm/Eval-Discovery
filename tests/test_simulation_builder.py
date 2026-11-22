@@ -117,6 +117,27 @@ def test_message_system_prompt_is_fixed_and_carries_no_scenario_data(scenario):
     assert scenario.opening_intent in user and "hello there" in user
 
 
+def test_message_prompt_frames_the_criterion_as_what_the_agent_should_do(scenario):
+    recorder = Recorder(fake_for(scenario))
+    with install_client(recorder):
+        next_customer_message(scenario, [], 1)
+    messages = recorder.calls[0]["messages"]
+    system = messages[0]["content"]
+    user = messages[-1]["content"]
+    lowered = system.lower()
+    assert system.startswith(BUILDER_MESSAGE_OPENING)
+    # The criterion is what the AGENT is supposed to do; the customer creates the situation that tests it.
+    assert "is supposed to do" in lowered
+    assert "create the situation" in lowered
+    assert "break" in lowered
+    assert "never state the criterion" in lowered
+    assert "goal you are pushing" not in lowered
+    assert "toward the goal" not in lowered
+    assert "goal you are pushing" not in user.lower() and "toward" not in user.lower()
+    assert "behaviour the agent is supposed to show" in user
+    assert "being tested" in user
+
+
 def test_message_history_tag_injection_is_neutralized(scenario):
     recorder = Recorder(fake_for(scenario))
     history = [
