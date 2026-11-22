@@ -106,7 +106,7 @@ describe("useReport", () => {
     await view.render();
 
     expect(api.getVersion).toHaveBeenCalledWith("v2");
-    expect(api.getReport).toHaveBeenCalledWith("v2");
+    expect(api.getReport).toHaveBeenCalledWith("v2", { view: true });
     expect(view.holder.current.loading).toBe(true);
     expect(view.holder.current.report).toBeNull();
 
@@ -162,6 +162,20 @@ describe("useReport", () => {
     await tick(30000);
     expect(api.getReport).toHaveBeenCalledTimes(4);
     expect(api.getVersion).toHaveBeenCalledTimes(1); // the version text never changes
+    await view.unmount();
+  });
+
+  it("marks only the first fetch as a view; the polls are plain fetches", async () => {
+    api.getReport.mockResolvedValue(report());
+    const view = mount("v2");
+    await view.render();
+    await tick(3000);
+    await tick(3000);
+
+    expect(api.getReport).toHaveBeenCalledTimes(3);
+    expect(api.getReport.mock.calls[0]).toEqual(["v2", { view: true }]);
+    expect(api.getReport.mock.calls[1]).toEqual(["v2"]);
+    expect(api.getReport.mock.calls[2]).toEqual(["v2"]);
     await view.unmount();
   });
 

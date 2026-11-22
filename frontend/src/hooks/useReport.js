@@ -55,7 +55,8 @@ export function useReport(versionId, { enabled = true } = {}) {
 
     (async () => {
       try {
-        const [version, report] = await Promise.all([getVersion(versionId), getReport(versionId)]);
+        // Only this first fetch counts as a view of the report; the polls below do not.
+        const [version, report] = await Promise.all([getVersion(versionId), getReport(versionId, { view: true })]);
         if (signal.aborted) return;
         latest = report;
         setLoaded({ versionId, report, version, error: null, gaveUp: false });

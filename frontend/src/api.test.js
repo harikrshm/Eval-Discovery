@@ -351,6 +351,7 @@ describe("fix-loop api", () => {
     await api.rejectVersion("v1");
     await api.restoreVersion("v1");
     await api.getReport("v1");
+    await api.getReport("v1", { view: true });
 
     const calls = fetchMock.mock.calls.map(([u, o]) => [
       o.method,
@@ -366,6 +367,7 @@ describe("fix-loop api", () => {
       ["POST", "/prompt-versions/v1/reject", undefined],
       ["POST", "/prompt-versions/v1/restore", undefined],
       ["GET", "/prompt-versions/v1/report", undefined],
+      ["GET", "/prompt-versions/v1/report?view=1", undefined],
     ]);
     for (const call of fetchMock.mock.calls) {
       expect(headerOf(call, "X-Workspace-Token")).toBe("tok");

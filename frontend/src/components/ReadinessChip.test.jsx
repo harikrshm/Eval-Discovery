@@ -38,6 +38,13 @@ describe("ReadinessChip", () => {
     expect(chip().textContent).toBe("1 of 2 criteria passing · 2 without tests");
   });
 
+  it("says no criteria have tests yet when criteria exist but none has a test", async () => {
+    await render({ readiness: { passing: 0, total: 0, withoutTests: 3, allPassing: false } });
+    expect(chip().textContent).toBe("No criteria have tests yet");
+    expect(chip().textContent).not.toContain("without tests");
+    expect(chip().textContent).not.toContain("0 of 0");
+  });
+
   it("says testing is done when every criterion with tests is passing", async () => {
     await render({ readiness: { passing: 2, total: 2, withoutTests: 0, allPassing: true } });
     expect(chip().textContent).toBe("All criteria passing. Testing is done for your saved tests.");

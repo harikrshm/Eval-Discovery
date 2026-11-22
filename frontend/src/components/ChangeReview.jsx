@@ -15,7 +15,7 @@ function isActive(job) {
   return job?.status === "queued" || job?.status === "running";
 }
 
-function Resolved({ candidate, report, gaveUp, agentName, userRoleLabel }) {
+function Resolved({ candidate, report, gaveUp, agentName, userRoleLabel, currentNumber }) {
   const outcome = report?.outcome ?? null;
   const promoted = (outcome?.status ?? candidate.status) === "promoted";
   const strength = report?.strength ?? candidate.strength;
@@ -37,7 +37,10 @@ function Resolved({ candidate, report, gaveUp, agentName, userRoleLabel }) {
         </Badge>
         <p className="text-sm font-medium text-foreground break-words">{outcomeLine(candidate, outcome)}</p>
       </div>
-      {!promoted && <p className="mt-1 text-sm text-foreground">Chat still uses v{candidate.parent_number}.</p>}
+      {/* Past tense: it only says what chat did, and only while that is still the live version. */}
+      {!promoted && candidate.parent_number != null && candidate.parent_number === currentNumber && (
+        <p className="mt-1 text-sm text-foreground">Chat kept using v{candidate.parent_number}.</p>
+      )}
       {strength === "full" && <p className="mt-1 text-xs text-muted-foreground">Verified with a held-out test.</p>}
       {strength === "weaker" && (
         <p className="mt-1 text-xs text-muted-foreground">Verified without a held-out test (weaker).</p>
@@ -80,6 +83,7 @@ export default function ChangeReview({
   onRetry,
   agentName = "Agent",
   userRoleLabel = "Customer",
+  currentNumber = null,
 }) {
   const n = candidate.number;
   const proposed = candidate.status === "proposed";
@@ -102,19 +106,28 @@ export default function ChangeReview({
 
       {statusText && <p className="mt-1 text-sm text-muted-foreground">{statusText}</p>}
 
-      {reportError && !verifying && (
+      {reportError && !verifying && proposed && (
         <div className="mt-2 space-y-2">
           <p role="alert" className="text-sm text-red-700">
             Couldn&apos;t load the suggested fix. {reportError}
           </p>
-          {proposed && (
-            <div className="flex items-center gap-2">
-              <Button type="button" variant="outline" size="sm" onClick={() => onRetry?.()}>
-                Retry
-              </Button>
-              {rejectButton}
-            </div>
-          )}
+          <div className="flex items-center gap-2">
+            <Button type="button" variant="outline" size="sm" onClick={() => onRetry?.()}>
+              Retry
+            </Button>
+            {rejectButton}
+          </div>
+        </div>
+      )}
+
+      {reportError && !verifying && !proposed && (
+        <div className="mt-2 space-y-2">
+          <p role="alert" className="text-sm text-red-700">
+            Couldn&apos;t load the explanation. {reportError}
+          </p>
+          <Button type="button" variant="outline" size="sm" onClick={() => onRetry?.()}>
+            Retry
+          </Button>
         </div>
       )}
 
@@ -151,7 +164,14 @@ export default function ChangeReview({
       )}
 
       {!proposed && !verifying && !loading && !reportError && (
-        <Resolved candidate={candidate} report={report} gaveUp={gaveUp} agentName={agentName} userRoleLabel={userRoleLabel} />
+        <Resolved
+          candidate={candidate}
+          report={report}
+          gaveUp={gaveUp}
+          agentName={agentName}
+          userRoleLabel={userRoleLabel}
+          currentNumber={currentNumber}
+        />
       )}
     </section>
   );
@@ -169,6 +189,7 @@ export function ChangeReviewContainer({
   onAnnounce,
   agentName,
   userRoleLabel,
+  currentNumber,
 }) {
   const { report, version, loading, error, gaveUp } = useReport(candidate.version_id, { enabled: true });
   const job = jobs?.[`version:${candidate.version_id}`];
@@ -199,6 +220,7 @@ export function ChangeReviewContainer({
       onRetry={onRetry}
       agentName={agentName}
       userRoleLabel={userRoleLabel}
+      currentNumber={currentNumber}
     />
   );
 }

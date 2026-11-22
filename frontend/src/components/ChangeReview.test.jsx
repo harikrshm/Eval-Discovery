@@ -324,14 +324,53 @@ describe("ChangeReview resolved states", () => {
     expect(text).not.toContain("Chat still uses");
   });
 
-  it("shows the failed outcome with the reason and that chat still uses the parent", async () => {
+  it("shows the failed outcome with the reason and, in past tense, that chat kept using the parent", async () => {
     const o = outcome({ status: "failed_verification", reason: "The fix test still fails." });
-    await render({ candidate: failed, report: reportWith(o, { strength: "weaker" }) });
+    await render({ candidate: failed, report: reportWith(o, { strength: "weaker" }), currentNumber: 2 });
     const text = container.textContent;
     expect(text).toContain("v3 was not promoted: The fix test still fails.");
     expect(text).toContain("Not promoted");
-    expect(text).toContain("Chat still uses v2.");
+    expect(text).toContain("Chat kept using v2.");
+    expect(text).not.toContain("Chat still uses");
     expect(text).toContain("Verified without a held-out test (weaker).");
+  });
+
+  it("hides the chat line once the live version is no longer the candidate's parent", async () => {
+    const o = outcome({ status: "failed_verification", reason: "The fix test still fails." });
+    await render({ candidate: failed, report: reportWith(o), currentNumber: 4 });
+    expect(container.textContent).not.toContain("Chat kept using");
+    expect(container.textContent).not.toContain("Chat still uses");
+  });
+
+  it("hides the chat line when the current version number is unknown", async () => {
+    const o = outcome({ status: "failed_verification", reason: "The fix test still fails." });
+    await render({ candidate: failed, report: reportWith(o) });
+    expect(container.textContent).not.toContain("Chat kept using");
+  });
+
+  it("does not show the chat line for a promoted candidate", async () => {
+    await render({ candidate: promoted, report: reportWith(outcome()), currentNumber: 2 });
+    expect(container.textContent).not.toContain("Chat kept using");
+  });
+
+  it("says the explanation could not be loaded, with a Retry, when a resolved report fails to load", async () => {
+    const onRetry = vi.fn();
+    await render({ candidate: failed, report: null, version: null, reportError: "Backend down", onRetry });
+    const alert = container.querySelector('[role="alert"]');
+    expect(alert.textContent).toContain("Couldn't load the explanation.");
+    expect(alert.textContent).toContain("Backend down");
+    expect(container.textContent).not.toContain("Couldn't load the suggested fix");
+    expect(buttonByText("Reject")).toBeUndefined();
+    expect(buttonByText("Approve and verify")).toBeUndefined();
+    await act(async () => {
+      buttonByText("Retry").click();
+    });
+    expect(onRetry).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps the proposed copy for a proposed report that fails to load", async () => {
+    await render({ report: null, version: null, reportError: "Backend down" });
+    expect(container.querySelector('[role="alert"]').textContent).toContain("Couldn't load the suggested fix.");
   });
 
   it("trusts the stored status, not the narrative prose", async () => {
@@ -423,6 +462,18 @@ describe("ChangeReviewContainer", () => {
     mockReport({ loading: true });
     await render(containerProps(), ChangeReviewContainer);
     expect(container.textContent).toContain("Loading the suggested fix…");
+  });
+
+  it("passes the current version number through to the resolved view", async () => {
+    mockReport({
+      report: reportWith(outcome({ status: "failed_verification", reason: "no" })),
+      version: VERSION,
+    });
+    await render(
+      containerProps({ candidate: candidate({ status: "failed_verification" }), currentNumber: 2 }),
+      ChangeReviewContainer
+    );
+    expect(container.textContent).toContain("Chat kept using v2.");
   });
 
   it("passes gaveUp from the hook through", async () => {

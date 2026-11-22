@@ -8,6 +8,7 @@ import { cn } from "../lib/utils";
 
 const ROLE_LABELS = { fix: "Fix test", heldout: "Held-out test" };
 const NO_HELDOUT_TEXT = "Couldn't write a test your current prompt fails, so it may already handle this case.";
+const HELDOUT_DISCARDED_TEXT = "The prompt or criterion changed while the test was being written. Try again.";
 
 function testLabel(test) {
   if (test.origin === "generated") return "Held-out test (generated)";
@@ -269,7 +270,7 @@ export default function TestsSection({
             {generating && <p>Writing a second test…</p>}
             {generating && slow && <p>Still working. The server may be waking up.</p>}
             {!generating && heldoutJob?.status === "done" && heldoutJob.result?.created === false && (
-              <p>{NO_HELDOUT_TEXT}</p>
+              <p>{heldoutJob.result.discarded === true ? HELDOUT_DISCARDED_TEXT : NO_HELDOUT_TEXT}</p>
             )}
           </div>
           {!generating && heldoutJob?.status === "failed" && (

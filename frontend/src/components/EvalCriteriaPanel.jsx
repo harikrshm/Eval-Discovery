@@ -337,6 +337,7 @@ export default function EvalCriteriaPanel({
                 onAnnounce={setAnnouncement}
                 agentName={agentName}
                 userRoleLabel={userRoleLabel}
+                currentNumber={suite?.prompt_version_number}
               />
             </div>
           )}

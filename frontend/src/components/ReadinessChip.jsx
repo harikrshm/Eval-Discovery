@@ -8,10 +8,14 @@ export default function ReadinessChip({ readiness, live = true, className }) {
   let text = "";
   if (readiness) {
     const { passing, total, withoutTests, allPassing } = readiness;
-    text = allPassing
-      ? "All criteria passing. Testing is done for your saved tests."
-      : `${passing} of ${total} criteria passing`;
-    if (withoutTests > 0) text += ` · ${withoutTests} without tests`;
+    if (total === 0 && withoutTests > 0) {
+      text = "No criteria have tests yet"; // "0 of 0 passing" would read as a result
+    } else {
+      text = allPassing
+        ? "All criteria passing. Testing is done for your saved tests."
+        : `${passing} of ${total} criteria passing`;
+      if (withoutTests > 0) text += ` · ${withoutTests} without tests`;
+    }
   }
 
   return (

@@ -480,6 +480,19 @@ describe("TestsSection generate a second test", () => {
     expect(buttonByText("Generate a second test").disabled).toBe(false);
   });
 
+  it("says the prompt or criterion changed when the job discarded its test", async () => {
+    await render({
+      criterionSuite: fixOnly(),
+      onGenerateHeldout: vi.fn(),
+      jobs: { "heldout:c1": { status: "done", error: null, result: { created: false, discarded: true } } },
+    });
+    expect(container.textContent).toContain(
+      "The prompt or criterion changed while the test was being written. Try again."
+    );
+    expect(container.textContent).not.toContain("may already handle this case");
+    expect(buttonByText("Generate a second test").disabled).toBe(false);
+  });
+
   it("does not show that message after a test was created", async () => {
     await render({
       criterionSuite: fixOnly(),

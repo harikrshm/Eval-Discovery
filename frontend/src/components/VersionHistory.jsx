@@ -31,7 +31,15 @@ const RESTORABLE = ["promoted", "superseded", "failed_verification"];
 const VERIFYING_TEXT = "A fix is being verified. Wait for it to finish.";
 const DEFAULT_RESTORE_ERROR = "That didn't work. Try again.";
 
+// A suggested version with no verification record (so no strength) was never approved: a manual edit
+// replaced it while it was only proposed. Its text was never checked, so it is not an "earlier
+// version" in the sense of "one that ran", and it cannot be restored (the server refuses it too).
+function neverApproved(version) {
+  return version.origin === "suggested" && !version.strength && RESTORABLE.includes(version.status);
+}
+
 function statusLabel(version, isCurrent) {
+  if (neverApproved(version)) return "never approved";
   if (version.status === "promoted") return isCurrent ? "live" : "earlier version";
   return STATUS_LABELS[version.status] ?? version.status;
 }
@@ -71,6 +79,7 @@ export default function VersionHistory({
   loadError = null,
   onRetry,
   onOpenChange,
+  onClearError,
 }) {
   const [open, setOpen] = useState(false);
   const [confirmId, setConfirmId] = useState(null);
@@ -106,17 +115,22 @@ export default function VersionHistory({
   const busy = busyId ?? localBusyId;
   const locked = busy != null || verifying;
   const ordered = Array.isArray(versions) ? [...versions].sort((a, b) => b.number - a.number) : null;
-  const anyRestorable = Boolean(ordered?.some((v) => RESTORABLE.includes(v.status) && v.id !== currentId));
+  const restorable = (v) => RESTORABLE.includes(v.status) && !neverApproved(v);
+  const anyRestorable = Boolean(ordered?.some((v) => restorable(v) && v.id !== currentId));
 
   function toggleOpen() {
     const next = !open;
     setOpen(next);
-    if (!next) setConfirmId(null);
+    if (!next) {
+      setConfirmId(null);
+      onClearError?.(); // a refusal from an earlier restore is not shown again on the next visit
+    }
     onOpenChange?.(next);
   }
 
   function ask(id) {
     if (locked) return;
+    onClearError?.();
     setConfirmId(id);
     pendingFocus.current = { kind: "confirm" };
   }
@@ -216,7 +230,7 @@ export default function VersionHistory({
             <ul className="space-y-2">
               {ordered.map((version) => {
                 const isCurrent = version.id === currentId;
-                const canRestore = RESTORABLE.includes(version.status) && !isCurrent;
+                const canRestore = restorable(version) && !isCurrent;
                 const confirming = canRestore && confirmId === version.id;
                 const promptId = `${uid}-confirm-${version.id}`;
                 return (
@@ -317,8 +331,13 @@ export function VersionHistoryContainer({ agentId, suite, jobs, onRestore }) {
   async function handleRestore(versionId) {
     setRestoringId(versionId);
     const ok = await onRestore(versionId);
-    if (ok !== false) reload();
+    reload(); // also after a refusal: the list may have been stale (that is why it was refused)
     return ok;
+  }
+
+  // Only a finished restore's message is dropped; one in flight keeps its key.
+  function clearError() {
+    if (!isActive(job)) setRestoringId(null);
   }
 
   return (
@@ -333,6 +352,7 @@ export function VersionHistoryContainer({ agentId, suite, jobs, onRestore }) {
       loadError={error}
       onRetry={reload}
       onOpenChange={setOpen}
+      onClearError={clearError}
     />
   );
 }

@@ -148,8 +148,10 @@ export function restoreVersion(versionId) {
   return request(`/prompt-versions/${versionId}/restore`, { method: "POST" });
 }
 
-export function getReport(versionId) {
-  return request(`/prompt-versions/${versionId}/report`);
+// `view` marks the page's first fetch of a report (the server counts one view per `?view=1`);
+// the polls that wait for the written explanation leave it out.
+export function getReport(versionId, { view = false } = {}) {
+  return request(`/prompt-versions/${versionId}/report${view ? "?view=1" : ""}`);
 }
 
 export function getJob(jobId) {

@@ -165,6 +165,35 @@ describe("VersionHistory", () => {
     expect(rows()[0].textContent).toContain("v1 · <b>x</b> · live");
   });
 
+  it("labels a suggestion that was never approved and offers no Restore on it", async () => {
+    const all = [
+      version(4, { status: "promoted", origin: "manual", is_current: true }),
+      version(3, { status: "superseded", origin: "suggested", strength: null }),
+      version(2, { status: "superseded", origin: "suggested", strength: "weaker" }),
+      version(1, { status: "promoted", origin: "initial" }),
+    ];
+    await render(view({ versions: all, currentId: "v4" }));
+    await open();
+    const text = rows().map((r) => r.textContent);
+    expect(text[1]).toContain("v3 · suggested fix · never approved");
+    expect(text[1]).not.toContain("earlier version");
+    expect(text[1]).not.toContain("Restore");
+    expect(text[2]).toContain("v2 · suggested fix · earlier version · verified without a held-out test");
+    expect(text[2]).toContain("Restore");
+    expect(text[3]).toContain("Restore");
+  });
+
+  it("does not tell a user to wait for a verification just because only never-approved versions exist", async () => {
+    const all = [
+      version(3, { status: "approved_verifying", origin: "suggested" }),
+      version(2, { status: "superseded", origin: "suggested", strength: null }),
+      version(1, { status: "promoted", origin: "initial", is_current: true }),
+    ];
+    await render(view({ versions: all, currentId: "v1", verifying: true }));
+    await open();
+    expect(container.textContent).not.toContain("A fix is being verified. Wait for it to finish.");
+  });
+
   it("offers Restore only on promoted, superseded and failed-verification versions that are not current", async () => {
     const all = [
       version(7, { status: "approved_verifying" }),
@@ -388,13 +417,13 @@ describe("VersionHistoryContainer", () => {
     expect(document.activeElement).toBe(toggle());
   });
 
-  it("does not reload after a failed restore, and shows the hook's error for that restore only", async () => {
+  it("reloads after a failed restore too, and shows the hook's error for that restore only", async () => {
     const onRestore = vi.fn(async () => false);
     await render(mountContainer({ onRestore }));
     await open();
     await click(restoreButtons()[0]);
     await click(buttonByText("Confirm restore"));
-    expect(api.getVersions).toHaveBeenCalledTimes(1);
+    expect(api.getVersions).toHaveBeenCalledTimes(2);
 
     await rerender(
       mountContainer({ onRestore, jobs: { "version:v3": { status: "failed", error: "A fix is being verified. Wait for it to finish." } } })
@@ -403,6 +432,33 @@ describe("VersionHistoryContainer", () => {
 
     // An error from some other action on a version this section did not restore is not shown here.
     await rerender(mountContainer({ onRestore, jobs: { "version:v2": { status: "failed", error: "Approve failed" } } }));
+    expect(container.querySelector('[role="alert"]')).toBeNull();
+  });
+
+  it("clears the restore error when the section collapses and when a new confirmation opens", async () => {
+    const onRestore = vi.fn(async () => false);
+    const failedJobs = { "version:v3": { status: "failed", error: "This version can't be restored." } };
+    await render(mountContainer({ onRestore }));
+    await open();
+    await click(restoreButtons()[0]);
+    await click(buttonByText("Confirm restore"));
+    await rerender(mountContainer({ onRestore, jobs: failedJobs }));
+    expect(container.querySelector('[role="alert"]').textContent).toBe("This version can't be restored.");
+
+    // A new confirmation opens: the old refusal goes away.
+    await click(restoreButtons()[0]);
+    expect(container.querySelector('[role="alert"]')).toBeNull();
+    expect(buttonByText("Confirm restore")).toBeDefined();
+    await click(buttonByText("Cancel"));
+
+    // Same job state again (nothing new happened), then collapse and reopen.
+    await rerender(mountContainer({ onRestore, jobs: { ...failedJobs } }));
+    await click(restoreButtons()[0]);
+    await click(buttonByText("Confirm restore"));
+    await rerender(mountContainer({ onRestore, jobs: { "version:v3": { status: "failed", error: "Again." } } }));
+    expect(container.querySelector('[role="alert"]').textContent).toBe("Again.");
+    await open(); // collapse
+    await open(); // reopen
     expect(container.querySelector('[role="alert"]')).toBeNull();
   });
 
