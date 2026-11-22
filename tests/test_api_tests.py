@@ -863,6 +863,57 @@ def test_suite_candidate_verifying_reports_progress_on_that_version(client, auth
     assert shown["progress"] == {"done": 1, "total": 3}
 
 
+@pytest.mark.parametrize(
+    "verification",
+    [
+        "bad",
+        ["x"],
+        5,
+        {"required": "nope"},
+        {"required": None},
+        {"required": 5},
+        {"required": [None, 5, "x", {"role": "fix"}, {"test_id": 7}]},
+        {"strength": ["full"], "required": []},
+    ],
+)
+def test_suite_candidate_with_malformed_verification_never_fails_and_has_no_progress(
+    client, auth_headers, db_session, verification
+):
+    agent_id, _, fix = _failing_fix(client, auth_headers, db_session)
+    _candidate(db_session, agent_id, status="approved_verifying", verification=verification)
+
+    r = client.get(f"/agents/{agent_id}/tests", headers=auth_headers)
+
+    assert r.status_code == 200
+    shown = r.json()["candidate"]
+    assert shown["status"] == "approved_verifying"
+    assert shown["progress"] is None
+    assert shown["strength"] is None
+
+
+def test_suite_candidate_progress_counts_only_well_formed_required_items(client, auth_headers, db_session):
+    agent_id, _, fix = _failing_fix(client, auth_headers, db_session)
+    other = _test(db_session, _criterion(client, auth_headers, agent_id, name="reg"), "fix")
+    candidate = _candidate(
+        db_session,
+        agent_id,
+        status="approved_verifying",
+        verification={
+            "strength": "weaker",
+            "required": [
+                {"test_id": fix.id, "role": "fix", "before": "fail"},
+                {"role": "regression"},  # no test_id: ignored
+                "junk",
+                {"test_id": other.id, "role": "regression", "before": "pass"},
+                {"test_id": "gone", "role": "regression", "before": "pass"},  # counts toward total only
+            ],
+        },
+    )
+    _result(db_session, fix, "replay", "pass", candidate.id)
+
+    assert _suite_candidate(client, auth_headers, agent_id)["progress"] == {"done": 1, "total": 3}
+
+
 def test_suite_candidate_after_resolution_shows_the_latest_promoted_or_failed_suggestion(
     client, auth_headers, db_session
 ):

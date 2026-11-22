@@ -685,7 +685,7 @@ def test_report_returns_the_stored_why_and_outcome(client, auth_headers, db_sess
         verification={"strength": "full", "required": []},
         change_report={"why": why, "outcome": outcome},
     )
-    r = client.get(f"/prompt-versions/{version.id}/report", headers=auth_headers)
+    r = client.get(f"/prompt-versions/{version.id}/report?view=1", headers=auth_headers)
     assert r.status_code == 200
     assert r.json() == {
         "version_id": version.id,
@@ -697,6 +697,27 @@ def test_report_returns_the_stored_why_and_outcome(client, auth_headers, db_sess
     }
     (event,) = _events(db_session, "report_viewed")
     assert event.properties == {"status": "promoted"}
+
+
+@pytest.mark.parametrize("query", ["", "?view=0", "?view=true", "?view=2", "?other=1"])
+def test_report_without_view_one_logs_no_event(client, auth_headers, db_session, query):
+    agent_id = _agent(client, auth_headers)
+    version = _add_version(db_session, agent_id, 2, "proposed", change_report={"why": {"a": 1}, "outcome": None})
+
+    r = client.get(f"/prompt-versions/{version.id}/report{query}", headers=auth_headers)
+
+    assert r.status_code == 200
+    assert r.json()["why"] == {"a": 1}
+    assert _events(db_session, "report_viewed") == []
+
+
+def test_report_view_one_logs_one_event_per_request(client, auth_headers, db_session):
+    agent_id = _agent(client, auth_headers)
+    version = _add_version(db_session, agent_id, 2, "proposed", change_report={"why": {"a": 1}, "outcome": None})
+    for _ in range(2):
+        assert client.get(f"/prompt-versions/{version.id}/report?view=1", headers=auth_headers).status_code == 200
+    client.get(f"/prompt-versions/{version.id}/report", headers=auth_headers)
+    assert len(_events(db_session, "report_viewed")) == 2
 
 
 def test_report_outcome_is_null_while_verifying(client, auth_headers, db_session):
@@ -727,7 +748,7 @@ def test_report_still_works_when_event_logging_fails(client, auth_headers, db_se
     agent_id = _agent(client, auth_headers)
     version = _add_version(db_session, agent_id, 2, "proposed", change_report={"why": {"a": 1}, "outcome": None})
     with patch("backend.db.events.log_event", side_effect=RuntimeError("down")):
-        r = client.get(f"/prompt-versions/{version.id}/report", headers=auth_headers)
+        r = client.get(f"/prompt-versions/{version.id}/report?view=1", headers=auth_headers)
     assert r.status_code == 200
     assert r.json()["why"] == {"a": 1}
 

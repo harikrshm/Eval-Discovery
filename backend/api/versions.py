@@ -231,6 +231,7 @@ def _dict_or_none(value: object) -> dict | None:
 @router.get("/prompt-versions/{version_id}/report", response_model=ReportOut)
 def report(
     version_id: str,
+    view: str | None = None,
     workspace: Workspace = Depends(get_current_workspace),
     db: Session = Depends(get_db),
 ) -> ReportOut:
@@ -245,5 +246,7 @@ def report(
         why=_dict_or_none(stored.get("why")),
         outcome=_dict_or_none(stored.get("outcome")),
     )
-    try_log_event(db, workspace.id, "report_viewed", {"status": version.status})
+    # Only the page's first fetch (`?view=1`) counts as a view; its poll fetches do not.
+    if view == "1":
+        try_log_event(db, workspace.id, "report_viewed", {"status": version.status})
     return out

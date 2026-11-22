@@ -94,6 +94,27 @@ def _active_id(job: Job | None) -> str | None:
     return job.id if job else None
 
 
+def _progress(db: Session, version: PromptVersion, verification: dict) -> CandidateProgress | None:
+    """How many of the well-formed required tests have a current replay; None when the data is malformed.
+
+    The stored `verification` is JSON written by this app, but a bad value must never fail the suite view.
+    """
+    required = verification.get("required")
+    if not isinstance(required, list):
+        return None
+    test_ids = [
+        item["test_id"] for item in required if isinstance(item, dict) and isinstance(item.get("test_id"), str)
+    ]
+    if not test_ids:
+        return None
+    done = 0
+    for test_id in test_ids:
+        test = db.get(EvalTest, test_id)
+        if test is not None and current_replay(db, test, version.id) is not None:
+            done += 1
+    return CandidateProgress(done=done, total=len(test_ids))
+
+
 def _candidate_out(db: Session, agent: Agent, open_version: PromptVersion | None) -> CandidateOut | None:
     """The open candidate, else the latest suggested version that ended `promoted` or
     `failed_verification`; a `rejected` or merely `superseded` one is not shown."""
@@ -111,23 +132,16 @@ def _candidate_out(db: Session, agent: Agent, open_version: PromptVersion | None
         ).first()
     if version is None:
         return None
-    verification = version.verification or {}
-    progress = None
-    if version.status == "approved_verifying":
-        required = verification.get("required") or []
-        done = 0
-        for item in required:
-            test = db.get(EvalTest, item["test_id"])
-            if test is not None and current_replay(db, test, version.id) is not None:
-                done += 1
-        progress = CandidateProgress(done=done, total=len(required))
+    verification = version.verification if isinstance(version.verification, dict) else {}
+    progress = _progress(db, version, verification) if version.status == "approved_verifying" else None
+    strength = verification.get("strength")
     parent = db.get(PromptVersion, version.parent_id) if version.parent_id else None
     return CandidateOut(
         version_id=version.id,
         number=version.number,
         status=version.status,
         origin=version.origin,
-        strength=verification.get("strength"),
+        strength=strength if isinstance(strength, str) else None,
         created_at=version.created_at,
         progress=progress,
         parent_number=parent.number if parent is not None else None,
