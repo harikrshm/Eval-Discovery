@@ -24,6 +24,13 @@ import { friendlyError } from "../lib/testStatus";
 const EMPTY_JOBS = {};
 const IN_FLIGHT = ["queued", "running"];
 
+// While a candidate is `approved_verifying` the server resolves it on its own (the worker's
+// reconcile), so the suite is reloaded on a timer: a reload or a second tab never sits on a
+// stale "Verifying" view, and neither does the tab whose last job finished before the commit.
+export const VERIFY_POLL_MS = 4000;
+export const VERIFY_POLL_LIMIT_MS = 30 * 60 * 1000;
+export const JOB_END_RELOAD_MS = 2000;
+
 function errorMessage(err) {
   return err instanceof Error && err.message ? err.message : "Something went wrong.";
 }
@@ -77,9 +84,52 @@ export function useTests(agentId) {
       setJobState({ agentId: ctx.agentId, map: ctx.jobs });
     }
 
+    function stopVerifyPolling(ctx) {
+      if (ctx.verifyTimer != null) clearInterval(ctx.verifyTimer);
+      ctx.verifyTimer = null;
+    }
+
+    // Keeps the verify timer in step with the newest suite: running while a candidate is being
+    // verified (at most 30 minutes), cleared as soon as it is not.
+    function syncVerifyPolling(ctx, suite) {
+      const verifying = suite?.candidate?.status === "approved_verifying";
+      if (!verifying) {
+        stopVerifyPolling(ctx);
+        ctx.verifyStartedAt = null;
+        ctx.verifyGaveUp = false;
+        return;
+      }
+      if (ctx.verifyTimer != null || ctx.verifyGaveUp) return;
+      ctx.verifyStartedAt = Date.now();
+      ctx.verifyTimer = setInterval(() => {
+        if (!isLive(ctx)) {
+          stopVerifyPolling(ctx);
+          return;
+        }
+        if (Date.now() - ctx.verifyStartedAt >= VERIFY_POLL_LIMIT_MS) {
+          stopVerifyPolling(ctx);
+          ctx.verifyGaveUp = true; // later loads must not restart a poll that has run its course
+          return;
+        }
+        if (ctx.inFlight > 0) return; // never overlap loads
+        loadSuite(ctx);
+      }, VERIFY_POLL_MS);
+    }
+
+    // After a tracked job ends while a candidate is verifying, the worker may not have committed
+    // the resolution yet: look once more shortly after.
+    function scheduleDelayedReload(ctx) {
+      if (ctx.delayedReload != null || ctx.suite?.candidate?.status !== "approved_verifying") return;
+      ctx.delayedReload = setTimeout(() => {
+        ctx.delayedReload = null;
+        if (isLive(ctx) && ctx.inFlight === 0) loadSuite(ctx);
+      }, JOB_END_RELOAD_MS);
+    }
+
     // Loads the suite and resumes any job it lists as active. Overlapping loads resolve
     // to the newest one's answer, so an older, slower response never overwrites it.
     function loadSuite(ctx) {
+      ctx.inFlight += 1;
       const run = (async () => {
         try {
           const suite = await getTests(ctx.agentId);
@@ -87,6 +137,7 @@ export function useTests(agentId) {
           if (ctx.latestLoad !== run) return ctx.latestLoad;
           ctx.suite = suite;
           setLoaded({ agentId: ctx.agentId, suite, error: null });
+          syncVerifyPolling(ctx, suite);
           for (const criterion of suite.criteria) {
             if (criterion.active_job_id) {
               track(ctx, buildKey(criterion.criterion_id), criterion.active_job_id);
@@ -106,6 +157,8 @@ export function useTests(agentId) {
           // Keep whatever suite was last loaded; the error says the view may be out of date.
           setLoaded({ agentId: ctx.agentId, suite: ctx.suite, error: errorMessage(err) });
           return null;
+        } finally {
+          ctx.inFlight -= 1;
         }
       })();
       ctx.latestLoad = run;
@@ -132,7 +185,9 @@ export function useTests(agentId) {
         (job) => {
           if (!isLive(ctx)) return;
           applyJob(job);
+          const verifying = ctx.suite?.candidate?.status === "approved_verifying";
           loadSuite(ctx);
+          if (verifying) scheduleDelayedReload(ctx);
         },
         (err) => {
           if (!isLive(ctx)) return;
@@ -144,7 +199,13 @@ export function useTests(agentId) {
       );
     }
 
-    return { isLive, patchJob, dropJob, loadSuite, track };
+    function shutDown(ctx) {
+      stopVerifyPolling(ctx);
+      clearTimeout(ctx.delayedReload);
+      ctx.delayedReload = null;
+    }
+
+    return { isLive, patchJob, dropJob, loadSuite, track, shutDown };
   }, []);
 
   useEffect(() => {
@@ -156,11 +217,17 @@ export function useTests(agentId) {
       jobs: EMPTY_JOBS,
       tracked: new Map(), // key -> id of the job being followed (or last followed)
       latestLoad: null,
+      inFlight: 0, // suite loads currently awaiting an answer
+      verifyTimer: null,
+      verifyStartedAt: null,
+      verifyGaveUp: false,
+      delayedReload: null,
     };
     ctxRef.current = ctx;
     engine.loadSuite(ctx);
     return () => {
       ctx.controller.abort();
+      engine.shutDown(ctx);
       if (ctxRef.current === ctx) ctxRef.current = null;
     };
   }, [agentId, engine]);
@@ -209,7 +276,8 @@ export function useTests(agentId) {
   // Approve, reject and restore change the version state, not a job. The key is pending from
   // the call until the suite has been reloaded (so the button cannot be clicked again while the
   // view still shows the old state); a rejected request leaves a failed key with the message.
-  // Resolves true when the action went through and the suite was refreshed, false otherwise.
+  // Resolves true when the action went through and the suite was refreshed, false otherwise
+  // (a refused action also reloads the suite, and keeps its error under the key).
   const versionAction = useCallback(
     async (versionId, request, onReply) => {
       const ctx = ctxRef.current;
@@ -222,12 +290,22 @@ export function useTests(agentId) {
         reply = await request();
       } catch (err) {
         engine.patchJob(ctx, key, { status: "failed", error: friendlyError(err), result: null });
+        // The server refused (a 409 means the view was stale): reload so a stale button does not
+        // stay enabled. The failed key, and its message, stays visible.
+        await engine.loadSuite(ctx);
         return false;
       }
       if (!engine.isLive(ctx)) return false;
-      if (onReply) onReply(ctx, reply);
-      await engine.loadSuite(ctx);
-      engine.dropJob(ctx, key);
+      try {
+        if (onReply) onReply(ctx, reply);
+      } catch {
+        // A malformed reply must not strand the key; the reload below shows the real state.
+      }
+      try {
+        await engine.loadSuite(ctx);
+      } finally {
+        engine.dropJob(ctx, key);
+      }
       return true;
     },
     [engine]

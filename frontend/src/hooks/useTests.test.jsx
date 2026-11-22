@@ -816,6 +816,22 @@ describe("useTests", () => {
       await view.unmount();
     });
 
+    it("never leaves the key pending when the reply is malformed", async () => {
+      api.approveVersion.mockResolvedValue({ jobs: 5 });
+      const view = mount("a1");
+      await view.render();
+
+      let ok;
+      await act(async () => {
+        ok = await view.holder.current.approve("v2");
+      });
+
+      expect(ok).toBe(true);
+      expect(view.holder.current.jobs["version:v2"]).toBeUndefined();
+      expect(api.getTests).toHaveBeenCalledTimes(2);
+      await view.unmount();
+    });
+
     it("ignores a second call while the first is pending", async () => {
       api.approveVersion.mockReturnValue(deferred().promise);
       const view = mount("a1");
@@ -843,7 +859,7 @@ describe("useTests", () => {
         status: "failed",
         error: "The test queue is busy. Try again in a minute.",
       });
-      expect(api.getTests).toHaveBeenCalledTimes(1);
+      expect(api.getTests).toHaveBeenCalledTimes(2); // reloaded so a stale Approve does not stay enabled
 
       api.approveVersion.mockResolvedValue({ version_id: "v2", status: "approved_verifying", jobs: [] });
       await act(async () => {
@@ -918,17 +934,19 @@ describe("useTests", () => {
       await view.unmount();
     });
 
-    it("surfaces the server message on failure and does not refresh", async () => {
+    it("surfaces the server message on failure and reloads the suite, keeping the message", async () => {
       api[apiName].mockRejectedValue(new api.ApiError(serverMessage, 409));
       const view = mount("a1");
       await view.render();
+      api.getTests.mockResolvedValueOnce(suite({ prompt_version_number: 4 }));
 
       await act(async () => {
         await view.holder.current[action]("v2");
       });
 
       expect(view.holder.current.jobs["version:v2"]).toMatchObject({ status: "failed", error: serverMessage });
-      expect(api.getTests).toHaveBeenCalledTimes(1);
+      expect(api.getTests).toHaveBeenCalledTimes(2);
+      expect(view.holder.current.suite.prompt_version_number).toBe(4);
       await view.unmount();
     });
 
@@ -1030,6 +1048,197 @@ describe("useTests", () => {
 
       expect(pollJob).not.toHaveBeenCalled();
       expect(api.getTests).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  describe("verifying poll", () => {
+    function verifyingSuite(extra = {}) {
+      return suite({
+        candidate: { version_id: "v3", number: 3, status: "approved_verifying", progress: { done: 2, total: 5 } },
+        ...extra,
+      });
+    }
+    function resolvedSuite() {
+      return suite({ candidate: { version_id: "v3", number: 3, status: "promoted", progress: null } });
+    }
+
+    beforeEach(() => {
+      vi.useFakeTimers();
+    });
+    afterEach(() => {
+      vi.useRealTimers();
+    });
+
+    const tick = (ms) =>
+      act(async () => {
+        await vi.advanceTimersByTimeAsync(ms);
+      });
+
+    it("starts reloading every 4 s when the first load already shows a verifying candidate", async () => {
+      api.getTests.mockResolvedValue(verifyingSuite());
+      const view = mount("a1");
+      await view.render();
+      expect(api.getTests).toHaveBeenCalledTimes(1);
+
+      await tick(3999);
+      expect(api.getTests).toHaveBeenCalledTimes(1);
+      await tick(1);
+      expect(api.getTests).toHaveBeenCalledTimes(2);
+      await tick(4000);
+      expect(api.getTests).toHaveBeenCalledTimes(3);
+      await view.unmount();
+    });
+
+    it("does not poll without a verifying candidate", async () => {
+      const view = mount("a1");
+      await view.render();
+      await tick(20000);
+      expect(api.getTests).toHaveBeenCalledTimes(1);
+      await view.unmount();
+    });
+
+    it("stops as soon as the candidate resolves", async () => {
+      api.getTests.mockResolvedValueOnce(verifyingSuite()).mockResolvedValue(resolvedSuite());
+      const view = mount("a1");
+      await view.render();
+
+      await tick(4000);
+      expect(api.getTests).toHaveBeenCalledTimes(2);
+      expect(view.holder.current.suite.candidate.status).toBe("promoted");
+      await tick(20000);
+      expect(api.getTests).toHaveBeenCalledTimes(2);
+      await view.unmount();
+    });
+
+    it("starts when a verifying candidate appears after a reload", async () => {
+      const view = mount("a1");
+      await view.render();
+      api.getTests.mockResolvedValue(verifyingSuite());
+      await act(async () => {
+        await view.holder.current.refresh();
+      });
+      expect(api.getTests).toHaveBeenCalledTimes(2);
+
+      await tick(4000);
+      expect(api.getTests).toHaveBeenCalledTimes(3);
+      await view.unmount();
+    });
+
+    it("never overlaps loads: a tick is skipped while one is in flight", async () => {
+      const slow = deferred();
+      api.getTests.mockResolvedValueOnce(verifyingSuite()).mockReturnValueOnce(slow.promise);
+      const view = mount("a1");
+      await view.render();
+
+      await tick(4000); // the second load starts and hangs
+      expect(api.getTests).toHaveBeenCalledTimes(2);
+      await tick(12000); // three more ticks are skipped
+      expect(api.getTests).toHaveBeenCalledTimes(2);
+
+      api.getTests.mockResolvedValue(verifyingSuite());
+      await act(async () => slow.resolve(verifyingSuite()));
+      await tick(4000);
+      expect(api.getTests).toHaveBeenCalledTimes(3);
+      await view.unmount();
+    });
+
+    it("keeps polling after a failed reload", async () => {
+      api.getTests.mockResolvedValueOnce(verifyingSuite()).mockRejectedValueOnce(new Error("blip"));
+      api.getTests.mockResolvedValue(verifyingSuite());
+      const view = mount("a1");
+      await view.render();
+
+      await tick(4000);
+      expect(view.holder.current.error).toBe("blip");
+      await tick(4000);
+      expect(api.getTests).toHaveBeenCalledTimes(3);
+      expect(view.holder.current.error).toBeNull();
+      await view.unmount();
+    });
+
+    it("gives up after 30 minutes", async () => {
+      api.getTests.mockResolvedValue(verifyingSuite());
+      const view = mount("a1");
+      await view.render();
+
+      await tick(30 * 60 * 1000);
+      const calls = api.getTests.mock.calls.length;
+      expect(calls).toBeGreaterThan(100);
+      await tick(60000);
+      expect(api.getTests).toHaveBeenCalledTimes(calls);
+      await view.unmount();
+    });
+
+    it("clears the timer on unmount and updates nothing afterwards", async () => {
+      api.getTests.mockResolvedValue(verifyingSuite());
+      const view = mount("a1");
+      await view.render();
+
+      await view.unmount();
+      await tick(20000);
+      expect(api.getTests).toHaveBeenCalledTimes(1);
+    });
+
+    it("clears the timer when the agent switches, and polls only the new agent", async () => {
+      api.getTests.mockResolvedValueOnce(verifyingSuite()).mockResolvedValue(suite());
+      const view = mount("a1");
+      await view.render();
+
+      await view.rerender("a2");
+      expect(api.getTests).toHaveBeenLastCalledWith("a2");
+      await tick(20000);
+      expect(api.getTests).toHaveBeenCalledTimes(2);
+      await view.unmount();
+    });
+
+    it("ignores a slow poll that lands after unmount", async () => {
+      const slow = deferred();
+      api.getTests.mockResolvedValueOnce(verifyingSuite()).mockReturnValueOnce(slow.promise);
+      const view = mount("a1");
+      await view.render();
+      await tick(4000);
+
+      await view.unmount();
+      await act(async () => slow.resolve(resolvedSuite()));
+      await tick(20000);
+      expect(api.getTests).toHaveBeenCalledTimes(2);
+    });
+
+    it("reloads once, about 2 s after a tracked job ends while a candidate is verifying", async () => {
+      const verifying = verifyingSuite();
+      verifying.criteria[0].tests[0].active_job_id = "j1";
+      api.getTests.mockResolvedValueOnce(verifying).mockResolvedValue(resolvedSuite());
+      const view = mount("a1");
+      await view.render();
+
+      await act(async () => {
+        polls.j1.resolve({ id: "j1", status: "done", result: {}, error: null });
+      });
+      expect(api.getTests).toHaveBeenCalledTimes(2); // the immediate reload
+      expect(view.holder.current.suite.candidate.status).toBe("promoted");
+
+      // The delayed reload is a one-off even though the suite is no longer verifying.
+      await tick(1999);
+      expect(api.getTests).toHaveBeenCalledTimes(2);
+      await tick(1);
+      expect(api.getTests).toHaveBeenCalledTimes(3);
+      await tick(20000);
+      expect(api.getTests).toHaveBeenCalledTimes(3);
+      await view.unmount();
+    });
+
+    it("does not schedule the delayed reload when no candidate is verifying", async () => {
+      api.getTests.mockResolvedValueOnce(withActive({ t1: "j1" }));
+      const view = mount("a1");
+      await view.render();
+
+      await act(async () => {
+        polls.j1.resolve({ id: "j1", status: "done", result: {}, error: null });
+      });
+      expect(api.getTests).toHaveBeenCalledTimes(2);
+      await tick(10000);
+      expect(api.getTests).toHaveBeenCalledTimes(2);
+      await view.unmount();
     });
   });
 
