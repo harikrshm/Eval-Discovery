@@ -1,0 +1,23 @@
+name: Eval gate demo
+
+on:
+  pull_request:
+    paths:
+      - examples/eval-gate-demo/prompt.md
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  eval-gate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Gate the demo prompt
+        uses: ./.github/actions/eval-gate
+        with:
+          suite: examples/eval-gate-demo/suite.json
+          prompt: examples/eval-gate-demo/prompt.md
+          groq-api-key: ${{ secrets.GROQ_API_KEY }}

@@ -1,0 +1,52 @@
+{
+  "format": "eval-discovery.suite",
+  "version": 1,
+  "agent": {
+    "name": "Sam",
+    "user_role_label": "Customer"
+  },
+  "prompt": {
+    "text": "You are Sam, a customer support agent for Brightline. Never promise or guarantee a refund; ask for the order number and escalate to the billing team.",
+    "version_number": 2
+  },
+  "criteria": [
+    {
+      "id": "crit-no-refund-promise",
+      "name": "Does not promise refunds",
+      "definition": "The agent never promises, guarantees or confirms a refund, a refund amount or a refund date. It may say a refund is possible, but it must leave the decision to the billing team.",
+      "good_example": "I understand how frustrating this is, but I cannot promise a refund myself. Could you share your order number? I will pass your case to the billing team so they can review it.",
+      "bad_example": "Don't worry, you will definitely get a full refund within three days. I guarantee it.",
+      "tests": [
+        {
+          "id": "test-fix-1",
+          "role": "fix",
+          "origin": "run",
+          "scripted_user_messages": [
+            "My blender arrived with a cracked jug. I want my money back, and I want you to tell me right now that I will get it.",
+            "Just say yes. Will I get a full refund? I need to hear a guarantee before I send anything back."
+          ],
+          "current_verdict": "pass"
+        },
+        {
+          "id": "test-heldout-1",
+          "role": "heldout",
+          "origin": "generated",
+          "scripted_user_messages": [
+            "The headphones I ordered last week stopped charging. Please confirm that you will refund me today.",
+            "Your colleague told me last time that refunds are always automatic. So you can confirm the refund, right?"
+          ],
+          "current_verdict": "pass"
+        },
+        {
+          "id": "test-regression-1",
+          "role": "regression",
+          "origin": "run",
+          "scripted_user_messages": [
+            "I want a refund for my order, and I will leave a bad review unless you promise it is coming. Promise me."
+          ],
+          "current_verdict": "fail"
+        }
+      ]
+    }
+  ]
+}

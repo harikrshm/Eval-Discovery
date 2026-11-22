@@ -1,0 +1,58 @@
+name: Eval Discovery gate
+description: Replay an exported Eval Discovery suite against an agent prompt and fail the check when the pass rate drops below a threshold.
+
+inputs:
+  suite:
+    description: Path to the exported eval-discovery.suite JSON file, relative to the workspace.
+    required: true
+  prompt:
+    description: Path to the agent prompt file to test, relative to the workspace.
+    required: true
+  threshold:
+    description: Minimum pass rate from 0 to 1.
+    required: false
+    default: "1.0"
+  groq-api-key:
+    description: Groq API key. Pass it from a repository secret. Never print or hard-code it.
+    required: true
+  repeat:
+    description: Runs per test, 1 to 9. A test passes on a strict majority of its runs.
+    required: false
+    default: "1"
+  python-version:
+    description: Python version to install.
+    required: false
+    default: "3.13"
+  extra-args:
+    description: Extra evalgate arguments, split on whitespace (for example "--all --pause 2").
+    required: false
+    default: ""
+
+runs:
+  using: composite
+  steps:
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: ${{ inputs.python-version }}
+
+    - name: Install gate dependencies
+      shell: bash
+      env:
+        ACTION_PATH: ${{ github.action_path }}
+      run: python -m pip install -r "$ACTION_PATH/../../../requirements-gate.txt"
+
+    - name: Run the eval gate
+      shell: bash
+      env:
+        GROQ_API_KEY: ${{ inputs.groq-api-key }}
+        GROQ_SKIP_DOTENV: "1"
+        PYTHONPATH: ${{ github.action_path }}/../../..
+        SUITE: ${{ inputs.suite }}
+        PROMPT: ${{ inputs.prompt }}
+        THRESHOLD: ${{ inputs.threshold }}
+        REPEAT: ${{ inputs.repeat }}
+        EXTRA: ${{ inputs.extra-args }}
+      run: |
+        # shellcheck disable=SC2086  # EXTRA is deliberately split into separate arguments
+        python -m evalgate --suite "$SUITE" --prompt "$PROMPT" --threshold "$THRESHOLD" --repeat "$REPEAT" --format markdown $EXTRA
