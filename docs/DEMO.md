@@ -2,7 +2,7 @@
 
 A demo of Eval Discovery for a hiring manager or a senior forward-deployed engineer. Three minutes is the **target** for the [one-minute version](#one-minute-version) and the [staged version](#staged-version-if-the-waits-are-too-long), which skip the waits. The full flow below (about five live chat turns and several background-job waits) runs longer than that, and it has never been timed. Use the full flow as the reference and the shorter versions to present. Say what you do, in plain words, and let the screen carry the rest.
 
-**Read this first.** In Phase 3 an end-to-end run with real Groq completed the loop (see ARCHITECTURE 6.13); one run is not evidence of general quality. The Phase 4 changes to the verification view and the **Export suite for CI** button were **not** re-run in a browser: the button's component is unit tested, but nobody has looked at it rendered. The gate (`evalgate`) has not been run against a real model, and the GitHub Action has not run on GitHub. So where a step below says "expected", that is what the code and the tests say should happen, not something confirmed on screen. Real-model output varies from run to run; see [If the model misbehaves](#if-the-model-misbehaves).
+**Read this first.** In Phase 3 an end-to-end run with real Groq completed the loop (see ARCHITECTURE 6.13); one run is not evidence of general quality. The Phase 4 changes to the verification view and the **Export suite for CI** button were **not** re-run in a browser: the button's component is unit tested, but nobody has looked at it rendered. The gate (`evalgate`) was run once per example prompt against real Groq models on a developer machine (see step 13 for the results, including that the weakened prompt failed only one of its two tests); the GitHub Action and the workflows have not run on GitHub. So where a step below says "expected", that is what the code and the tests say should happen, not something confirmed on screen. Real-model output varies from run to run; see [If the model misbehaves](#if-the-model-misbehaves).
 
 ## Setup checklist
 
@@ -17,7 +17,7 @@ Do this before the call, not during it.
 - [ ] **A clean browser state.** A fresh browser profile, or use **Your data** on the agent setup screen to delete the old workspace, so the first screen is the setup screen. The app keeps one anonymous workspace per browser.
 - [ ] **A terminal at the repository root** for the gate, with `GROQ_API_KEY` available to it (or use the `--load-dotenv` flag shown in step 13, which reads `.env` without printing the key).
 - [ ] **Run the whole thing once the day before** with your real key. Everything is saved server-side in the workspace, so a pre-run also gives you a fallback state (see [Staged version](#staged-version-if-the-waits-are-too-long)).
-- [ ] **Know the real timings.** I have not timed this flow with a real model from the environment this script was written in. Background jobs (build tests, generate a second test, suggest fix, verification) each take real model calls; time your own pre-run and decide whether to use the full or the staged version.
+- [ ] **Know the real timings.** I have not timed this browser flow with a real model from the environment this script was written in (the real runs so far were the gate and the simulation, not this UI walk-through). Background jobs (build tests, generate a second test, suggest fix, verification) each take real model calls; time your own pre-run and decide whether to use the full or the staged version.
 
 ## The talk track
 
@@ -108,14 +108,14 @@ In a terminal at the repository root. This step uses the committed example in `e
 
       python -m evalgate --suite examples/eval-gate-demo/suite.json --prompt examples/eval-gate-demo/prompt.md --load-dotenv
 
-  **Expect:** exit code `0`.
+  **Expect:** exit code `0`. In the one real run of this command (real Groq models, one run, `--repeat` 1) it exited 0 with pass rate 1.0: 2 of 2 tests passed (the fix test and the held-out test), and 1 test was skipped because its verdict at export was not `pass`.
 - **Weaken the prompt, as a pull request would:**
 
       cp examples/eval-gate-demo/weakened-prompt.md examples/eval-gate-demo/prompt.md      # PowerShell: Copy-Item
 
   Then run the same `python -m evalgate` command. Show the exit code (`echo $?`; PowerShell `$LASTEXITCODE`).
 - **Say:** "A teammate edits the prompt and drops the refund rule. The gate replays the tests that were passing when I exported, has the same judge grade them, and fails the check if the pass rate drops below the threshold. It only runs the tests that passed at export, so a first run does not fail on something I never fixed."
-- **Expect:** exit code `1`, because the pass rate falls below 1.0. This is **probabilistic with a real model**: a single run of a borderline test can flip, and this exact real-model run has not been done yet. If it comes out green, say "model output varies; `--repeat 3` takes the majority of three runs", and run it again with `--repeat 3`.
+- **Expect:** exit code `1`, because the pass rate falls below 1.0. This is **probabilistic with a real model**: a single run of a borderline test can flip. It was run once for real and came out red, but only partly: exit code `1`, pass rate 0.5 (1 of 2). The fix test failed (the model replied "we will issue a full refund") and the held-out test still passed, so the weakened prompt turned the gate red, but only one of its two tests failed. That was one run on a developer machine, not in GitHub Actions, and it does not say how often it goes red. If it comes out green, say "model output varies; `--repeat 3` takes the majority of three runs", and run it again with `--repeat 3`.
 - **Without a model:** `python -m pytest tests/test_eval_gate_example.py -q` runs the same example with the model's verdicts faked and shows green for the real prompt and red for the weakened one. That test passed in the environment this script was written in.
 - **Exit codes to know:** `0` pass, `1` below the threshold, `2` bad usage or a bad file, `3` the gate could not run (no key, an error, nothing to run). "It never goes green when it could not run" is the point of `3`.
 - **Afterwards, restore the file** so you do not leave the weakened prompt in your working tree: `git checkout -- examples/eval-gate-demo/prompt.md`.
@@ -127,7 +127,7 @@ Say these, in your own words:
 
 - **The human gate.** "Nothing changes without an approval. A suggestion sits as a proposal and chat keeps the old prompt. Even after approval, the fix goes live only when the code-written rule passes. A failed fix is a normal outcome, and I can restore any earlier version."
 - **What a pass means.** "A pass is a signal, not proof. The judge is a model, the tests replay scripted customer messages against a regenerated agent, and model replies vary even at temperature 0."
-- **What I have not shown.** "I have not run the gate or the user-simulation against a real model yet, and the GitHub Action has not run on GitHub. There are no results to quote, and I am not comparing against the strategy document's illustrative targets."
+- **What I have not shown.** "I ran the gate once per prompt against a real model: the good prompt passed, and the weakened prompt turned it red, but only one of its two tests failed, and with a real model that is probabilistic. I also ran the simulation for real (12 trials), and it did not show the flywheel reducing preview runs; the results page says so and the sample is tiny. The GitHub Action has not run on GitHub. I am not comparing any figure against the strategy document's illustrative targets."
 - **Where to read more.** The case study (`docs/CASE-STUDY.md`) and the architecture document (`docs/ARCHITECTURE.md`).
 
 ## One-minute version
