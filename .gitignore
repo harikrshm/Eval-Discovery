@@ -27,5 +27,8 @@ frontend/node_modules/
 frontend/dist/
 .superpowers/
 
+# Simulation raw trial files (add deliberately with git add -f)
+simulation/results/
+
 # Local database
 dev.db

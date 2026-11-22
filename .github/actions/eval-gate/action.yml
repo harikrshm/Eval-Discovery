@@ -54,5 +54,6 @@ runs:
         REPEAT: ${{ inputs.repeat }}
         EXTRA: ${{ inputs.extra-args }}
       run: |
+        set -f  # no globbing: an extra-args value such as "*" must not expand to file names
         # shellcheck disable=SC2086  # EXTRA is deliberately split into separate arguments
         python -m evalgate --suite "$SUITE" --prompt "$PROMPT" --threshold "$THRESHOLD" --repeat "$REPEAT" --format markdown $EXTRA

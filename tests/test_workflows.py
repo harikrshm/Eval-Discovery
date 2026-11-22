@@ -232,3 +232,28 @@ def test_frontend_job_runs_lint_test_and_build_in_order_in_the_frontend_director
     npm_steps = [s for s in job["steps"] if s.get("run", "").startswith("npm ")]
     assert [s["run"] for s in npm_steps] == ["npm ci", "npm run lint", "npm test", "npm run build"]
     assert all(s["working-directory"] == "frontend" for s in npm_steps)
+
+
+def test_gate_step_disables_globbing_before_the_unquoted_extra_args_expansion():
+    gate = [s for s in steps_of(load(ACTION)) if "evalgate" in s.get("run", "")][0]
+    lines = [ln.strip() for ln in gate["run"].splitlines()]
+    set_f = next(i for i, ln in enumerate(lines) if ln.startswith("set -f"))
+    expansion = next(i for i, ln in enumerate(lines) if "$EXTRA" in ln and not ln.startswith("#"))
+    assert set_f < expansion
+
+
+def test_every_job_has_a_timeout():
+    expected = {
+        WORKFLOW: {"eval-gate": 15},
+        CI: {"backend": 15, "postgres": 20, "frontend": 15},
+    }
+    for path, jobs in expected.items():
+        workflow = load(path)
+        assert set(workflow["jobs"]) == set(jobs), path
+        for name, minutes in jobs.items():
+            assert workflow["jobs"][name]["timeout-minutes"] == minutes, (path.name, name)
+
+
+def test_simulation_results_are_not_committed_by_accident():
+    patterns = [ln.strip() for ln in (REPO / ".gitignore").read_text(encoding="utf-8").splitlines()]
+    assert "simulation/results/" in patterns
