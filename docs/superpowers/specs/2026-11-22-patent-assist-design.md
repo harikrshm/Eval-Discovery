@@ -89,7 +89,9 @@ Signals are about **Google Patents**, not the widget. Widget opens and click-thr
 - **Struggle signals**: `navigation_help` questions ("where do I find..."), re-ask rate by intent, refusals.
 - **Insights brief**: a model-written summary grounded only in the aggregates (plus a few anonymised question texts per hotspot), shown with the counts it used.
 
-**Console data**: the author populates the database. This design delivers a documented event format (JSON Lines), `scripts/` import tooling that validates and inserts events with explicit timestamps, and an example file. The console labels the data source (for example "demo dataset") in the UI and in any export, so it cannot be mistaken for production usage.
+**Console data**: the author populates the database. This design delivers a documented format (JSON Lines), `scripts/` import tooling that validates and inserts with explicit timestamps, and an example file. The format has two record kinds: **events** (page-view summaries, questions, ratings) and **conversations** (the messages of one session, its brief snapshot, the signals attached to it, and the assistant version that answered). Imported records carry `source: "imported"`; the console shows that tag on them, labels the data source (for example "demo dataset") in the UI and in any export, and never counts imported data as measured effect (see section 8).
+
+**How Adoption relates to the flywheel**: the Adoption area is a lens, not an input. A hotspot (for example high help demand on the claims section, or a high re-ask rate for `claim_scope`) links to the filtered list of flagged conversations behind it, and the author can send those to the existing discovery step. The flywheel always works on conversations, never on aggregates.
 
 ## 8. Evolution: what improves and how
 
@@ -97,7 +99,12 @@ The versioned artifact becomes **system prompt + context policy**. The flywheel'
 
 - **Collection**: conversations with a thumbs-down, a "didn't answer", a re-ask or a failed citation check are saved as flywheel *runs*, each with its frozen **brief snapshot**.
 - **Discovery, tests, fix**: the existing pattern check, criterion discovery, held-out generation and suggest-fix run on those runs. Fixes may edit the system prompt and the context policy, never code, never the law pack.
-- **Frozen context for tests**: a test stores its brief snapshot with its scripted questions. Replay assembles context with the *version's* policy and the same law pack, then calls the model with the *version's* system prompt. The judge is given the brief as evidence so grounding criteria ("quotes the claim", "does not invent a claim") can be judged.
+- **Frozen context for tests**: a test stores its brief snapshot with its scripted turns. Each turn keeps the **question text, the selected text if any, and the chip id if the question came from a quick-action chip** (chips map to fixed intents; otherwise intent is recomputed from the text). For existing agents tests stay lists of strings; the assistant agent kind uses structured turns. Replay assembles context with the *version's* policy and the same law pack, then calls the model with the *version's* system prompt.
+- **What each stage sees**:
+  - *Pattern detection, criterion generation, suggester*: the transcript plus an **evidence summary** per conversation (intent, section focus, which slices the policy included, the brief's completeness map, citation-check result, signal reasons), and for the suggester the current policy. No full brief text, to respect the token limit.
+  - *Judge*: the transcript plus the **brief, claims first, truncated to a fixed token cap**, so grounding criteria ("quotes the claim", "does not invent a claim") can be judged. Because the judge may see more than the policy included, a fix that adds the missing claim to the policy is something the loop can discover.
+  - For the assistant agent kind, **discovery does not use the keyword prefilter** and accepts conversations of **2 turns** (one question, one answer), because conversations are chosen by signals and grouped by (intent, signal reason).
+- **Evidence of improvement**: the headline is the existing **replay before/after table** (the same tests under the old and the new version), which is measured. Signal-based before/after (for example re-ask rate by intent per version) is shown **only for events with `source` not "imported"**, which carry the answering `assist_version`. Imported data is never presented as measured improvement.
 - **Verification and promotion**: unchanged (deterministic rule in code, held-out test, regression tests, human approval).
 - **Law pack**: edited only by the author. The suggester may add a "possible law-pack gap" note to a change report for the author to act on.
 - **Demo story**: signals arrive, the Adoption area shows a pattern, a finding and fix go through the gate in the Evolution area, and the next answer in the extension is better. The evolution evidence is the existing before/after table plus the re-ask rate by intent before and after.
@@ -105,7 +112,8 @@ The versioned artifact becomes **system prompt + context policy**. The flywheel'
 ## 9. Backend and console changes (summary)
 
 - New `assist` API: `POST /assist/chat`, `POST /assist/signals` (page-view heartbeats, ratings), key-authenticated; builder-side routes (workspace token) for keys and metrics.
-- Data: an agent kind for the assistant; `context_policy` on prompt versions; a brief snapshot on tests and on saved runs; assist keys (hashed); signal events in the existing `event` table (new names) or a dedicated table if volume or querying requires it.
+- Data: an agent kind for the assistant; `context_policy` on prompt versions; a brief snapshot on tests and on saved runs; assist keys (hashed, each mapped to one workspace and one agent); signal events in the existing `event` table (new names, each carrying `assist_version` and `source`) or a dedicated table if volume or querying requires it.
+- **Ownership and lifetime**: exactly one assistant agent, in a dedicated **persistent demo workspace** created by a script (not by the public API). That workspace is exempt from the 30-day expiry and from the 50-runs-per-workspace cap (the other limits stay). Imported records with old timestamps are unaffected by the purge, which is workspace-based, not event-age-based.
 - Pure core additions: brief schema, assembly, intent rules, policy schema and validator, law retrieval, citation check.
 - Console: an Assist area (Adoption, Evolution) in the existing React app, reading the same data.
 - `evalgate` can gate the assistant (suite export includes briefs) in a later step; not required for the MVP.
@@ -125,6 +133,7 @@ Target: Google Patents (US pages only); approach 1; evolution covers system prom
 ## 12. Calls I made (open to change)
 
 Keyword rules for intent; BM25-style law retrieval over about 30 provisions; heartbeat upserts instead of an exit beacon; no persistent install id; the 3-second and 10-second thresholds; the "unverified citation" note instead of a retry; assist key header and extension-origin allow-list; US-only refusal; history kept in the page; a "demo dataset" label in the console.
+Added after the builder check: the import also accepts full conversations (tagged `imported`); Adoption is a lens that links to flagged conversations, not an input to discovery; one assistant agent in a persistent demo workspace exempt from expiry and the run cap; the evidence each flywheel stage sees (summary for discovery and suggester, brief for the judge) and no prefilter or 3-turn minimum for the assistant kind; tests preserve selection text and chip origin; signal before/after only for non-imported events, replay before/after as the headline.
 
 ## 13. Left to the builder
 
