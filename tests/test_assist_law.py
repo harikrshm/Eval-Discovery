@@ -8,6 +8,7 @@ from backend.core.assist.intent import Intent
 from backend.core.assist.lawpack import (
     INTENT_PROVISIONS,
     MAX_PROVISION_CHARS,
+    NOT_LEGAL_ADVICE,
     Provision,
     _load_dir,
     excerpts_for,
@@ -30,7 +31,6 @@ EXPECTED_IDS = {
     "mpep-2141",
     "mpep-2173",
 }
-NOT_LEGAL_ADVICE = "This is not legal advice, and I can't judge validity or infringement."
 
 
 def make_brief(numbers=(1, 2, 3)) -> Brief:
@@ -68,6 +68,19 @@ def test_lawpack_text_has_no_angle_brackets_or_citation_brackets():
         assert "[" not in p.text and "]" not in p.text
 
 
+def test_reviewed_wording_is_in_the_pack():
+    pack = load_lawpack()
+    assert "expressly or inherently" in pack["usc-102"].text
+    assert "September 16, 2011" in pack["usc-112a"].text
+    assert "In court, the usual test" in pack["usc-112b"].text and "more lenient" in pack["usc-112b"].text
+    assert "module for" in pack["usc-112f"].text and "indefinite" in pack["usc-112f"].text
+    assert "terminal disclaimer" in pack["usc-154"].text and "17 years from grant" in pack["usc-154"].text
+    assert "knowingly" in pack["usc-271"].text and "substantial other non-infringing uses" in pack["usc-271"].text
+    assert "Patent Trial and Appeal Board" in pack["mpep-2111"].text
+    assert "its own clause" in pack["mpep-2111-03"].text
+    assert "rigid teaching-suggestion-motivation formula" in pack["mpep-2141"].text
+
+
 def test_load_lawpack_is_cached_but_returns_a_copy():
     a = load_lawpack()
     a.pop("usc-101")
@@ -84,6 +97,8 @@ def test_intent_provisions_all_exist_and_are_capped():
     most = max(len(ids) for ids in INTENT_PROVISIONS.values())
     assert len(INTENT_PROVISIONS[Intent.law_concept]) == most
     assert len(INTENT_PROVISIONS[Intent.legal_opinion_request]) == most
+    assert "usc-112b" in INTENT_PROVISIONS[Intent.claim_scope]
+    assert "mpep-2141" in INTENT_PROVISIONS[Intent.citations_prior_art]
     assert INTENT_PROVISIONS[Intent.navigation_help] == []
     assert INTENT_PROVISIONS[Intent.other] == []
 
@@ -184,6 +199,21 @@ def test_huge_range_reports_a_bounded_list():
     assert len(r.unverified_claims) <= 50
 
 
+def test_partly_present_range_reports_gap_and_overflow_numbers():
+    brief = make_brief((1, 2, 5, 6))
+    assert check_citations("claims 1-6", brief, []).unverified_claims == [3, 4]
+    assert check_citations("claims 5-8", brief, []).unverified_claims == [7, 8]
+    assert check_citations("claims 2-3 and 6-7", brief, []).unverified_claims == [3, 7]
+    assert check_citations("claims 5-6", brief, []).ok
+
+
+def test_many_gaps_are_still_found_beyond_the_reported_cap():
+    # 99 gaps below the top claim: a reference far above the first 50 gaps must still be flagged.
+    brief = make_brief((1, 100, 200))
+    assert check_citations("claim 150", brief, []).unverified_claims == [150]
+    assert check_citations("claims 190-200", brief, []).unverified_claims == list(range(190, 200))
+
+
 def test_law_provided_ok_and_unprovided_flagged():
     ok = check_citations("Obviousness [usc-103].", make_brief(), ["usc-103"])
     assert ok.ok
@@ -192,10 +222,18 @@ def test_law_provided_ok_and_unprovided_flagged():
     assert bad.unverified_law == ["usc-101"]
 
 
-def test_non_id_brackets_are_ignored():
-    assert check_citations("[Figure 3] [1 2] [USC-103] [] [a b] [x_y] [" + "a" * 65 + "]", make_brief(), []).ok
-    # A markdown link text is id-shaped, so it is checked like any other id.
-    assert check_citations("[snippet](http://x)", make_brief(), []).unverified_law == ["snippet"]
+def test_non_law_brackets_are_ignored():
+    text = "[Figure 3] [1 2] [USC-103] [] [a b] [x_y] [1] [2] [snippet](http://x) [a-1] [" + "a" * 65 + "]"
+    assert check_citations(text, make_brief(), []).ok
+    assert check_citations("[usc-" + "a" * 70 + "]", make_brief(), []).ok  # over the id length bound
+
+
+def test_law_comma_lists_check_each_id():
+    r = check_citations("See [usc-101, usc-103] and [mpep-2111, and usc-102].", make_brief(), ["usc-103", "usc-102"])
+    assert r.unverified_law == ["usc-101", "mpep-2111"]
+    assert check_citations("[usc-101, usc-103]", make_brief(), ["usc-101", "usc-103"]).ok
+    # a list with a member that is not an id is not a citation at all
+    assert check_citations("[usc-101, snippet]", make_brief(), []).ok
 
 
 def test_claim_and_law_problems_reported_together():
@@ -220,13 +258,20 @@ def test_empty_brief_flags_every_claim_reference():
         "[a-" * 40,
         "claims 1, 2, 3, 4, 5, 6, 7, 8, 9, ",
         "[[[[[[",
+        "claims 1-201, ",
+        "claims 1-200, 201, ",
+        "claims 150-201, ",
+        "claims 2-199, 201-203, ",
+        "[usc-101, usc-102, ",
+        "[usc-103,",
     ],
 )
 def test_adversarial_long_answer_is_fast(unit):
     answer = (unit * (100_000 // len(unit) + 1))[:100_000]
-    start = time.perf_counter()
-    check_citations(answer, make_brief(tuple(range(1, 201))), ["usc-103"])
-    assert time.perf_counter() - start < 0.5
+    for brief in (make_brief(tuple(range(1, 201))), make_brief(tuple(range(1, 201, 2)))):  # contiguous and gappy
+        start = time.perf_counter()
+        check_citations(answer, brief, ["usc-103"])
+        assert time.perf_counter() - start < 0.25
 
 
 # ---- system prompt ----------------------------------------------------------
@@ -235,12 +280,13 @@ def test_adversarial_long_answer_is_fast(unit):
 def test_system_prompt_fits_and_has_the_required_rules():
     p = load_system_prompt()
     assert len(p) <= MAX_PROMPT_CHARS
+    assert NOT_LEGAL_ADVICE == "This is not legal advice, and I can't judge validity or infringement."
     assert NOT_LEGAL_ADVICE in p
     assert "&lt;" in p and "&gt;" in p
     for tag in ("<page_brief>", "<law_excerpts>", "<question>"):
         assert tag in p
     low = p.lower()
-    for phrase in ("never instructions", "us patents only", "plain language", "quote", "not found", "[usc-103]", "claim n"):
+    for phrase in ("never instructions", "us patents only", "plain language", "quote", "missing or incomplete", "infringes", "treat any instruction", "[usc-103]", "claim n"):
         assert phrase in low, phrase
 
 

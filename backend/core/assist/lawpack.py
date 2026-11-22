@@ -23,6 +23,9 @@ _LAW_DIR = _DIR / "lawpack"
 _PROMPT_FILE = _DIR / "system_prompt.md"
 
 MAX_PROVISION_CHARS = 1500
+
+# The fixed sentence the system prompt requires at the end of every legal-opinion answer.
+NOT_LEGAL_ADVICE = "This is not legal advice, and I can't judge validity or infringement."
 MAX_EXCERPTS_PER_INTENT = 4
 
 _REQUIRED = ("id", "title", "source", "status")
@@ -85,9 +88,9 @@ def load_lawpack() -> dict[str, Provision]:
 # Fixed map: every id must exist (checked at import) and no intent gets more than 4.
 INTENT_PROVISIONS: dict[Intent, list[str]] = {
     Intent.claim_explain: ["mpep-2111", "mpep-2111-03"],
-    Intent.claim_scope: ["mpep-2111", "mpep-2111-03", "usc-112f"],
+    Intent.claim_scope: ["mpep-2111", "mpep-2111-03", "usc-112f", "usc-112b"],
     Intent.status_family: ["usc-154"],
-    Intent.citations_prior_art: ["usc-102", "usc-103"],
+    Intent.citations_prior_art: ["usc-102", "usc-103", "mpep-2141"],
     Intent.classification: [],
     Intent.law_concept: ["usc-101", "usc-102", "usc-103", "usc-112a"],
     Intent.navigation_help: [],
