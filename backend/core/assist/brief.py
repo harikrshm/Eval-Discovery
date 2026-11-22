@@ -154,16 +154,26 @@ _REF_RE = re.compile(rf"(?<![A-Za-z0-9_])claims?\s+({_ITEM}(?:{_LIST_SEP}{_ITEM}
 _ITEM_RE = re.compile(rf"([0-9]+)(?:{_RANGE_SEP}([0-9]+))?")
 
 
-def parse_claim_refs(number: int, text: str) -> list[int]:
-    """Return the sorted, de-duplicated lower-numbered claims that `text` references."""
-    refs: set[int] = set()
+def iter_claim_ref_ranges(text: str):
+    """Yield (start, end) for every item of every claim reference in `text`.
+
+    The one place the claim-reference grammar (rules 1-3 above) is applied; a
+    single number yields (n, n). Nothing is clamped or expanded here, and a
+    reversed range such as "3-1" yields (3, 1), which spans no claims.
+    """
     for ref in _REF_RE.finditer(text):
         for item in _ITEM_RE.finditer(ref.group(1)):
             start = int(item.group(1))
-            end = int(item.group(2)) if item.group(2) else start
-            # Only lower-numbered claims count; clamping also bounds huge ranges.
-            for n in range(max(start, 1), min(end, number - 1) + 1):
-                refs.add(n)
+            yield start, int(item.group(2)) if item.group(2) else start
+
+
+def parse_claim_refs(number: int, text: str) -> list[int]:
+    """Return the sorted, de-duplicated lower-numbered claims that `text` references."""
+    refs: set[int] = set()
+    for start, end in iter_claim_ref_ranges(text):
+        # Only lower-numbered claims count; clamping also bounds huge ranges.
+        for n in range(max(start, 1), min(end, number - 1) + 1):
+            refs.add(n)
     return sorted(refs)
 
 
