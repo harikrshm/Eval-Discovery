@@ -1,6 +1,7 @@
 import os
 
-os.environ.setdefault("GROQ_SKIP_DOTENV", "1")  # before any backend import: tests never read the real .env
+if not os.environ.get("GROQ_SKIP_DOTENV"):  # an empty value counts as unset, as in backend.groq_client
+    os.environ["GROQ_SKIP_DOTENV"] = "1"  # before any backend import: tests never read the real .env
 
 import pytest
 from sqlalchemy import create_engine

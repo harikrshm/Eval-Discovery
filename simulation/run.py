@@ -12,7 +12,8 @@ class name).
 
 import os
 
-os.environ.setdefault("GROQ_SKIP_DOTENV", "1")
+if not os.environ.get("GROQ_SKIP_DOTENV"):  # an empty value counts as unset, as in backend.groq_client
+    os.environ["GROQ_SKIP_DOTENV"] = "1"
 
 import argparse  # noqa: E402
 import json  # noqa: E402
@@ -104,7 +105,7 @@ def _parser() -> argparse.ArgumentParser:
     p.add_argument("--max-previews", type=_positive_int, default=MAX_PREVIEWS, help=f"preview cap per trial (default {MAX_PREVIEWS})")
     p.add_argument("--out", default=str(DEFAULT_OUT), help="results directory (default simulation/results)")
     p.add_argument("--resume", action="store_true", help="skip trials whose result file already exists")
-    p.add_argument("--load-dotenv", action="store_true", help="read .env before checking GROQ_API_KEY (off by default)")
+    p.add_argument("--load-dotenv", action="store_true", help="read .env before checking GROQ_API_KEY: load_dotenv() searches upward from the simulation package, so it finds the repo-root .env (off by default)")
     return p
 
 

@@ -10,7 +10,8 @@ client: the caller does that (``simulation.clients.install_client``).
 
 import os
 
-os.environ.setdefault("GROQ_SKIP_DOTENV", "1")  # before any backend import: never read the real .env
+if not os.environ.get("GROQ_SKIP_DOTENV"):  # an empty value counts as unset, as in backend.groq_client
+    os.environ["GROQ_SKIP_DOTENV"] = "1"  # before any backend import: never read the real .env
 
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine

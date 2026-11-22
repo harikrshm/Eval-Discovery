@@ -572,3 +572,14 @@ def test_step_summary_starts_on_a_fresh_line(files, tmp_path):
     assert content.startswith("EXISTING WITHOUT NEWLINE\n")
     assert "EXISTING WITHOUT NEWLINE# Eval gate" not in content
     assert "\n# Eval gate" in content
+
+
+@pytest.mark.parametrize("module", ["evalgate.cli", "simulation.run", "simulation.appdriver"])
+def test_an_empty_skip_dotenv_value_is_replaced_with_one(tmp_path, module):
+    """GROQ_SKIP_DOTENV="" counts as unset for backend.groq_client, so the entry points must overwrite it."""
+    work = tmp_path / "work"
+    work.mkdir()  # no .env here, and none is created in the repo
+    code = f"import os, {module}\nprint(os.environ.get('GROQ_SKIP_DOTENV'))\n"
+    result = _subprocess(code, cwd=work, env_extra={"PYTHONPATH": str(REPO), "GROQ_SKIP_DOTENV": ""})
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.split() == ["1"]

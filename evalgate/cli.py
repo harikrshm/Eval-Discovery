@@ -11,7 +11,8 @@ fixed error strings.
 
 import os
 
-os.environ.setdefault("GROQ_SKIP_DOTENV", "1")
+if not os.environ.get("GROQ_SKIP_DOTENV"):  # an empty value counts as unset, as in backend.groq_client
+    os.environ["GROQ_SKIP_DOTENV"] = "1"
 
 import argparse  # noqa: E402
 import json  # noqa: E402
@@ -108,7 +109,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--all", action="store_true", dest="include_all",
                         help="also run tests whose verdict at export was not pass")
     parser.add_argument("--load-dotenv", action="store_true",
-                        help="load a .env file from the working directory before the key check (off by default)")
+                        help="load the first .env found by searching upward from the working directory, before the key check (off by default)")
     return parser
 
 
