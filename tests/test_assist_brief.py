@@ -1,3 +1,6 @@
+import json
+from pathlib import Path
+
 import pytest
 
 from backend.core.assist import ASSIST_MODEL
@@ -279,33 +282,10 @@ def test_is_us_patent_false(n):
 FW3 = chr(0xFF13)  # fullwidth digit three
 EN, EM = chr(0x2013), chr(0x2014)
 
-# (own claim number, claim text, expected depends_on)
-REF_CASES = [
-    (9, "The method of claim 1.5 wherein x.", [1]),
-    (9, "The method as claimed in any preceding claim.", []),
-    (9, "The method of claimed 1.", []),
-    (9, "unclaim 1", []),
-    (9, "reclaim 2", []),
-    (9, "The method of claims 1 - 3.", [1, 2, 3]),
-    (9, "The method of claims 1 to 3.", [1, 2, 3]),
-    (9, "The method of claims 1 through 3.", [1, 2, 3]),
-    (9, "The method of claims 1" + EN + "3.", [1, 2, 3]),
-    (9, "The method of claims 1" + EM + "3.", [1, 2, 3]),
-    (9, "The method of claims 3-1.", []),
-    (9, "The method of claims 1, and 2.", [1, 2]),
-    (9, "The method of claims 1, or 2.", [1, 2]),
-    (9, "The method of claims 1-3 and 5.", [1, 2, 3, 5]),
-    (9, "The method of any of claims 1, 3, wherein 5 widgets.", [1, 3]),
-    (9, "The method of CLAIM 2.", [2]),
-    (9, "The method of claim " + "9" * 5000 + ".", []),
-    (9, "The method of claim " + "1" * 8000 + ".", []),
-    (9, "The method of claim 1234567.", []),
-    (9, "The method of claim 123456.", []),  # 6 digits is a number, but not lower than 9
-    (9, "The method of claim 1-1234567.", [1]),
-    (9, "The method of claim " + FW3 + ".", []),
-    (9, "The method of claim 1-" + FW3 + ".", [1]),
-    (9, "éclaim 1.", [1]),
-]
+# (own claim number, claim text, expected depends_on); the table lives in a JSON
+# file shared with the extension's JavaScript tests (extension/src/claimrefs.test.js).
+with open(Path(__file__).parent / "fixtures" / "claim_ref_cases.json", encoding="utf-8") as _f:
+    REF_CASES = [(c["number"], c["text"], c["expected"]) for c in json.load(_f)]
 
 
 @pytest.mark.parametrize("number,text,expected", REF_CASES)

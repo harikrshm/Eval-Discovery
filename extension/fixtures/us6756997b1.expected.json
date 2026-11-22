@@ -1,0 +1,1131 @@
+{
+ "patent_number": "US6756997B1",
+ "inventors": [
+  "Thomas E. Ward, III",
+  "Douglas B. Macrae"
+ ],
+ "assignees": [
+  "Gemstar Development LLC"
+ ],
+ "dates": {
+  "priority": "2000-06-14",
+  "filing": "2000-06-14",
+  "publication": "2004-06-29",
+  "grant": "2004-06-29"
+ },
+ "classifications": [
+  {
+   "code": "H04N21/42204",
+   "title": "User interfaces specially adapted for controlling a client device through a remote control device; Remote control devices therefor",
+   "path": [
+    "H ELECTRICITY",
+    "H04 ELECTRIC COMMUNICATION TECHNIQUE",
+    "H04N PICTORIAL COMMUNICATION, e.g. TELEVISION",
+    "H04N21/00 Selective content distribution, e.g. interactive television or video on demand [VOD]",
+    "H04N21/40 Client devices specifically adapted for the reception of or interaction with content, e.g. set-top-box [STB]; Operations thereof",
+    "H04N21/41 Structure of client; Structure of client peripherals",
+    "H04N21/422 Input-only peripherals, i.e. input devices connected to specially adapted client devices, e.g. global positioning system [GPS]"
+   ]
+  },
+  {
+   "code": "G06Q30/0269",
+   "title": "Targeted advertisements based on user profile or attribute",
+   "path": [
+    "G PHYSICS",
+    "G06 COMPUTING OR CALCULATING; COUNTING",
+    "G06Q INFORMATION AND COMMUNICATION TECHNOLOGY [ICT] SPECIALLY ADAPTED FOR ADMINISTRATIVE, COMMERCIAL, FINANCIAL, MANAGERIAL OR SUPERVISORY PURPOSES; SYSTEMS OR METHODS SPECIALLY ADAPTED FOR ADMINISTRATIVE, COMMERCIAL, FINANCIAL, MANAGERIAL OR SUPERVISORY PURPOSES, NOT OTHERWISE PROVIDED FOR",
+    "G06Q30/00 Commerce",
+    "G06Q30/02 Marketing; Price estimation or determination; Fundraising",
+    "G06Q30/0241 Advertisements",
+    "G06Q30/0251 Targeted advertisements"
+   ]
+  },
+  {
+   "code": "G06Q30/0277",
+   "title": "Online advertisement",
+   "path": [
+    "G PHYSICS",
+    "G06 COMPUTING OR CALCULATING; COUNTING",
+    "G06Q INFORMATION AND COMMUNICATION TECHNOLOGY [ICT] SPECIALLY ADAPTED FOR ADMINISTRATIVE, COMMERCIAL, FINANCIAL, MANAGERIAL OR SUPERVISORY PURPOSES; SYSTEMS OR METHODS SPECIALLY ADAPTED FOR ADMINISTRATIVE, COMMERCIAL, FINANCIAL, MANAGERIAL OR SUPERVISORY PURPOSES, NOT OTHERWISE PROVIDED FOR",
+    "G06Q30/00 Commerce",
+    "G06Q30/02 Marketing; Price estimation or determination; Fundraising",
+    "G06Q30/0241 Advertisements"
+   ]
+  },
+  {
+   "code": "H04N21/25891",
+   "title": "Management of end-user data being end-user preferences",
+   "path": [
+    "H ELECTRICITY",
+    "H04 ELECTRIC COMMUNICATION TECHNIQUE",
+    "H04N PICTORIAL COMMUNICATION, e.g. TELEVISION",
+    "H04N21/00 Selective content distribution, e.g. interactive television or video on demand [VOD]",
+    "H04N21/20 Servers specifically adapted for the distribution of content, e.g. VOD servers; Operations thereof",
+    "H04N21/25 Management operations performed by the server for facilitating the content distribution or administrating data related to end-users or client devices, e.g. end-user or client device authentication, learning user preferences for recommending movies",
+    "H04N21/258 Client or end-user data management, e.g. managing client capabilities, user preferences or demographics, processing of multiple end-users preferences to derive collaborative data",
+    "H04N21/25866 Management of end-user data"
+   ]
+  },
+  {
+   "code": "H04N21/4314",
+   "title": "Generation of visual interfaces for content selection or interaction; Content or additional data rendering involving specific graphical features, e.g. screen layout, special fonts or colors, blinking icons, highlights or animations for fitting data in a restricted space on the screen, e.g. EPG data in a rectangular grid",
+   "path": [
+    "H ELECTRICITY",
+    "H04 ELECTRIC COMMUNICATION TECHNIQUE",
+    "H04N PICTORIAL COMMUNICATION, e.g. TELEVISION",
+    "H04N21/00 Selective content distribution, e.g. interactive television or video on demand [VOD]",
+    "H04N21/40 Client devices specifically adapted for the reception of or interaction with content, e.g. set-top-box [STB]; Operations thereof",
+    "H04N21/43 Processing of content or additional data, e.g. demultiplexing additional data from a digital video stream; Elementary client operations, e.g. monitoring of home network or synchronising decoder's clock; Client middleware",
+    "H04N21/431 Generation of visual interfaces for content selection or interaction; Content or additional data rendering",
+    "H04N21/4312 Generation of visual interfaces for content selection or interaction; Content or additional data rendering involving specific graphical features, e.g. screen layout, special fonts or colors, blinking icons, highlights or animations"
+   ]
+  },
+  {
+   "code": "H04N21/4334",
+   "title": "Recording operations",
+   "path": [
+    "H ELECTRICITY",
+    "H04 ELECTRIC COMMUNICATION TECHNIQUE",
+    "H04N PICTORIAL COMMUNICATION, e.g. TELEVISION",
+    "H04N21/00 Selective content distribution, e.g. interactive television or video on demand [VOD]",
+    "H04N21/40 Client devices specifically adapted for the reception of or interaction with content, e.g. set-top-box [STB]; Operations thereof",
+    "H04N21/43 Processing of content or additional data, e.g. demultiplexing additional data from a digital video stream; Elementary client operations, e.g. monitoring of home network or synchronising decoder's clock; Client middleware",
+    "H04N21/433 Content storage operation, e.g. storage operation in response to a pause request, caching operations"
+   ]
+  },
+  {
+   "code": "H04N21/4345",
+   "title": "Extraction or processing of SI, e.g. extracting service information from an MPEG stream",
+   "path": [
+    "H ELECTRICITY",
+    "H04 ELECTRIC COMMUNICATION TECHNIQUE",
+    "H04N PICTORIAL COMMUNICATION, e.g. TELEVISION",
+    "H04N21/00 Selective content distribution, e.g. interactive television or video on demand [VOD]",
+    "H04N21/40 Client devices specifically adapted for the reception of or interaction with content, e.g. set-top-box [STB]; Operations thereof",
+    "H04N21/43 Processing of content or additional data, e.g. demultiplexing additional data from a digital video stream; Elementary client operations, e.g. monitoring of home network or synchronising decoder's clock; Client middleware",
+    "H04N21/434 Disassembling of a multiplex stream, e.g. demultiplexing audio and video streams, extraction of additional data from a video stream; Remultiplexing of multiplex streams; Extraction or processing of SI; Disassembling of packetised elementary stream"
+   ]
+  },
+  {
+   "code": "H04N21/44224",
+   "title": "Monitoring of user activity on external systems, e.g. Internet browsing",
+   "path": [
+    "H ELECTRICITY",
+    "H04 ELECTRIC COMMUNICATION TECHNIQUE",
+    "H04N PICTORIAL COMMUNICATION, e.g. TELEVISION",
+    "H04N21/00 Selective content distribution, e.g. interactive television or video on demand [VOD]",
+    "H04N21/40 Client devices specifically adapted for the reception of or interaction with content, e.g. set-top-box [STB]; Operations thereof",
+    "H04N21/43 Processing of content or additional data, e.g. demultiplexing additional data from a digital video stream; Elementary client operations, e.g. monitoring of home network or synchronising decoder's clock; Client middleware",
+    "H04N21/442 Monitoring of processes or resources, e.g. detecting the failure of a recording device, monitoring the downstream bandwidth, the number of times a movie has been viewed, the storage space available from the internal hard disk",
+    "H04N21/44213 Monitoring of end-user related data",
+    "H04N21/44222 Analytics of user selections, e.g. selection of programmes or purchase activity"
+   ]
+  },
+  {
+   "code": "H04N21/4438",
+   "title": "Window management, e.g. event handling following interaction with the user interface",
+   "path": [
+    "H ELECTRICITY",
+    "H04 ELECTRIC COMMUNICATION TECHNIQUE",
+    "H04N PICTORIAL COMMUNICATION, e.g. TELEVISION",
+    "H04N21/00 Selective content distribution, e.g. interactive television or video on demand [VOD]",
+    "H04N21/40 Client devices specifically adapted for the reception of or interaction with content, e.g. set-top-box [STB]; Operations thereof",
+    "H04N21/43 Processing of content or additional data, e.g. demultiplexing additional data from a digital video stream; Elementary client operations, e.g. monitoring of home network or synchronising decoder's clock; Client middleware",
+    "H04N21/443 OS processes, e.g. booting an STB, implementing a Java virtual machine in an STB or power management in an STB"
+   ]
+  },
+  {
+   "code": "H04N21/4532",
+   "title": "Management of client data or end-user data involving end-user characteristics, e.g. viewer profile, preferences",
+   "path": [
+    "H ELECTRICITY",
+    "H04 ELECTRIC COMMUNICATION TECHNIQUE",
+    "H04N PICTORIAL COMMUNICATION, e.g. TELEVISION",
+    "H04N21/00 Selective content distribution, e.g. interactive television or video on demand [VOD]",
+    "H04N21/40 Client devices specifically adapted for the reception of or interaction with content, e.g. set-top-box [STB]; Operations thereof",
+    "H04N21/45 Management operations performed by the client for facilitating the reception of or the interaction with the content or administrating data related to the end-user or to the client device itself, e.g. learning user preferences for recommending movies, resolving scheduling conflicts",
+    "H04N21/4508 Management of client data or end-user data"
+   ]
+  },
+  {
+   "code": "H04N21/458",
+   "title": "Scheduling content for creating a personalised stream, e.g. by combining a locally stored advertisement with an incoming stream; Updating operations, e.g. for OS modules ; time-related management operations",
+   "path": [
+    "H ELECTRICITY",
+    "H04 ELECTRIC COMMUNICATION TECHNIQUE",
+    "H04N PICTORIAL COMMUNICATION, e.g. TELEVISION",
+    "H04N21/00 Selective content distribution, e.g. interactive television or video on demand [VOD]",
+    "H04N21/40 Client devices specifically adapted for the reception of or interaction with content, e.g. set-top-box [STB]; Operations thereof",
+    "H04N21/45 Management operations performed by the client for facilitating the reception of or the interaction with the content or administrating data related to the end-user or to the client device itself, e.g. learning user preferences for recommending movies, resolving scheduling conflicts"
+   ]
+  },
+  {
+   "code": "H04N21/4622",
+   "title": "Retrieving content or additional data from different sources, e.g. from a broadcast channel and the Internet",
+   "path": [
+    "H ELECTRICITY",
+    "H04 ELECTRIC COMMUNICATION TECHNIQUE",
+    "H04N PICTORIAL COMMUNICATION, e.g. TELEVISION",
+    "H04N21/00 Selective content distribution, e.g. interactive television or video on demand [VOD]",
+    "H04N21/40 Client devices specifically adapted for the reception of or interaction with content, e.g. set-top-box [STB]; Operations thereof",
+    "H04N21/45 Management operations performed by the client for facilitating the reception of or the interaction with the content or administrating data related to the end-user or to the client device itself, e.g. learning user preferences for recommending movies, resolving scheduling conflicts",
+    "H04N21/462 Content or additional data management e.g. creating a master electronic programme guide from data received from the Internet and a Head-end or controlling the complexity of a video stream by scaling the resolution or bit-rate based on the client capabilities"
+   ]
+  },
+  {
+   "code": "H04N21/47214",
+   "title": "End-user interface for requesting content, additional data or services; End-user interface for interacting with content, e.g. for content reservation or setting reminders, for requesting event notification, for manipulating displayed content for content reservation or setting reminders; for requesting event notification, e.g. of sport results or stock market",
+   "path": [
+    "H ELECTRICITY",
+    "H04 ELECTRIC COMMUNICATION TECHNIQUE",
+    "H04N PICTORIAL COMMUNICATION, e.g. TELEVISION",
+    "H04N21/00 Selective content distribution, e.g. interactive television or video on demand [VOD]",
+    "H04N21/40 Client devices specifically adapted for the reception of or interaction with content, e.g. set-top-box [STB]; Operations thereof",
+    "H04N21/47 End-user applications",
+    "H04N21/472 End-user interface for requesting content, additional data or services; End-user interface for interacting with content, e.g. for content reservation or setting reminders, for requesting event notification, for manipulating displayed content"
+   ]
+  },
+  {
+   "code": "H04N21/4782",
+   "title": "Web browsing, e.g. WebTV",
+   "path": [
+    "H ELECTRICITY",
+    "H04 ELECTRIC COMMUNICATION TECHNIQUE",
+    "H04N PICTORIAL COMMUNICATION, e.g. TELEVISION",
+    "H04N21/00 Selective content distribution, e.g. interactive television or video on demand [VOD]",
+    "H04N21/40 Client devices specifically adapted for the reception of or interaction with content, e.g. set-top-box [STB]; Operations thereof",
+    "H04N21/47 End-user applications",
+    "H04N21/478 Supplemental services, e.g. displaying phone caller identification, shopping application"
+   ]
+  },
+  {
+   "code": "H04N21/482",
+   "title": "End-user interface for programme selection",
+   "path": [
+    "H ELECTRICITY",
+    "H04 ELECTRIC COMMUNICATION TECHNIQUE",
+    "H04N PICTORIAL COMMUNICATION, e.g. TELEVISION",
+    "H04N21/00 Selective content distribution, e.g. interactive television or video on demand [VOD]",
+    "H04N21/40 Client devices specifically adapted for the reception of or interaction with content, e.g. set-top-box [STB]; Operations thereof",
+    "H04N21/47 End-user applications"
+   ]
+  },
+  {
+   "code": "H04N21/4821",
+   "title": "End-user interface for programme selection using a grid, e.g. sorted out by channel and broadcast time",
+   "path": [
+    "H ELECTRICITY",
+    "H04 ELECTRIC COMMUNICATION TECHNIQUE",
+    "H04N PICTORIAL COMMUNICATION, e.g. TELEVISION",
+    "H04N21/00 Selective content distribution, e.g. interactive television or video on demand [VOD]",
+    "H04N21/40 Client devices specifically adapted for the reception of or interaction with content, e.g. set-top-box [STB]; Operations thereof",
+    "H04N21/47 End-user applications",
+    "H04N21/482 End-user interface for programme selection"
+   ]
+  },
+  {
+   "code": "H04N21/6125",
+   "title": "Network physical structure; Signal processing specially adapted to the downstream path of the transmission network involving transmission via Internet",
+   "path": [
+    "H ELECTRICITY",
+    "H04 ELECTRIC COMMUNICATION TECHNIQUE",
+    "H04N PICTORIAL COMMUNICATION, e.g. TELEVISION",
+    "H04N21/00 Selective content distribution, e.g. interactive television or video on demand [VOD]",
+    "H04N21/60 Network structure or processes for video distribution between server and client or between remote clients; Control signalling between clients, server and network components; Transmission of management data between server and client, e.g. sending from server to client commands for recording incoming content stream; Communication details between server and client",
+    "H04N21/61 Network physical structure; Signal processing",
+    "H04N21/6106 Network physical structure; Signal processing specially adapted to the downstream path of the transmission network"
+   ]
+  },
+  {
+   "code": "H04N21/812",
+   "title": "Monomedia components thereof involving advertisement data",
+   "path": [
+    "H ELECTRICITY",
+    "H04 ELECTRIC COMMUNICATION TECHNIQUE",
+    "H04N PICTORIAL COMMUNICATION, e.g. TELEVISION",
+    "H04N21/00 Selective content distribution, e.g. interactive television or video on demand [VOD]",
+    "H04N21/80 Generation or processing of content or additional data by content creator independently of the distribution process; Content per se",
+    "H04N21/81 Monomedia components thereof"
+   ]
+  },
+  {
+   "code": "H04N21/8586",
+   "title": "Linking data to content, e.g. by linking an URL to a video object, by creating a hotspot by using a URL",
+   "path": [
+    "H ELECTRICITY",
+    "H04 ELECTRIC COMMUNICATION TECHNIQUE",
+    "H04N PICTORIAL COMMUNICATION, e.g. TELEVISION",
+    "H04N21/00 Selective content distribution, e.g. interactive television or video on demand [VOD]",
+    "H04N21/80 Generation or processing of content or additional data by content creator independently of the distribution process; Content per se",
+    "H04N21/85 Assembly of content; Generation of multimedia applications",
+    "H04N21/858 Linking data to content, e.g. by linking an URL to a video object, by creating a hotspot"
+   ]
+  },
+  {
+   "code": "H04N7/17318",
+   "title": "Direct or substantially direct transmission and handling of requests",
+   "path": [
+    "H ELECTRICITY",
+    "H04 ELECTRIC COMMUNICATION TECHNIQUE",
+    "H04N PICTORIAL COMMUNICATION, e.g. TELEVISION",
+    "H04N7/00 Television systems",
+    "H04N7/16 Analogue secrecy systems; Analogue subscription systems",
+    "H04N7/173 Analogue secrecy systems; Analogue subscription systems with two-way working, e.g. subscriber sending a programme selection signal",
+    "H04N7/17309 Transmission or handling of upstream communications"
+   ]
+  },
+  {
+   "code": "H04N2007/1739",
+   "title": "Analogue secrecy systems; Analogue subscription systems with two-way working, e.g. subscriber sending a programme selection signal the upstream communication being transmitted via a separate link, e.g. telephone line",
+   "path": [
+    "H ELECTRICITY",
+    "H04 ELECTRIC COMMUNICATION TECHNIQUE",
+    "H04N PICTORIAL COMMUNICATION, e.g. TELEVISION",
+    "H04N7/00 Television systems",
+    "H04N7/16 Analogue secrecy systems; Analogue subscription systems",
+    "H04N7/173 Analogue secrecy systems; Analogue subscription systems with two-way working, e.g. subscriber sending a programme selection signal"
+   ]
+  },
+  {
+   "code": "H04N21/4316",
+   "title": "Generation of visual interfaces for content selection or interaction; Content or additional data rendering involving specific graphical features, e.g. screen layout, special fonts or colors, blinking icons, highlights or animations for displaying supplemental content in a region of the screen, e.g. an advertisement in a separate window",
+   "path": [
+    "H ELECTRICITY",
+    "H04 ELECTRIC COMMUNICATION TECHNIQUE",
+    "H04N PICTORIAL COMMUNICATION, e.g. TELEVISION",
+    "H04N21/00 Selective content distribution, e.g. interactive television or video on demand [VOD]",
+    "H04N21/40 Client devices specifically adapted for the reception of or interaction with content, e.g. set-top-box [STB]; Operations thereof",
+    "H04N21/43 Processing of content or additional data, e.g. demultiplexing additional data from a digital video stream; Elementary client operations, e.g. monitoring of home network or synchronising decoder's clock; Client middleware",
+    "H04N21/431 Generation of visual interfaces for content selection or interaction; Content or additional data rendering",
+    "H04N21/4312 Generation of visual interfaces for content selection or interaction; Content or additional data rendering involving specific graphical features, e.g. screen layout, special fonts or colors, blinking icons, highlights or animations"
+   ]
+  },
+  {
+   "code": "H04N21/47",
+   "title": "End-user applications",
+   "path": [
+    "H ELECTRICITY",
+    "H04 ELECTRIC COMMUNICATION TECHNIQUE",
+    "H04N PICTORIAL COMMUNICATION, e.g. TELEVISION",
+    "H04N21/00 Selective content distribution, e.g. interactive television or video on demand [VOD]",
+    "H04N21/40 Client devices specifically adapted for the reception of or interaction with content, e.g. set-top-box [STB]; Operations thereof"
+   ]
+  },
+  {
+   "code": "H04N21/478",
+   "title": "Supplemental services, e.g. displaying phone caller identification, shopping application",
+   "path": [
+    "H ELECTRICITY",
+    "H04 ELECTRIC COMMUNICATION TECHNIQUE",
+    "H04N PICTORIAL COMMUNICATION, e.g. TELEVISION",
+    "H04N21/00 Selective content distribution, e.g. interactive television or video on demand [VOD]",
+    "H04N21/40 Client devices specifically adapted for the reception of or interaction with content, e.g. set-top-box [STB]; Operations thereof",
+    "H04N21/47 End-user applications"
+   ]
+  },
+  {
+   "code": "H04N5/782",
+   "title": "Television signal recording using magnetic recording on tape",
+   "path": [
+    "H ELECTRICITY",
+    "H04 ELECTRIC COMMUNICATION TECHNIQUE",
+    "H04N PICTORIAL COMMUNICATION, e.g. TELEVISION",
+    "H04N5/00 Details of television systems",
+    "H04N5/76 Television signal recording",
+    "H04N5/78 Television signal recording using magnetic recording"
+   ]
+  }
+ ],
+ "landscapes": [
+  "Engineering & Computer Science",
+  "Multimedia"
+ ],
+ "claims": [
+  {
+   "number": 1,
+   "text": "A method for navigating about an on screen television interactive program guide comprising: displaying a list of television programs vertically in a first area of a screen of a display monitor; displaying an advertisement in a second area of the screen located horizontally adjacent to the first area, the second area being further divided into third, fourth, and fifth vertically arranged areas, each of the third, fourth, and fifth areas having the same height-to-width aspect ratio as the screen and occupying about {fraction (1/9)} of the area of the screen; moving an on screen cursor vertically to highlight one of the television programs in the first area; and moving the cursor horizontally from the first area to the second area to highlight the advertisement.",
+   "depends_on": [],
+   "independent": true
+  },
+  {
+   "number": 2,
+   "text": "The method of claim 1 further comprising tuning to an advertisement channel carrying the displayed advertisement.",
+   "depends_on": [
+    1
+   ],
+   "independent": false
+  },
+  {
+   "number": 3,
+   "text": "The method of claim 1, wherein the advertisement is selected based on a television channel being tuned to prior to invoking the interactive program guide.",
+   "depends_on": [
+    1
+   ],
+   "independent": false
+  },
+  {
+   "number": 4,
+   "text": "The method of claim 1, wherein the advertisement is displayed in the fourth area of the screen.",
+   "depends_on": [
+    1
+   ],
+   "independent": false
+  },
+  {
+   "number": 5,
+   "text": "The method of claim 1, wherein the advertisement is displayed in the fifth area of the screen.",
+   "depends_on": [
+    1
+   ],
+   "independent": false
+  },
+  {
+   "number": 6,
+   "text": "The method of claim 1 further comprising activating a function with respect to the highlighted advertisement.",
+   "depends_on": [
+    1
+   ],
+   "independent": false
+  },
+  {
+   "number": 7,
+   "text": "The method of claim 6, wherein the function is displaying on the screen details about the highlighted advertisement.",
+   "depends_on": [
+    6
+   ],
+   "independent": false
+  },
+  {
+   "number": 8,
+   "text": "The method of claim 7, wherein the details are displayed in the second area instead of the advertisement.",
+   "depends_on": [
+    7
+   ],
+   "independent": false
+  },
+  {
+   "number": 9,
+   "text": "The method of claim 8, wherein the details are displayed in a sixth area of the screen different from the first and second areas.",
+   "depends_on": [
+    8
+   ],
+   "independent": false
+  },
+  {
+   "number": 10,
+   "text": "The method of claim 6, wherein the advertisement promotes a future television program and the function is storing the time and channel of the future television program for later recording or viewing.",
+   "depends_on": [
+    6
+   ],
+   "independent": false
+  },
+  {
+   "number": 11,
+   "text": "The method of claim 6, wherein the function is establishing a link to an Internet website for display of still images or video on the screen in the second area instead of the advertisement.",
+   "depends_on": [
+    6
+   ],
+   "independent": false
+  },
+  {
+   "number": 12,
+   "text": "The method of claim 11, wherein the still images or video are displayed in the fifth area of the screen.",
+   "depends_on": [
+    11
+   ],
+   "independent": false
+  },
+  {
+   "number": 13,
+   "text": "The method of claim 6, wherein the function is establishing a link to an Internet website for display of still images or video in a sixth area of the screen different from the first and second areas.",
+   "depends_on": [
+    6
+   ],
+   "independent": false
+  },
+  {
+   "number": 14,
+   "text": "The method of claim 1 further comprising setting a television tuner so as to generate signals that display in the third area a current television program represented by the highlighted television program listing.",
+   "depends_on": [
+    1
+   ],
+   "independent": false
+  },
+  {
+   "number": 15,
+   "text": "The method of claim 1 further comprising: collecting viewer profile data; and selecting the advertisement based on the viewer profile data.",
+   "depends_on": [
+    1
+   ],
+   "independent": false
+  },
+  {
+   "number": 16,
+   "text": "The method of claim 15, wherein the viewer profile data includes viewer interaction data selected from the group consisting of viewer interactions with the interactive program guide, viewer television watching characteristics, viewer interactions with a remote control device, and viewer interactions with a computer network.",
+   "depends_on": [
+    15
+   ],
+   "independent": false
+  },
+  {
+   "number": 17,
+   "text": "An interactive television system comprising: a display monitor displaying video programs, graphics, and other viewable information; a memory storing multiple types of data including a database of television scheduling data and a database of advertising information; means for displaying a portion of the television scheduling data as an on-screen electronic television program guide and an advertisement based on the advertising information on the display monitor, a first area of a screen of the display monitor displaying the portion of the television scheduling data as vertically arranged program tiles, and a second area of the screen located horizontally adjacent to the first area displaying the advertisement, the second area being further divided into third, fourth, and fifth vertically arranged areas, each of the third, fourth, and fifth areas having the same height-to-width aspect ratio as the screen and occupying about {fraction (1/9)} of the area of the screen; means for selecting one of the displayed program titles in the first area; and means for selecting the displayed advertisement in the second area.",
+   "depends_on": [],
+   "independent": true
+  },
+  {
+   "number": 18,
+   "text": "The interactive television system of claim 17, wherein the database of advertising information further comprises: packets of data associated with a product being advertised; and timing and correlative relationship data defining presentation and formatting relationships, sequencing, and timing of the packets of data.",
+   "depends_on": [
+    17
+   ],
+   "independent": false
+  },
+  {
+   "number": 19,
+   "text": "The interactive television system of claim 18, wherein the packets of data are selected from a group consisting of graphics data, textual data, video data, and audio data.",
+   "depends_on": [
+    18
+   ],
+   "independent": false
+  },
+  {
+   "number": 20,
+   "text": "The interactive television system of claim 17 further comprising means for tuning to an advertisement channel carrying the displayed advertisement.",
+   "depends_on": [
+    17
+   ],
+   "independent": false
+  },
+  {
+   "number": 21,
+   "text": "The interactive television system of claim 17, further comprising means for selecting the advertisement based on a television channel being tuned to prior to invoking the interactive program guide.",
+   "depends_on": [
+    17
+   ],
+   "independent": false
+  },
+  {
+   "number": 22,
+   "text": "The interactive television system of claim 17, wherein the advertisement is displayed in the fourth area of the screen.",
+   "depends_on": [
+    17
+   ],
+   "independent": false
+  },
+  {
+   "number": 23,
+   "text": "The interactive television system of claim 17, wherein the advertisement is displayed in the fifth area of the screen.",
+   "depends_on": [
+    17
+   ],
+   "independent": false
+  },
+  {
+   "number": 24,
+   "text": "The interactive television system of claim 17 further comprising means for activating a function with respect to the selected advertisement.",
+   "depends_on": [
+    17
+   ],
+   "independent": false
+  },
+  {
+   "number": 25,
+   "text": "The interactive television system of claim 24, wherein the function is displaying on the screen details about the selected advertisement.",
+   "depends_on": [
+    24
+   ],
+   "independent": false
+  },
+  {
+   "number": 26,
+   "text": "The interactive television system of claim 25, wherein the details are displayed in the second area instead of the advertisement.",
+   "depends_on": [
+    25
+   ],
+   "independent": false
+  },
+  {
+   "number": 27,
+   "text": "The interactive television system of claim 26, wherein the details are displayed in a sixth area of the screen different from the first and second areas.",
+   "depends_on": [
+    26
+   ],
+   "independent": false
+  },
+  {
+   "number": 28,
+   "text": "The interactive television system of claim 24, wherein the advertisement promotes a future television program and the function is storing the time and channel of the future television program for later recording or viewing.",
+   "depends_on": [
+    24
+   ],
+   "independent": false
+  },
+  {
+   "number": 29,
+   "text": "The interactive television system of claim 17 further comprising means for establishing a link to an Internet website for display of still images or video on the screen in the second area instead of the advertisement.",
+   "depends_on": [
+    17
+   ],
+   "independent": false
+  },
+  {
+   "number": 30,
+   "text": "The interactive television system of claim 29, wherein the still images or video are displayed in the fifth area of the screen.",
+   "depends_on": [
+    29
+   ],
+   "independent": false
+  },
+  {
+   "number": 31,
+   "text": "The interactive television system of claim 17 further comprising means for establishing a link to an Internet website for display of still images or video in a sixth area of the screen different from the first and second areas.",
+   "depends_on": [
+    17
+   ],
+   "independent": false
+  },
+  {
+   "number": 32,
+   "text": "The interactive television system of claim 17 further comprising means for displaying in the third area a current television program represented by the selected television program tile.",
+   "depends_on": [
+    17
+   ],
+   "independent": false
+  },
+  {
+   "number": 33,
+   "text": "The interactive television system of claim 17 further comprising: means for collecting viewer profile data; and means for selecting the advertisement based on the viewer profile data.",
+   "depends_on": [
+    17
+   ],
+   "independent": false
+  },
+  {
+   "number": 34,
+   "text": "The interactive television system of claim 33, wherein the viewer profile data includes viewer interaction data selected from the group consisting of viewer interactions with the interactive program guide, viewer television watching characteristics, viewer interactions with a remote control device, and viewer interactions with a computer network.",
+   "depends_on": [
+    33
+   ],
+   "independent": false
+  },
+  {
+   "number": 35,
+   "text": "The interactive television system of claim 33, further comprising means for customizing the timing and scheduling of the display of the advertisements according to the collected viewer profile data.",
+   "depends_on": [
+    33
+   ],
+   "independent": false
+  },
+  {
+   "number": 36,
+   "text": "The interactive television system of claim 17 further comprising: means for identifying a plurality of addresses for data sources including data source addresses on a public network, the data source addresses providing at least a portion of the advertisement information; means for selecting one or more of the identified data source addresses; means responsive to the data source address selection for establishing a link to the corresponding data source; and means for displaying the portion of the advertisement information on the display monitor in viewable form.",
+   "depends_on": [
+    17
+   ],
+   "independent": false
+  },
+  {
+   "number": 37,
+   "text": "The interactive television system of claim 36, wherein the public network is the Internet.",
+   "depends_on": [
+    36
+   ],
+   "independent": false
+  },
+  {
+   "number": 38,
+   "text": "The interactive television system of claim 36, wherein the public network is the World Wide Web.",
+   "depends_on": [
+    36
+   ],
+   "independent": false
+  }
+ ],
+ "description": [
+  {
+   "text": "This application is a continuation of U.S. patent application Ser. No. 09/120,488, filed Jul. 21, 1998, now U.S. Pat. No. 6,177,931, which claims priority of U.S. Provisional Patent Application No. 60/055,237, filed Aug. 12, 1997, No. 60/068,375, filed Dec. 22, 1997, No. 60/053,330, filed Jul. 21, 1997, No. 60/055,761, filed Aug. 14, 1997, No. 60/061,119, filed Oct. 6, 1997, No. 60/071,811, filed Jan. 20, 1998, No. 60/071,812, filed Jan. 20, 1998, and No. 60/071,882, filed Jan. 20, 1998, and a C-I-P PCT International Application No. PCT/US97/23852, filed Dec. 19, 1997 which in turn claims priority of U.S. Provisional Patent Application No. 60/034,784, filed Dec. 19, 1996, the disclosures of all of which are incorporated herein by reference, as if fully stated here, for all purposes.",
+   "heading": "CROSS-REFERENCE TO RELATED APPLICATIONS"
+  },
+  {
+   "text": "The present invention relates generally to television systems, and more particularly, to the display of, and recording control interface with, television programs, video, advertising information and program scheduling information.",
+   "heading": "FIELD OF THE INVENTION"
+  },
+  {
+   "text": "Television viewers have historically analyzed the information provided by television program schedule guides to select television programs to watch. Historically, television program schedule guides have listed the available television programs by day of the week, time of day, channel, and program title. Historically, only hardcopy television program schedule guides were available. More recently, as illustrated by the Levine Patent, U.S. Pat. No. 4,908,713, television program guides have become available in electronic form.\n\nThe earliest versions of on-screen electronic program guides (“EPG”) provided for the storage of program schedule information in an electronic memory connected to the television receiver and generally provided for the on-screen formatting and display of the program schedule information on the television screen. The early EPGs typically overlaid the television programming. Furthermore, viewer interaction capabilities with early EPGs was extremely limited.\n\nLater EPGs provided viewer-to-EPG interaction improvements and provided Picture-In-Guide (“PIG”) display of the television program simultaneous with the display of the EPG. International Application No. PCT/US95/11173 (International Publication No. WO 96/07270), the disclosure of which is incorporated by reference herein for all purposes, illustrates such an improvement.",
+   "heading": "BACKGROUND OF THE INVENTION"
+  },
+  {
+   "text": "The present invention is an improvement over previous EPGs in that it provides, among other things:\n\nA. Improved viewer interaction capabilities with the EPG;\n\nB. Improved viewer control of video recording of future-scheduled programming;\n\nC. Improved features to the EPG display and navigation;\n\nD. Parental control of the EPG display;\n\nE. Improved television program information access by the viewer;",
+   "heading": "SUMMARY OF THE INVENTION"
+  },
+  {
+   "text": "These and other features, aspects, and advantages of the present invention will become better understood with regard to the following description, appended claims, and accompanying drawings where:\n\nFIG. 1 is a graphic representation of a sample screen display of the EPG.\n\nFIG. 2 is a drawing of a portion of a remote control device that shows keys for activating various functions of the EPG.\n\nFIG. 3 is a graphic representation of a sample on screen EPG display depicting the EPG's on-screen Grid Guide in the programming scrolling mode.\n\nFIGS. 4a and 4 b is a graphic representation of a sample on screen EPG display depicting the EPG's on-screen Grid Guide in the channel-scrolling.\n\nFIG. 5 is a graphic representation of a sample on screen EPG display depicting the EPG in the Watch Scheduling mode.",
+   "heading": "DESCRIPTION OF THE DRAWINGS"
+  },
+  {
+   "text": "The disclosure of International Application WO96/07270, published on Mar. 7, 1996 is incorporated fully herein by reference. The present invention is an improvement on the electronic program guide (EPG) disclosed therein. The apparatus disclosed in the referenced PCT application is used to generate the screen displays described below.\n\nIn FIG. 1 of the drawing, one embodiment of the EPG with Ad Window and Advertising Messages is shown. In FIG. 1, a television screen display 10 is shown. Display 10 could be generated by a conventional television receiver with interlaced scan lines, by a VCR, by a PC monitor with progressive scan lines, or by another other type of video display device. In the upper left hand corner of the screen is a PIP window 12. Below window 12 are Panel Ad Windows 14, and 16 (“Ad Windows”) Windows 12, 14, and 16 each typically occupy about {fraction (1/9)} of the total screen area. The remainder of the screen area is typically occupied (moving from top to bottom of the screen) by an action key bar 18, a navigation bar 20, a grid guide 22 (“Grid Guide”), and an information box 24 (the “detailed information area). In the embodiment pictured in FIG. 1, the position of the windows, and other user interface features, including the action key bar, navigation bar and Grid Guide, are fixed. In another embodiment of this invention, as is described further below, the position and size of the windows and other user interface features are customizable by the viewer.\n\nIn FIG. 2 of the drawing, one embodiment of a remote controller 26 for activating the functions of display 10 is shown. Remote controller 26 could have other keys for activating the functions of a user video device, such as a television receiver, a VCR, or a cable box. Remote control 26 has up, down, right, and left arrows keys 28, 30, 32, and 34, respectively, for controlling the movement of a cursor 36 on display 10. Cursor 36 can select, i.e., highlight, any of windows 12, 14, or 16 by pressing arrow keys 28 to 34, any of the titles and channels in Grid Guide 22 by pressing arrow keys 32 and 34, or navigation bar 20 by pressing arrow keys 32 and 34. Windows 12, 14, and 16 are highlighted by adding a border around the window or changing the color of the border, if the border is permanent. The titles and channels in Grid Guide 22 and navigation bar 20 are highlighted by changing color.\n\nHighlighting of windows and/or viewer selections from the Grid Guide and/or navigation and EPG on screen display components may be accomplished in a number of other ways. For instance, the border of a selected window, or the selected Grid Guide or navigation component, can be made to appear to flash. Another way to highlight a viewer selection is to make the selected window or feature appear to become brighter than the rest of the on screen display. Yet another way to highlight a viewer selection is to blur all portions of the on screen display, except for the viewer selected component. Still another way to highlight a viewer selection is to make all portions of the on screen display, except for the viewer selected component, appear transparent. Still yet another way to highlight a viewer selection is to add animation to the selected component. When a portion of the EPG is selected, the system issues graphic display commands to the on screen display (OSD) controller to implement one or more of the desired enhancement technique(s).\n\nThe viewer enters the Guide Mode illustrated in FIG. 1 by pressing a “guide” key 35 and returns to the full screen Television Mode by pressing key 35 again or by pressing the “select” key. A real time television program is displayed in window 12. A translucent overlay of the PIP window 12 can display the title, channel (local number and/or station name), and status (locked or unlocked) of window 12 over the television program so the viewer can still see the entire image.\n\nThe PIP Window can be locked or unlocked. The “lock/unlock” mode is user controlled. To lock or unlock the PIP Window, the viewer can use a PIP button on the remote control device, or can highlight and press the Lock/Unlock EPG action button. The lock/unlock status is recorded and maintained until the status is reset by the viewer. That is, the lock/unlock status for the PIP Window in the EPG is maintained when the viewer leaves the Guide and later re-enters the Guide, including when the viewer turns off the television. If the viewer selects the “lock” status, the last channel to which the tuner was set in the PIP Window continues to be displayed regardless of the actions exercised by the viewer. In the unlocked status, the channel highlighted by cursor 36 in Grid Guide 22 is displayed if the Grid Guide is displaying currently telecast programs and the last currently telecast channel that was highlighted is displayed if the Grid Guide is displaying future programs.",
+   "heading": "DETAILED DESCRIPTION OF THE INVENTION"
+  }
+ ],
+ "citations": {
+  "patent": [
+   {
+    "number": "US4439784A",
+    "date": "1984-03-27",
+    "assignee": "Pioneer Electronic Corporation",
+    "title": "Power cutting device for terminal units of CATV system"
+   },
+   {
+    "number": "US5036314A",
+    "date": "1991-07-30",
+    "assignee": "Sarin S.S. Ausiliari E Ricerca Informatica",
+    "title": "Method and system for the integrated supply of telematic services and graphic information to user terminals, particularly for advertising purposes"
+   },
+   {
+    "number": "US5105184A",
+    "date": "1992-04-14",
+    "assignee": "Noorali Pirani",
+    "title": "Methods for displaying and integrating commercial advertisements with computer software"
+   },
+   {
+    "number": "US5155591A",
+    "date": "1992-10-13",
+    "assignee": "General Instrument Corporation",
+    "title": "Method and apparatus for providing demographically targeted television commercials"
+   },
+   {
+    "number": "US5212553A",
+    "date": "1993-05-18",
+    "assignee": "Sony Corporation",
+    "title": "Television receiver with selective menu display"
+   },
+   {
+    "number": "US5223924A",
+    "date": "1993-06-29",
+    "assignee": "North American Philips Corporation",
+    "title": "System and method for automatically correlating user preferences with a T.V. program information database"
+   },
+   {
+    "number": "EP0550911A1",
+    "date": "1993-07-14",
+    "assignee": "Thomson Consumer Electronics, Inc.",
+    "title": "Programmable picture-outside-picture display"
+   },
+   {
+    "number": "US5233423A",
+    "date": "1993-08-03",
+    "assignee": "North American Philips Corporation",
+    "title": "Embedded commericals within a television receiver using an integrated electronic billboard"
+   },
+   {
+    "number": "US5319445A",
+    "date": "1994-06-07",
+    "assignee": "Fitts John M",
+    "title": "Hidden change distribution grating and use in 3D moire measurement sensors and CMM applications"
+   },
+   {
+    "number": "WO1994013107A1",
+    "date": "1994-06-09",
+    "assignee": "Discovery Communications, Inc.",
+    "title": "Advanced set top terminal for cable television delivery systems"
+   },
+   {
+    "number": "US5325183A",
+    "date": "1994-06-28",
+    "assignee": "Samsung Co., Ltd.",
+    "title": "OSD circuit for displaying advertising picture data"
+   },
+   {
+    "number": "US5353121A",
+    "date": "1994-10-04",
+    "assignee": "Starsight Telecast, Inc.",
+    "title": "Television schedule system"
+   },
+   {
+    "number": "US5377317A",
+    "date": "1994-12-27",
+    "assignee": "International Business Machines Corporation",
+    "title": "Method and apparatus for distinctively displaying windows on a computer display screen"
+   },
+   {
+    "number": "US5398074A",
+    "date": "1995-03-14",
+    "assignee": "Thomson Consumer Electronics, Inc.",
+    "title": "Programmable picture-outside-picture display"
+   },
+   {
+    "number": "US5410344A",
+    "date": "1995-04-25",
+    "assignee": "Arrowsmith Technologies, Inc.",
+    "title": "Apparatus and method of selecting video programs based on viewers' preferences"
+   },
+   {
+    "number": "US5432561A",
+    "date": "1995-07-11",
+    "assignee": "North American Philips Corporation",
+    "title": "System for automatically activating picture-in-picture when an auxiliary signal is detected"
+   },
+   {
+    "number": "US5434626A",
+    "date": "1995-07-18",
+    "assignee": "Sony Corporation",
+    "title": "Display apparatus displaying operation menu"
+   },
+   {
+    "number": "US5440678A",
+    "date": "1995-08-08",
+    "assignee": "International Business Machines Corporation",
+    "title": "Method of and apparatus for creating a multi-media footnote"
+   },
+   {
+    "number": "US5452012A",
+    "date": "1995-09-19",
+    "assignee": "Sony Corporation",
+    "title": "Image display apparatus"
+   },
+   {
+    "number": "US5479497A",
+    "date": "1995-12-26",
+    "assignee": "Kovarik; Karla",
+    "title": "Automatic call distributor with programmable window display system and method"
+   },
+   {
+    "number": "WO1996007270A1",
+    "date": "1996-03-07",
+    "assignee": "Yuen Henry C",
+    "title": "Method and apparatus for displaying television programs and related text"
+   },
+   {
+    "number": "US5523796A",
+    "date": "1996-06-04",
+    "assignee": "Prevue Networks, Inc.",
+    "title": "Video clip program guide"
+   },
+   {
+    "number": "US5524195A",
+    "date": "1996-06-04",
+    "assignee": "Sun Microsystems, Inc.",
+    "title": "Graphical user interface for interactive television with an animated agent"
+   },
+   {
+    "number": "WO1996017467A2",
+    "date": "1996-06-06",
+    "assignee": "Frederick Herz",
+    "title": "System and method for scheduling broadcast of and access to video programs and other data using customer profiles"
+   },
+   {
+    "number": "WO1996017473A1",
+    "date": "1996-06-06",
+    "assignee": "News America Publications, Inc.",
+    "title": "Electronic television program guide schedule system and method with display and search of program with alphabetical title listings"
+   },
+   {
+    "number": "US5526034A",
+    "date": "1996-06-11",
+    "assignee": "Ictv, Inc.",
+    "title": "Interactive home information system with signal assignment"
+   },
+   {
+    "number": "US5528304A",
+    "date": "1996-06-18",
+    "assignee": "Zenith Electronics Corp.",
+    "title": "Picture-in-picture feedback for channel related features"
+   },
+   {
+    "number": "US5534911A",
+    "date": "1996-07-09",
+    "assignee": "Levitan; Gutman",
+    "title": "Virtual personal channel in a television system"
+   },
+   {
+    "number": "US5541662A",
+    "date": "1996-07-30",
+    "assignee": "Intel Corporation",
+    "title": "Content programmer control of video and data display using associated data"
+   },
+   {
+    "number": "US5557338A",
+    "date": "1996-09-17",
+    "assignee": "Thomson Consumer Electronics, Inc.",
+    "title": "Television receiver using received channel guide information and a secondary video signal processor for displaying secondary channel information"
+   }
+  ],
+  "cited_by": [
+   {
+    "number": "US20010027561A1",
+    "date": "2001-10-04",
+    "assignee": "Microsoft Corporation",
+    "title": "Video on demand methods and systems"
+   },
+   {
+    "number": "US20010047518A1",
+    "date": "2001-11-29",
+    "assignee": "Ranjit Sahota",
+    "title": "Method a system to provide interactivity using an interactive channel bug"
+   },
+   {
+    "number": "US20020010928A1",
+    "date": "2002-01-24",
+    "assignee": "Ranjit Sahota",
+    "title": "Method and system for integrating internet advertising with television commercials"
+   },
+   {
+    "number": "US20020021309A1",
+    "date": "2002-02-21",
+    "assignee": "Tara Burnhouse",
+    "title": "Future program action indication display"
+   },
+   {
+    "number": "US20020029384A1",
+    "date": "2002-03-07",
+    "assignee": "Griggs Theodore L.",
+    "title": "Mechanism for distributing content data"
+   },
+   {
+    "number": "US20020046401A1",
+    "date": "2002-04-18",
+    "assignee": "Takuma Miyazaki",
+    "title": "Information processing apparatus and method, information providing apparatus and method, and program storage medium"
+   },
+   {
+    "number": "US20020053081A1",
+    "date": "2002-05-02",
+    "assignee": "Digitaldeck, Inc.",
+    "title": "Adaptable programming guide for networked devices"
+   },
+   {
+    "number": "US20020059644A1",
+    "date": "2002-05-16",
+    "assignee": "Andrade David De",
+    "title": "Method and system for automatic insertion of interactive TV triggers into a broadcast data stream"
+   },
+   {
+    "number": "US20020062484A1",
+    "date": "2002-05-23",
+    "assignee": "De Lange Alphonsius Anthonius Jozef",
+    "title": "Method of automatic execution receiving station"
+   },
+   {
+    "number": "US20020088004A1",
+    "date": "2002-07-04",
+    "assignee": "Sony Corporation",
+    "title": "System and method for interactive television"
+   },
+   {
+    "number": "US20020092021A1",
+    "date": "2002-07-11",
+    "assignee": "Adrian Yap",
+    "title": "Digital video recorder enhanced features"
+   },
+   {
+    "number": "US20020104100A1",
+    "date": "2002-08-01",
+    "assignee": "Pace Micro Technology Plc",
+    "title": "Broadcast data receiver"
+   },
+   {
+    "number": "US20020110353A1",
+    "date": "2002-08-15",
+    "assignee": "Potrebic Peter J.",
+    "title": "Optimizing use of storage space in a video data recording system"
+   },
+   {
+    "number": "US20020112243A1",
+    "date": "2002-08-15",
+    "assignee": "World Theatre",
+    "title": "Video distribution system"
+   },
+   {
+    "number": "US20020129376A1",
+    "date": "2002-09-12",
+    "assignee": "Tadamasa Kitsukawa",
+    "title": "Virtual channel system for web appliance, including interactive television"
+   },
+   {
+    "number": "US20020140805A1",
+    "date": "2002-10-03",
+    "assignee": "Koninklijke Philips Electronics N.V.",
+    "title": "Television program selection system"
+   },
+   {
+    "number": "US20020144258A1",
+    "date": "2002-10-03",
+    "assignee": "Tadamasa Kitsukawa",
+    "title": "System and method for billing for interactive television"
+   },
+   {
+    "number": "US20020144288A1",
+    "date": "2002-10-03",
+    "assignee": "Tadamasa Kitsukawa",
+    "title": "System and method for allowing access to web sites using interactive television"
+   },
+   {
+    "number": "US20020157107A1",
+    "date": "2002-10-24",
+    "assignee": "Sony Corporation",
+    "title": "Interactive television system"
+   },
+   {
+    "number": "US20020157109A1",
+    "date": "2002-10-24",
+    "assignee": "Sony Corporation",
+    "title": "System and method for interactive television"
+   },
+   {
+    "number": "US20020157100A1",
+    "date": "2002-10-24",
+    "assignee": "Sony Corporation",
+    "title": "Electronic program guide including virtual channels for interactive television"
+   },
+   {
+    "number": "US20020157092A1",
+    "date": "2002-10-24",
+    "assignee": "Sony Corporation",
+    "title": "System and method for pulling internet content onto interactive television"
+   },
+   {
+    "number": "US20020157108A1",
+    "date": "2002-10-24",
+    "assignee": "Sony Corporation",
+    "title": "Gateway screen for interactive television"
+   },
+   {
+    "number": "US20020162118A1",
+    "date": "2002-10-31",
+    "assignee": "Levy Kenneth L.",
+    "title": "Efficient interactive TV"
+   },
+   {
+    "number": "US20020170057A1",
+    "date": "2002-11-14",
+    "assignee": "Webtv Networks, Inc.",
+    "title": "Electronic program guide displayed simultaneously with television programming"
+   },
+   {
+    "number": "US20020174433A1",
+    "date": "2002-11-21",
+    "assignee": "Baumgartner Joseph P.",
+    "title": "Personal video recorder systems and methods"
+   },
+   {
+    "number": "US20030007664A1",
+    "date": "2003-01-09",
+    "assignee": "Davis Bruce L.",
+    "title": "Watermarking to set video usage permissions"
+   },
+   {
+    "number": "US20030028882A1",
+    "date": "2003-02-06",
+    "assignee": "Davis Bruce L.",
+    "title": "Watermarking and electronic program guides"
+   },
+   {
+    "number": "US20030025722A1",
+    "date": "2003-02-06",
+    "assignee": "Cliff David Trevor",
+    "title": "Method and apparatus for interactive broadcasting"
+   },
+   {
+    "number": "US20030025720A1",
+    "date": "2003-02-06",
+    "assignee": "Clement Lau",
+    "title": "System and method for common interest analysis among multiple users"
+   }
+  ]
+ },
+ "family": [
+  {
+   "number": "US6177931B1",
+   "country": "US",
+   "status": "Expired - Lifetime"
+  },
+  {
+   "number": "US6756997B1",
+   "country": "US",
+   "status": "Expired - Lifetime"
+  },
+  {
+   "number": "US7328450B2",
+   "country": "US",
+   "status": "Expired - Fee Related"
+  }
+ ],
+ "legal_events": [
+  {
+   "date": "2000-06-14",
+   "text": "Application filed by Gemstar Development LLC"
+  },
+  {
+   "date": "2000-06-14",
+   "text": "Priority to US09/593,556"
+  },
+  {
+   "date": "2004-06-29",
+   "text": "Application granted"
+  },
+  {
+   "date": "2004-06-29",
+   "text": "Publication of US6756997B1"
+  },
+  {
+   "date": "2004-06-10",
+   "text": "STCF Information on status: patent grant - Free format text: PATENTED CASE"
+  },
+  {
+   "date": "2007-02-20",
+   "text": "CC Certificate of correction"
+  },
+  {
+   "date": "2007-12-31",
+   "text": "FPAY Fee payment - Year of fee payment: 4"
+  },
+  {
+   "date": "2008-01-07",
+   "text": "REMI Maintenance fee reminder mailed"
+  },
+  {
+   "date": "2008-05-15",
+   "text": "AS Assignment - Owner name: JPMORGAN CHASE BANK, N.A., NEW YORK Free format text: SECURITY AGREEMENT;ASSIGNORS:APTIV DIGITAL, INC.;GEMSTAR DEVELOPMENT CORPORATION;GEMSTAR-TV GUIDE INTERNATIONAL, INC.;AND OTHERS;REEL/FRAME:020986/0074 Effective date: 20080502 Owner name: JPMORGAN CHASE BANK, N.A.,NEW YORK Free format text: SECURITY AGREEMENT;ASSIGNORS:APTIV DIGITAL, INC.;GEMSTAR DEVELOPMENT CORPORATION;GEMSTAR-TV GUIDE INTERNATIONAL, INC.;AND OTHERS;REEL/FRAME:020986/0074 Effective date: 20080502"
+  },
+  {
+   "date": "2010-10-29",
+   "text": "AS Assignment - Owner name: GEMSTAR DEVELOPMENT CORPORATION, CALIFORNIA Free format text: RELEASE BY SECURED PARTY;ASSIGNOR:JPMORGAN CHASE BANK, N.A. (A NATIONAL ASSOCIATION);REEL/FRAME:025222/0731 Effective date: 20100317 Owner name: TV GUIDE ONLINE, LLC, CALIFORNIA Free format text: RELEASE BY SECURED PARTY;ASSIGNOR:JPMORGAN CHASE BANK, N.A. (A NATIONAL ASSOCIATION);REEL/FRAME:025222/0731 Effective date: 20100317 Owner name: UNITED VIDEO PROPERTIES, INC., CALIFORNIA Free format text: RELEASE B"
+  },
+  {
+   "date": "2011-09-13",
+   "text": "AS Assignment - Owner name: JPMORGAN CHASE BANK, N.A., AS COLLATERAL AGENT, NE Free format text: SECURITY INTEREST;ASSIGNORS:APTIV DIGITAL, INC., A DELAWARE CORPORATION;GEMSTAR DEVELOPMENT CORPORATION, A CALIFORNIA CORPORATION;INDEX SYSTEMS INC, A BRITISH VIRGIN ISLANDS COMPANY;AND OTHERS;REEL/FRAME:027039/0168 Effective date: 20110913"
+  },
+  {
+   "date": "2011-11-30",
+   "text": "FPAY Fee payment - Year of fee payment: 8"
+  },
+  {
+   "date": "2014-07-24",
+   "text": "AS Assignment - Owner name: MORGAN STANLEY SENIOR FUNDING, INC., AS COLLATERAL AGENT, MARYLAND Free format text: PATENT SECURITY AGREEMENT;ASSIGNORS:APTIV DIGITAL, INC.;GEMSTAR DEVELOPMENT CORPORATION;INDEX SYSTEMS INC.;AND OTHERS;REEL/FRAME:033407/0035 Effective date: 20140702 Owner name: MORGAN STANLEY SENIOR FUNDING, INC., AS COLLATERAL Free format text: PATENT SECURITY AGREEMENT;ASSIGNORS:APTIV DIGITAL, INC.;GEMSTAR DEVELOPMENT CORPORATION;INDEX SYSTEMS INC.;AND OTHERS;REEL/FRAME:033407/0035"
+  },
+  {
+   "date": "2015-12-16",
+   "text": "FPAY Fee payment - Year of fee payment: 12"
+  },
+  {
+   "date": "2019-11-25",
+   "text": "AS Assignment - Owner name: VEVEO, INC., CALIFORNIA Free format text: RELEASE OF SECURITY INTEREST IN PATENT RIGHTS;ASSIGNOR:MORGAN STANLEY SENIOR FUNDING, INC., AS COLLATERAL AGENT;REEL/FRAME:051145/0090 Effective date: 20191122 Owner name: UNITED VIDEO PROPERTIES, INC., CALIFORNIA Free format text: RELEASE OF SECURITY INTEREST IN PATENT RIGHTS;ASSIGNOR:MORGAN STANLEY SENIOR FUNDING, INC., AS COLLATERAL AGENT;REEL/FRAME:051145/0090 Effective date: 20191122 Owner name: ROVI GUIDES, INC., CALIFOR"
+  }
+ ],
+ "title": "Systems and methods for displaying and recording control interface with television programs, video, advertising information and program scheduling information",
+ "abstract": "The present invention is an improvement over previous Electronic Programming Guides (“EPG”) in that it provides, among other things: Improved viewer interaction capabilities with the EPG; improved viewer control of video recording of future-scheduled programming; improved features to the EPG display and navigation; parental control of the EPG display; improved television program information access by the viewer; improved opportunities for the commercial advertiser to reach the viewer; improved product information access by the viewer; creation of a viewer's profile; utilization of viewer profile information to customize various aspects of the EPG; and utilization of viewer profile information to provide customized presentation of advertising to the viewer.",
+ "status": "Expired - Lifetime",
+ "expiry": "2019-09-05",
+ "completeness": {
+  "bibliographic": true,
+  "abstract": true,
+  "claims": true,
+  "description": true,
+  "classifications": true,
+  "landscapes": true,
+  "citations": true,
+  "family": true,
+  "legal_events": true
+ }
+}

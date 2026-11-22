@@ -1,0 +1,20 @@
+{
+  "manifest_version": 3,
+  "name": "Patent Assist",
+  "version": "0.1.0",
+  "description": "Ask questions about the Google Patents page you are reading.",
+  "background": {
+    "service_worker": "background.js"
+  },
+  "content_scripts": [
+    {
+      "matches": ["https://patents.google.com/*"],
+      "js": ["content.js"],
+      "run_at": "document_idle"
+    }
+  ],
+  "host_permissions": [
+    "https://patents.google.com/*",
+    "__BACKEND_ORIGIN__"
+  ]
+}

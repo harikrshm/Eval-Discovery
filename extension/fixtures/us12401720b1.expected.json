@@ -1,0 +1,1102 @@
+{
+ "patent_number": "US12401720B1",
+ "inventors": [
+  "Yehuda Binder",
+  "Benjamin Maytal"
+ ],
+ "assignees": [
+  "Smart Speaker LLC"
+ ],
+ "dates": {
+  "priority": "2025-05-08",
+  "filing": "2025-05-08",
+  "publication": "2025-08-26",
+  "grant": "2025-08-26"
+ },
+ "classifications": [
+  {
+   "code": "H04L67/12",
+   "title": "Protocols specially adapted for proprietary or special-purpose networking environments, e.g. medical networks, sensor networks, networks in vehicles or remote metering networks",
+   "path": [
+    "H ELECTRICITY",
+    "H04 ELECTRIC COMMUNICATION TECHNIQUE",
+    "H04L TRANSMISSION OF DIGITAL INFORMATION, e.g. TELEGRAPHIC COMMUNICATION",
+    "H04L67/00 Network arrangements or protocols for supporting network services or applications",
+    "H04L67/01 Protocols"
+   ]
+  },
+  {
+   "code": "G07C3/02",
+   "title": "Registering or indicating working or idle time only",
+   "path": [
+    "G PHYSICS",
+    "G07 CHECKING-DEVICES",
+    "G07C TIME OR ATTENDANCE REGISTERS; REGISTERING OR INDICATING THE WORKING OF MACHINES; GENERATING RANDOM NUMBERS; VOTING OR LOTTERY APPARATUS; ARRANGEMENTS, SYSTEMS OR APPARATUS FOR CHECKING NOT PROVIDED FOR ELSEWHERE",
+    "G07C3/00 Registering or indicating the condition or the working of machines or other apparatus, other than vehicles"
+   ]
+  },
+  {
+   "code": "B60K31/00",
+   "title": "Vehicle fittings, acting on a single sub-unit only, for automatically controlling vehicle speed, i.e. preventing speed from exceeding an arbitrarily established velocity or maintaining speed at a particular velocity, as selected by the vehicle operator",
+   "path": [
+    "B PERFORMING OPERATIONS; TRANSPORTING",
+    "B60 VEHICLES IN GENERAL",
+    "B60K ARRANGEMENT OR MOUNTING OF PROPULSION UNITS OR OF TRANSMISSIONS IN VEHICLES; ARRANGEMENT OR MOUNTING OF PLURAL DIVERSE PRIME-MOVERS IN VEHICLES; AUXILIARY DRIVES FOR VEHICLES; INSTRUMENTATION OR DASHBOARDS FOR VEHICLES; ARRANGEMENTS IN CONNECTION WITH COOLING, AIR INTAKE, GAS EXHAUST OR FUEL SUPPLY OF PROPULSION UNITS IN VEHICLES"
+   ]
+  },
+  {
+   "code": "B60K31/18",
+   "title": "Vehicle fittings, acting on a single sub-unit only, for automatically controlling vehicle speed, i.e. preventing speed from exceeding an arbitrarily established velocity or maintaining speed at a particular velocity, as selected by the vehicle operator including a device to audibly, visibly, or otherwise signal the existence of unusual or unintended speed",
+   "path": [
+    "B PERFORMING OPERATIONS; TRANSPORTING",
+    "B60 VEHICLES IN GENERAL",
+    "B60K ARRANGEMENT OR MOUNTING OF PROPULSION UNITS OR OF TRANSMISSIONS IN VEHICLES; ARRANGEMENT OR MOUNTING OF PLURAL DIVERSE PRIME-MOVERS IN VEHICLES; AUXILIARY DRIVES FOR VEHICLES; INSTRUMENTATION OR DASHBOARDS FOR VEHICLES; ARRANGEMENTS IN CONNECTION WITH COOLING, AIR INTAKE, GAS EXHAUST OR FUEL SUPPLY OF PROPULSION UNITS IN VEHICLES",
+    "B60K31/00 Vehicle fittings, acting on a single sub-unit only, for automatically controlling vehicle speed, i.e. preventing speed from exceeding an arbitrarily established velocity or maintaining speed at a particular velocity, as selected by the vehicle operator"
+   ]
+  },
+  {
+   "code": "B60Y2200/11",
+   "title": "Passenger cars; Automobiles",
+   "path": [
+    "B PERFORMING OPERATIONS; TRANSPORTING",
+    "B60 VEHICLES IN GENERAL",
+    "B60Y INDEXING SCHEME RELATING TO ASPECTS CROSS-CUTTING VEHICLE TECHNOLOGY",
+    "B60Y2200/00 Type of vehicle",
+    "B60Y2200/10 Road Vehicles"
+   ]
+  },
+  {
+   "code": "B60Y2200/12",
+   "title": "Motorcycles, Trikes; Quads; Scooters",
+   "path": [
+    "B PERFORMING OPERATIONS; TRANSPORTING",
+    "B60 VEHICLES IN GENERAL",
+    "B60Y INDEXING SCHEME RELATING TO ASPECTS CROSS-CUTTING VEHICLE TECHNOLOGY",
+    "B60Y2200/00 Type of vehicle",
+    "B60Y2200/10 Road Vehicles"
+   ]
+  },
+  {
+   "code": "B60Y2200/126",
+   "title": "Scooters",
+   "path": [
+    "B PERFORMING OPERATIONS; TRANSPORTING",
+    "B60 VEHICLES IN GENERAL",
+    "B60Y INDEXING SCHEME RELATING TO ASPECTS CROSS-CUTTING VEHICLE TECHNOLOGY",
+    "B60Y2200/00 Type of vehicle",
+    "B60Y2200/10 Road Vehicles",
+    "B60Y2200/12 Motorcycles, Trikes; Quads; Scooters"
+   ]
+  },
+  {
+   "code": "B60Y2200/13",
+   "title": "Bicycles; Tricycles",
+   "path": [
+    "B PERFORMING OPERATIONS; TRANSPORTING",
+    "B60 VEHICLES IN GENERAL",
+    "B60Y INDEXING SCHEME RELATING TO ASPECTS CROSS-CUTTING VEHICLE TECHNOLOGY",
+    "B60Y2200/00 Type of vehicle",
+    "B60Y2200/10 Road Vehicles"
+   ]
+  },
+  {
+   "code": "B60Y2200/30",
+   "title": "Railway vehicles",
+   "path": [
+    "B PERFORMING OPERATIONS; TRANSPORTING",
+    "B60 VEHICLES IN GENERAL",
+    "B60Y INDEXING SCHEME RELATING TO ASPECTS CROSS-CUTTING VEHICLE TECHNOLOGY",
+    "B60Y2200/00 Type of vehicle"
+   ]
+  },
+  {
+   "code": "B60Y2200/40",
+   "title": "Special vehicles",
+   "path": [
+    "B PERFORMING OPERATIONS; TRANSPORTING",
+    "B60 VEHICLES IN GENERAL",
+    "B60Y INDEXING SCHEME RELATING TO ASPECTS CROSS-CUTTING VEHICLE TECHNOLOGY",
+    "B60Y2200/00 Type of vehicle"
+   ]
+  },
+  {
+   "code": "B60Y2200/50",
+   "title": "Aeroplanes, Helicopters",
+   "path": [
+    "B PERFORMING OPERATIONS; TRANSPORTING",
+    "B60 VEHICLES IN GENERAL",
+    "B60Y INDEXING SCHEME RELATING TO ASPECTS CROSS-CUTTING VEHICLE TECHNOLOGY",
+    "B60Y2200/00 Type of vehicle"
+   ]
+  },
+  {
+   "code": "B60Y2200/90",
+   "title": "Vehicles comprising electric prime movers",
+   "path": [
+    "B PERFORMING OPERATIONS; TRANSPORTING",
+    "B60 VEHICLES IN GENERAL",
+    "B60Y INDEXING SCHEME RELATING TO ASPECTS CROSS-CUTTING VEHICLE TECHNOLOGY",
+    "B60Y2200/00 Type of vehicle"
+   ]
+  },
+  {
+   "code": "G06Q2240/00",
+   "title": "Transportation facility access, e.g. fares, tolls or parking",
+   "path": [
+    "G PHYSICS",
+    "G06 COMPUTING OR CALCULATING; COUNTING",
+    "G06Q INFORMATION AND COMMUNICATION TECHNOLOGY [ICT] SPECIALLY ADAPTED FOR ADMINISTRATIVE, COMMERCIAL, FINANCIAL, MANAGERIAL OR SUPERVISORY PURPOSES; SYSTEMS OR METHODS SPECIALLY ADAPTED FOR ADMINISTRATIVE, COMMERCIAL, FINANCIAL, MANAGERIAL OR SUPERVISORY PURPOSES, NOT OTHERWISE PROVIDED FOR"
+   ]
+  },
+  {
+   "code": "G07C5/008",
+   "title": "Registering or indicating the working of vehicles communicating information to a remotely located station",
+   "path": [
+    "G PHYSICS",
+    "G07 CHECKING-DEVICES",
+    "G07C TIME OR ATTENDANCE REGISTERS; REGISTERING OR INDICATING THE WORKING OF MACHINES; GENERATING RANDOM NUMBERS; VOTING OR LOTTERY APPARATUS; ARRANGEMENTS, SYSTEMS OR APPARATUS FOR CHECKING NOT PROVIDED FOR ELSEWHERE",
+    "G07C5/00 Registering or indicating the working of vehicles"
+   ]
+  },
+  {
+   "code": "G08G1/00",
+   "title": "Traffic control systems for road vehicles",
+   "path": [
+    "G PHYSICS",
+    "G08 SIGNALLING",
+    "G08G TRAFFIC CONTROL SYSTEMS"
+   ]
+  },
+  {
+   "code": "Y04S40/18",
+   "title": "Network protocols supporting networked applications, e.g. including control of end-device applications over a network",
+   "path": [
+    "Y GENERAL TAGGING OF NEW TECHNOLOGICAL DEVELOPMENTS; GENERAL TAGGING OF CROSS-SECTIONAL TECHNOLOGIES SPANNING OVER SEVERAL SECTIONS OF THE IPC; TECHNICAL SUBJECTS COVERED BY FORMER USPC CROSS-REFERENCE ART COLLECTIONS [XRACs] AND DIGESTS",
+    "Y04 INFORMATION OR COMMUNICATION TECHNOLOGIES HAVING AN IMPACT ON OTHER TECHNOLOGY AREAS",
+    "Y04S SYSTEMS INTEGRATING TECHNOLOGIES RELATED TO POWER NETWORK OPERATION, COMMUNICATION OR INFORMATION TECHNOLOGIES FOR IMPROVING THE ELECTRICAL POWER GENERATION, TRANSMISSION, DISTRIBUTION, MANAGEMENT OR USAGE, i.e. SMART GRIDS",
+    "Y04S40/00 Systems for electrical power generation, transmission, distribution or end-user application management characterised by the use of communication or information technologies, or communication or information technology specific aspects supporting them"
+   ]
+  }
+ ],
+ "landscapes": [
+  "Engineering & Computer Science",
+  "Medical Informatics"
+ ],
+ "claims": [
+  {
+   "number": 1,
+   "text": "A device comprising: multiple microphones for capturing first human voice data; a Wireless Local Area Network (WLAN) transceiver for transmitting digital data to, and for receiving digital data from, a WLAN; a speaker for sounding audio data; an electric light source for emitting light for emitting light; an enclosure that houses the multiple microphones, the WLAN transceiver, the speaker, and the electric light source; and one or more processors programmed with computer program instructions that, when executed, cause the device to: send, to a server device over the Internet via the WLAN by the WLAN transceiver, at least part of the first human voice data captured by the multiple microphones; play, by the speaker, an audio data received from the server device over the Internet via the WLAN by the WLAN transceiver; and emit, by the electric light source, in response to data received from the server over the Internet via the WLAN by the WLAN transceiver, wherein the device is addressed in the WLAN using an Internet Protocol (IP) address that uniquely identifies the device in the WLAN or in the Internet.",
+   "depends_on": [],
+   "independent": true
+  },
+  {
+   "number": 2,
+   "text": "The device according to claim 1, further comprising, in the enclosure, a rechargeable battery for powering the device.",
+   "depends_on": [
+    1
+   ],
+   "independent": false
+  },
+  {
+   "number": 3,
+   "text": "The device according to claim 1, wherein the enclosure is a wearable enclosure.",
+   "depends_on": [
+    1
+   ],
+   "independent": false
+  },
+  {
+   "number": 4,
+   "text": "The device according to claim 1, further being addressable using the IP address in the WLAN or in the Internet using distinct locally administered addresses or a universally administered digital addresses.",
+   "depends_on": [
+    1
+   ],
+   "independent": false
+  },
+  {
+   "number": 5,
+   "text": "The device according to claim 4, wherein the IP address is a layer 3 address and is static or dynamic IP address that is IPv4 or IPv6 type address.",
+   "depends_on": [
+    4
+   ],
+   "independent": false
+  },
+  {
+   "number": 6,
+   "text": "The device according to claim 1, further comprising a volatile or non-volatile memory that stores the IP address.",
+   "depends_on": [
+    1
+   ],
+   "independent": false
+  },
+  {
+   "number": 7,
+   "text": "The device according to claim 1, wherein the speaker comprises an electromagnetic loudspeaker, a piezoelectric speaker, an electrostatic loudspeaker (ESL), a ribbon or planar magnetic loudspeaker, or a bending wave loudspeaker.",
+   "depends_on": [
+    1
+   ],
+   "independent": false
+  },
+  {
+   "number": 8,
+   "text": "The device according to claim 1, wherein the speaker is operative for omnidirectional, unidirectional, or bidirectional pattern audio emitting.",
+   "depends_on": [
+    1
+   ],
+   "independent": false
+  },
+  {
+   "number": 9,
+   "text": "The device according to claim 1, wherein the multiple microphones are configured to improve far-field audio reception.",
+   "depends_on": [
+    1
+   ],
+   "independent": false
+  },
+  {
+   "number": 10,
+   "text": "The device according to claim 9, wherein the multiple microphones are arranged as a directional microphones array operative to estimate a number, magnitude, frequency, Direction-Of-Arrival (DOA), distance, or speed of a phenomenon impinging the microphones array.",
+   "depends_on": [
+    9
+   ],
+   "independent": false
+  },
+  {
+   "number": 11,
+   "text": "The device according to claim 1, wherein each of the multiple microphones comprises, or consists of, an omnidirectional, unidirectional, or bidirectional microphone that is based on sensing of an incident sound-based motion of a diaphragm or a ribbon.",
+   "depends_on": [
+    1
+   ],
+   "independent": false
+  },
+  {
+   "number": 12,
+   "text": "The device according to claim 1, wherein each of the multiple microphones comprises, or consists of, a condenser, an electret, a dynamic, a ribbon, a carbon, or a piezoelectric microphone.",
+   "depends_on": [
+    1
+   ],
+   "independent": false
+  },
+  {
+   "number": 13,
+   "text": "The device according to claim 1, wherein the light is a visible light for illumination or indication.",
+   "depends_on": [
+    1
+   ],
+   "independent": false
+  },
+  {
+   "number": 14,
+   "text": "The device according to claim 1, wherein the light is a non-visible light that is infrared, ultraviolet, X-rays, or gamma rays.",
+   "depends_on": [
+    1
+   ],
+   "independent": false
+  },
+  {
+   "number": 15,
+   "text": "The device according to claim 1, wherein the electric light source consists of, or comprises, a Solid-State Lighting (SSL), a Light Emitting Diode (LED), an Organic LED (OLED), a polymer LED (PLED), or a laser diode.",
+   "depends_on": [
+    1
+   ],
+   "independent": false
+  },
+  {
+   "number": 16,
+   "text": "The device according to claim 1, further comprising a memory that stores digital audio content, and the one or more processors are further programmed with computer program instructions that, when executed, cause the device to playing by the speaker the stored digital audio content.",
+   "depends_on": [
+    1
+   ],
+   "independent": false
+  },
+  {
+   "number": 17,
+   "text": "The device according to claim 16, wherein the digital audio content is pre-recorded or synthesized audio content.",
+   "depends_on": [
+    16
+   ],
+   "independent": false
+  },
+  {
+   "number": 18,
+   "text": "The device according to claim 16, further operative to play a simulating of a voice of a human being or to play music.",
+   "depends_on": [
+    16
+   ],
+   "independent": false
+  },
+  {
+   "number": 19,
+   "text": "The device according to claim 18, wherein the digital audio content comprises a syllable, a word, a phrase, a sentence, a short story, or a long story, using male or female voice.",
+   "depends_on": [
+    18
+   ],
+   "independent": false
+  },
+  {
+   "number": 20,
+   "text": "The device according to claim 1, wherein the WLAN is according to, or compatible with, IEEE 802.11-2012, IEEE 802.11a, IEEE 802.11b, IEEE 802.11g, IEEE 802.11n, or IEEE 802.11ac standard.",
+   "depends_on": [
+    1
+   ],
+   "independent": false
+  },
+  {
+   "number": 21,
+   "text": "The device according to claim 1, wherein the WLAN uses a wireless communication over a licensed or an unlicensed radio frequency band, that is an Industrial, Scientific and Medical (ISM) radio band.",
+   "depends_on": [
+    1
+   ],
+   "independent": false
+  },
+  {
+   "number": 22,
+   "text": "The device according to claim 1, wherein the enclosure is a handheld enclosure.",
+   "depends_on": [
+    1
+   ],
+   "independent": false
+  },
+  {
+   "number": 23,
+   "text": "The device according to claim 1, further comprising in the enclosure an actuator that is directly or indirectly affecting, changing, producing, or creating a physical phenomenon, the actuator that is coupled to the WLAN transceiver for being activated or controlled in response to data received from the WLAN.",
+   "depends_on": [
+    1
+   ],
+   "independent": false
+  },
+  {
+   "number": 24,
+   "text": "The device according to claim 23, wherein the actuator consists of, or comprises, a motion actuator that causes linear or rotary motion.",
+   "depends_on": [
+    23
+   ],
+   "independent": false
+  },
+  {
+   "number": 25,
+   "text": "The device according to claim 23, wherein the actuator consists of, or comprises, an electromagnetic coil or an electromagnet operative for generating a magnetic or electric field.",
+   "depends_on": [
+    23
+   ],
+   "independent": false
+  },
+  {
+   "number": 26,
+   "text": "The device according to claim 23, wherein the actuator consists of, or comprises, an electrical signal generator.",
+   "depends_on": [
+    23
+   ],
+   "independent": false
+  },
+  {
+   "number": 27,
+   "text": "The device according to claim 23, wherein the actuator consists of, or comprises, a chemical or an electrochemical actuator that is configured for producing, changing, or affecting a matter structure, properties, composition, process, or reactions.",
+   "depends_on": [
+    23
+   ],
+   "independent": false
+  },
+  {
+   "number": 28,
+   "text": "The device according to claim 23, wherein the actuator consists of, or comprises, a thermoelectric actuator that is a heater or a cooler and is configured for affecting a temperature of a solid, a liquid, or a gas object, by conduction, convection, force convention, thermal radiation, or by transfer of energy by phase changes.",
+   "depends_on": [
+    23
+   ],
+   "independent": false
+  },
+  {
+   "number": 29,
+   "text": "The device according to claim 23, wherein the physical phenomenon comprises temperature, humidity, pressure, audio, vibration, light, motion, sound, proximity, flow rate, electrical voltage, or electrical current.",
+   "depends_on": [
+    23
+   ],
+   "independent": false
+  }
+ ],
+ "description": [
+  {
+   "text": "This disclosure relates generally to an apparatus and method for control such as in a building or in a vehicle using a server implementing gateway or control functionalities.",
+   "heading": "TECHNICAL FIELD"
+  },
+  {
+   "text": "The Internet is a global system of interconnected computer networks that use the standardized Internet Protocol Suite (TCP/IP), including Transmission Control Protocol (TCP) and the Internet Protocol (IP), to serve billions of users worldwide. It is a network of networks that consists of millions of private, public, academic, business, and government networks, of local to global scope, that are linked by a broad array of electronic and optical networking technologies. The Internet carries a vast range of information resources and services, such as the interlinked hypertext documents on the World Wide Web (WWW) and the infrastructure to support electronic mail. The Internet backbone refers to the principal data routes between large, strategically interconnected networks and core routers in the Internet. These data routes are hosted by commercial, government, academic and other high-capacity network centers, the Internet exchange points and network access points that interchange Internet traffic between the countries, continents and across the oceans of the world. Traffic interchange between Internet service providers (often Tier 1 networks) participating in the Internet backbone exchange traffic by privately negotiated interconnection agreements, primarily governed by the principle of settlement-free peering.\n\nThe Internet Protocol (IP) is the principal communications protocol used for relaying datagrams (packets) across a network using the Internet Protocol Suite. Responsible for routing packets across network boundaries, it is the primary protocol that establishes the Internet. IP is the primary protocol in the Internet Layer of the Internet Protocol Suite and has the task of delivering datagrams from the source host to the destination host based on their addresses. For this purpose, IP defines addressing methods and structures for datagram encapsulation. Internet Protocol Version 4 (IPv4) is the dominant protocol of the Internet. IPv4 is described in Internet Engineering Task Force (IETF) Request for Comments (RFC) 791 and RFC 1349, and the successor, Internet Protocol Version 6 (IPv6), is currently active and in growing deployment worldwide. IPv4 uses 32-bit addresses (providing 4 billion: 4.3×109 addresses), while IPv6 uses 128-bit addresses (providing 340 undecillion or 3.4×1038 addresses), as described in RFC 2460.\n\nThe Internet Protocol is responsible for addressing hosts and routing datagrams (packets) from a source host to the destination host across one or more IP networks. For this purpose the Internet Protocol defines an addressing system that has two functions. Addresses identify hosts and provide a logical location service. Each packet is tagged with a header that contains the meta-data for the purpose of delivery. This process of tagging is also called encapsulation. IP is a connectionless protocol for use in a packet-switched Link Layer network, and does not need circuit setup prior to transmission. The aspects of delivery guaranteeing, proper sequencing, avoidance of duplicate delivery, and data integrity are addressed by an upper transport layer protocol (e.g., TCP-Transmission Control Protocol and UDP-User Datagram Protocol).\n\nThe main aspects of the IP technology are IP addressing and routing. Addressing refers to how end hosts become assigned IP addresses and how sub-networks of IP host addresses are divided and grouped together. IP routing is performed by all hosts, but most importantly by internetwork routers, which typically use either Interior Gateway Protocols (IGPs) or External Gateway Protocols (EGPs) to help make IP datagram forwarding decisions across IP connected networks. Core routers serving in the Internet backbone commonly use the Border Gateway Protocol (BGP) as per RFC 4098 or Multi-Protocol Label Switching (MPLS). Other prior art publications relating to Internet related protocols and routing include the following chapters of the publication number 1-587005-001-3 by Cisco Systems, Inc. (July 1999) entitled: “Internetworking Technologies Handbook”, which are all incorporated in their entirety for all purposes as if fully set forth herein: Chapter 5: “Routing Basics” (pages 5-1 to 5-10), Chapter 30: “Internet Protocols” (pages 30-1 to 30-16), Chapter 32: “IPv6” (pages 32-1 to 32-6), Chapter 45: “OSI Routing” (pages 45-1 to 45-8) and Chapter 51: “Security” (pages 51-1 to 51-12), as well as IBM Corporation, International Technical Support Organization Redbook Documents No. GG24-4756-00 entitled: “Local area Network Concepts and Products: LAN Operation Systems and management”, 1st Edition May 1996, Redbook Document No. GG24-4338-00 entitled: “Introduction to Networking Technologies”, 1st Edition April 1994, Redbook Document No. GG24-2580-01 “IP Network Design Guide”, 2nd Edition June 1999, and Redbook Document No. GG24-3376-07 “TCP/IP Tutorial and Technical Overview”, ISBN 0738494682 8th Edition December 2006, which are incorporated in their entirety for all purposes as if fully set forth herein.\n\nA Wireless Mesh Network (WMN) and Wireless Distribution Systems (WDS) are known in the art to be a communication network made up of clients, mesh routers and gateways organized in a mesh topology and connected using radio. Such wireless networks may be based on DSR as the routing protocol. WMNs are standardized in IEEE 802.11s and described in a slide-show by W. Steven Conner, Intel Corp. et al. entitled: “IEEE 802.11s Tutorial” presented at the IEEE 802 Plenary, Dallas on Nov. 13, 2006, in a slide-show by Eugen Borcoci of University Politehnica Bucharest, entitled: “Wireless Mesh Networks Technologies: Architectures, Protocols, Resource Management and Applications”, presented in INFOWARE Conference on Aug. 22-29, 2009 in Cannes, France, and in an IEEE Communication magazine paper by Joseph D. Camp and Edward W. K nightly of Electrical and Computer Engineering, Rice University, Houston, TX, USA, entitled: “The IEEE 802.11s Extended Service Set Mesh Networking Standard”, which are incorporated in their entirety for all purposes as if fully set forth herein. The arrangement described herein can be equally applied to such wireless networks, wherein two clients exchange information using different paths by using mesh routers as intermediate and relay servers. Commonly in wireless networks, the routing is based on MAC addresses. Hence, the above discussion relating to IP addresses applies in such networks to using the MAC addresses for identifying the client originating the message, the mesh routers (or gateways) serving as the relay servers, and the client serving as the ultimate destination computer.\n\nThe Internet architecture employs a client-server model, among other arrangements. The terms ‘server’ or ‘server computer’ relates herein to a device or computer (or a plurality of computers) connected to the Internet and is used for providing facilities or services to other computers or other devices (referred to in this context as ‘clients’) connected to the Internet. A server is commonly a host that has an IP address and executes a ‘server program’, and typically operates as a socket listener. M any servers have dedicated functionality such as web server, Domain Name System (DNS) server (described in RFC 1034 and RFC 1035), Dynamic Host Configuration Protocol (DHCP) server (described in RFC 2131 and RFC 3315), mail server, File Transfer Protocol (FTP) server and database server. Similarly, the term ‘client’ herein refers to a program or to a device or a computer (or a series of computers) executing this program, which accesses a server over the Internet for a service or a resource. Clients commonly initiate connections that a server may accept. For non-limiting example, web browsers are clients that connect to web servers for retrieving web pages, and email clients connect to mail storage servers for retrieving mails.",
+   "heading": "BACKGROUND"
+  },
+  {
+   "text": "Environment control networks are networks of sensors and controller which provide an optimized solution for an environment control. The environment can be a house, agricultural farm, city traffic systems etc. The sensors will provide information on the environmental conditions and events. The controller will allow automatic control or control by the user via the Internet. Presently, a dedicated hardware gateway is required to control the wireless network in each environment. The disclosure describes how the dedicated gateway can be replaced by a cloud server, offering much better cost, reliability and level of service.\n\nAny communication or connection herein, such as the connection of peripherals in general, and memories in particular to a processor, may use a bus. A communication link (such as Ethernet, or any other LAN, PAN or WAN communication links may also be regarded as buses herein. A bus may be an internal bus, an external bus or both. A bus may be a parallel or a bit-serial bus. A bus may be based on a single or on multiple serial links or lanes. The bus medium may electrical conductors based such as wires or cables, or may be based on a fiber-optic cable. The bus topology may use point-to-point, multi-drop (electrical parallel) and daisy-chain, and may be based on hubs or switches. A point-to-point bus may be full-duplex, or half-duplex. Further, a bus may use proprietary specifications, or may be based on, similar to, substantially or fully compliant to an industry standard (or any variant thereof), and may be hot-pluggable. A bus may be defined to carry only digital data signals, or may also defined to carry a power signal (commonly DC voltages), either in separated and dedicated cables and connectors, or may carry the power and digital data together over the same cable. A bus may support master/slave configuration. A bus may carry a separated and dedicated timing signal or may use self-clocking line-code.\n\nA sensor unit may include one or more sensors, each providing an electrical output signal (such as voltage or current), or changing a characteristic (such as resistance or impedance) in response to a measured or detected phenomenon. The sensors may be identical, similar or different from each other, and may measure or detect the same or different phenomena. Two or more sensors may be connected in series or in parallel. In the case of a changing characteristic sensor or in the case of an active sensor, the unit may include an excitation or measuring circuits (such as a bridge) to generate the sensor electrical signal. The sensor output signal may be conditioned by a signal conditioning circuit. The signal conditioner may involve time, frequency, or magnitude related manipulations. The signal conditioner may be linear or non-linear, and may include an operation or an instrument amplifier, a multiplexer, a frequency converter, a frequency-to-voltage converter, a voltage-to-frequency converter, a current-to-voltage converter, a current loop converter, a charge converter, an attenuator, a sample-and-hold circuit, a peak-detector, a voltage or current limiter, a delay line or circuit, a level translator, a galvanic isolator, an impedance transformer, a linearization circuit, a calibrator, a passive or active (or adaptive) filter, an integrator, a deviator, an equalizer, a spectrum analyzer, a compressor or a de-compressor, a coder (or decoder), a modulator (or demodulator), a pattern recognizer, a smoother, a noise remover, an average or RMS circuit, or any combination thereof. In the case of analog sensor, an analog to digital (A/D) converter may be used to convert the conditioned sensor output signal to a digital sensor data. The unit may include a computer for controlling and managing the unit operation, processing the digital sensor data and handling the unit communication. The unit may include a modem or transceiver coupled to a network port (such as a connector or antenna), for interfacing and communicating over a network.\n\nThe sensor may be a CCD or CM OS based image sensor, for capturing still or video images. The image capturing hardware integrated with the unit may contain a photographic lens (through a lens opening) focusing the required image onto an image sensor. The image may be converted into a digital format by an image sensor AFE (Analog Front End) and an image processor. An image or video compressor for compression of the image information may be used for reducing the memory size and reducing the data rate required for the transmission over the communication medium. Similarly, the sensor may be a voice sensor such as a microphone, and may similarly include a voice processor or a voice compressor (or both). The image or voice compression may be standard or proprietary, may be based on intraframe or interframe compression, and may be lossy or non-lossy compression.\n\nAn actuator unit may include one or more actuators, each affecting or generating a physical phenomenon in response to an electrical command, which can be an electrical signal (such as voltage or current), or by changing a characteristic (such as resistance or impedance) of a device. The actuators may be identical, similar or different from each other, and may affect or generate the same or different phenomena. Two or more actuators may be connected in series or in parallel. The actuator command signal may be conditioned by a signal conditioning circuit. The signal conditioner may involve time, frequency, or magnitude related manipulations. The signal conditioner may be linear or non-linear, and may include an amplifier, a voltage or current limiter, an attenuator, a delay line or circuit, a level translator, a galvanic isolator, an impedance transformer, a linearization circuit, a calibrator, a passive or active (or adaptive) filter, an integrator, a deviator, an equalizer, a spectrum analyzer, a compressor or a de-compressor, a coder (or decoder), a modulator (or demodulator), a pattern recognizer, a smoother, a noise remover, an average or RMS circuit, or any combination thereof. In the case of analog actuator, a digital to analog (D/A) converter may be used to convert the digital command data to analog signals for controlling the actuators. The unit may include a computer for controlling and managing the unit operation, processing the actuators commands and handling the unit communication. The unit may include a modem or transceiver coupled to a communication port (such as a connector or antenna), for interfacing and communicating over a network.\n\nA sensor/actuator unit is a device integrating a part or whole of a sensor unit with part or whole of an actuator unit. For a non-limiting example, such hardware integration may relate to housing in the same enclosure, sharing the same connector (power, communication or any other connector), sharing the same power source or power supply, sharing PCB or other mechanical support, sharing the same processor or computer, sharing the same modem or transceiver, or sharing the same communication port. A sensor actuator unit may include one or more sensors, each with its associated signal conditioner and A/D (if required), and one or more actuators, each with its associated signal conditioner and D/A, if required. A sensor unit, an actuator unit, and a sensor/actuator unit are collectively referred to as ‘field units’.",
+   "heading": "SUMMARY"
+  },
+  {
+   "text": "The invention is herein described, by way of non-limiting examples only, with reference to the accompanying drawings, wherein like designations denote like elements. Understanding that these drawings only provide information concerning typical embodiments of the invention and are not therefore to be considered limiting in scope:\n\nFIG. 1 illustrates a schematic electrical diagram of a home network system with a dedicated hardware-based gateway;\n\nFIG. 2 illustrates a schematic electrical diagram of a system with a cloud based gateway;\n\nFIG. 3 illustrates a schematic electrical diagram of multiple cloud gateways serving several houses;\n\nFIG. 3 a illustrates a schematic electrical diagram of a single cloud gateway serving several houses;\n\nFIG. 4 illustrates a schematic electrical diagram of a router connected to a cloud-based gateway;",
+   "heading": "BRIEF DESCRIPTION OF THE DRAWINGS"
+  },
+  {
+   "text": "The principles and operation of an apparatus according to the present invention may be understood with reference to the figures and the accompanying description wherein similar components appearing in different figures are denoted by identical reference numerals. The drawings and descriptions are conceptual only. In actual practice, a single component can implement one or more functions; alternatively or in addition, each function can be implemented by a plurality of components and devices. In the figures and descriptions, identical reference numerals indicate those components that are common to different embodiments or configurations. Identical numerical references (even in the case of using different suffix, such as 5, 5 a, 5 b and 5 c) refer to functions or actual devices that are either identical, substantially similar, or having similar functionality. It will be readily understood that the components of the present invention, as generally described and illustrated in the figures herein, could be arranged and designed in a wide variety of different configurations. Thus, the following more detailed description of the embodiments of the apparatus, system, and method of the present invention, as represented in the figures herein, is not intended to limit the scope of the invention, as claimed, but is merely representative of embodiments of the invention. It is to be understood that the singular forms “a,” “an,” and “the” herein include plural referents unless the context clearly dictates otherwise. Thus, for example, reference to “a component surface” includes reference to one or more of such surfaces. By the term “substantially” it is meant that the recited characteristic, parameter, or value need not be achieved exactly, but that deviations or variations, including for example, tolerances, measurement error, measurement accuracy limitations and other factors known to those of skill in the art, may occur in amounts that do not preclude the effect the characteristic was intended to provide.\n\nEnvironment control networks are networks of sensors and controller which provide an optimized solution for an environment control. The environment can be a house, agricultural farm, city traffic systems etc. The sensors will provide information on the environmental conditions and events. The controller will allow automatic control or control by the user via the Internet. The system can allow automatic control upon detection of certain conditions or events. The lights can be turned on when a motion is detected in a room. The electricity may be turned off upon a fire and the water off upon a flood. The heating may be adjusted based on internet information on the weather or information on neighbor behavior. Users may be warned of problems in neighboring homes. The motion sensors can be adjusted to be more sensitive upon a detection of a security problem in a home nearby.\n\nFor an agricultural farm there can be a field network and cattle handling network. In the field, there can be a temperature sensor, ground humidity sensor. The irrigation system may be adjusted accordingly. It can also be impacted by cloud server information of last week rainfall and weather forecast. The cattle feeding system can use measurements of the cow weight, food left and cloud server information on weather forecast and cattle diseases. For the system, a network can be used for the transportation system of traffic lights and road sign.\n\nFIG. 2 shows an arrangement 20 including a residence 19 which may be connected via the Internet 16 to many multiple servers. For non-limiting example, the gateway server 24 (corresponding to gateway server 48 described below) may be associated with a specific premises 19. In the premises 19 there may be multiple internal networks, such as home network 14 a connecting the desktop computer 18 a and a home device 15 a and other connected equipment may as well be connected. Similarly, home network 14 b is shown connecting desktop computer 18 b and a home device 15 b, and other connected equipment may as well be connected. A control network 22 may be used, connecting field units 23 a, 23 b and 23 c Each of the field units 23 may correspond to a sensor unit 50, actuator unit 60, or a sensor/actuator unit 70 described below. The control network may be a ZigBee based sensor network. A router 21, corresponding with router 49 described below, is connected, via suitable ports, to the various networks in the residence 19, and allows communication between devices in one or all of the networks, between the networks in the residence 19, and provides external connection to the Internet 16, typically via a WAN network. While three internal networks 22, 14 a and 14 b are shown in arrangement 20, one, two, four, or any number of such internal networks may be equally deployed. The various networks inside the premises 19 may be the same, similar or different. For non-limiting example, the same or different network mediums may be used, such as wired or wireless networks, and the same or different network protocols may be used. Further, each of the networks may be a LAN (Local Area Network), a WLAN (Wireless LAN), a PAN (Personal Area Network), or a WPAN (Wireless PAN).\n\nIn one non-limiting example, where multiple premises 19 are involved, each of the premises 19 is associated with a single and dedicated gateway server 24 (referred herein also as ‘cloud server’ and ‘control server’). Such scenario is exampled in an arrangement 35 shown in FIG. 3 . Three premises 19 a, 19 b, and 19 c, each respectively having routers 21 a, 21 b, and 21 c are connected via the Internet 16 to be served by three respective gateway servers 24 a, 24 b, and 24 c While three houses 19 are exampled in FIG. 3 , any number of premises 19 may be equally employed. Alternatively or in addition, two, three or more premises 19 may share a single gateway server 24, as exampled in arrangement 30 in FIG. 3 a , where three premises 19 a, 19 b, and 19 c, each respectively having routers 21 a, 21 b, and 21 c, are connected via the Internet 16 to a single gateway server 24.\n\nPart or the entire of gateway functionalities in general, or part or the entire of Residential Gateway (RG) (a.k.a. home gateway) functionalities in particular, may be implemented in the router 21, serving as gateway 11 above, for example the gateway and the functionalities described in U.S. Patent Application No. 2007/0112939 to Wilson et al., entitled: “System and Method for Home Automation”, and in U.S. Pat. No. 7,213,061 to Hite et al., entitled: “Internet Control System and Method”, which are both incorporated in their entirety for all purposes as if fully set forth herein. Alternatively or in addition, part or the entire of the gateway functionalities may be moved onto the gateway server 24. Further, part or the entire of the gateway functionalities may be implemented by another entity in the building, such as the PC 18 a home device 15 b, or a field unit 23. Furthermore, the gateway functionalities may be distributed and implemented by a combination of the gateway server 24 router 21 PC 18 a home device 15 b, or a field unit 23, where each of the devices implements none, one, or a subset of the gateway functionalities, such as IP routing, VoIP, NAT, DHCP, firewall, parental control, rate converter, fault isolation, protocol conversion/translation/mapping, or proxy server. The router 21 may further be according to, or based on, the white paper entitled: “Home Gateway” by Wipro Technologies, or may be according to, or based on, the Home Gateway Initiative (HGI) documents entitled: “Home Gateway Technical Requirements: Residential Profile”, Version 1.0, HGI guideline paper entitled: “Remote Access” Version 1.01, and HGI document entitled: “Requirements for an energy efficient home gateway” HGI-RD 009-R3, which are all incorporated in their entirety for all purposes as if fully set forth herein.",
+   "heading": "DETAILED DESCRIPTION"
+  }
+ ],
+ "citations": {
+  "patent": [
+   {
+    "number": "US3184842A",
+    "date": "1965-05-25",
+    "assignee": "Aeroprojects Inc",
+    "title": "Method and apparatus for delivering vibratory energy"
+   },
+   {
+    "number": "US3213010A",
+    "date": "1965-10-19",
+    "assignee": "Mast Dev Company Inc",
+    "title": "Vertical drop atmospheric sensor"
+   },
+   {
+    "number": "US3433981A",
+    "date": "1969-03-18",
+    "assignee": "Philips Corp",
+    "title": "Electrostatic synchronous motors"
+   },
+   {
+    "number": "US3436630A",
+    "date": "1969-04-01",
+    "assignee": "Philips Corp",
+    "title": "Electrostatic synchronous motor"
+   },
+   {
+    "number": "US3820110A",
+    "date": "1974-06-25",
+    "assignee": "C Henrich",
+    "title": "Eddy current type digital encoder and position reference"
+   },
+   {
+    "number": "US4019073A",
+    "date": "1977-04-19",
+    "assignee": "Vladimir Sergeevich Vishnevsky",
+    "title": "Piezoelectric motor structures"
+   },
+   {
+    "number": "US4047187A",
+    "date": "1977-09-06",
+    "assignee": "Canon Kabushiki Kaisha",
+    "title": "System for exposure measurement and/or focus detection by means of image senser"
+   },
+   {
+    "number": "US4210837A",
+    "date": "1980-07-01",
+    "assignee": "Misikov Vitaly M",
+    "title": "Piezoelectrically driven torsional vibration motor"
+   },
+   {
+    "number": "US4243631A",
+    "date": "1981-01-06",
+    "assignee": "Energy For Independence, Inc.",
+    "title": "Solid state sensor"
+   },
+   {
+    "number": "US4248123A",
+    "date": "1981-02-03",
+    "assignee": "Baldwin Piano & Organ Company",
+    "title": "Electronic piano"
+   },
+   {
+    "number": "US4317991A",
+    "date": "1982-03-02",
+    "assignee": "Honeywell Inc.",
+    "title": "Digital auto focus system utilizing a photodetector array"
+   },
+   {
+    "number": "US4351192A",
+    "date": "1982-09-28",
+    "assignee": "Rca Corporation",
+    "title": "Fluid flow velocity sensor using a piezoelectric element"
+   },
+   {
+    "number": "US4367027A",
+    "date": "1983-01-04",
+    "assignee": "Honeywell Inc.",
+    "title": "Active auto focus system improvement"
+   },
+   {
+    "number": "US4414537A",
+    "date": "1983-11-08",
+    "assignee": "Bell Telephone Laboratories, Incorporated",
+    "title": "Digital data entry glove interface device"
+   },
+   {
+    "number": "US4434451A",
+    "date": "1984-02-28",
+    "assignee": "Delatorre Leroy C",
+    "title": "Pressure sensors"
+   },
+   {
+    "number": "US4472656A",
+    "date": "1984-09-18",
+    "assignee": "U.S. Philips Corporation",
+    "title": "Temperature sensor and method using a single rotated quartz crystal"
+   },
+   {
+    "number": "US4496149A",
+    "date": "1985-01-29",
+    "assignee": "Schwartzberg Robert B",
+    "title": "Game apparatus utilizing controllable audio signals"
+   },
+   {
+    "number": "US4516260A",
+    "date": "1985-05-07",
+    "assignee": "Texas Instruments Incorporated",
+    "title": "Electronic learning aid or game having synthesized speech"
+   },
+   {
+    "number": "US4594898A",
+    "date": "1986-06-17",
+    "assignee": "Fisher Controls International, Inc.",
+    "title": "Force sensors"
+   },
+   {
+    "number": "US4638364A",
+    "date": "1987-01-20",
+    "assignee": "Sanyo Electric Co., Ltd.",
+    "title": "Auto focus circuit for video camera"
+   },
+   {
+    "number": "US4759220A",
+    "date": "1988-07-26",
+    "assignee": "Burdess James S",
+    "title": "Angular rate sensors"
+   },
+   {
+    "number": "US4796891A",
+    "date": "1989-01-10",
+    "assignee": "Applied Design Laboratories, Inc.",
+    "title": "Musical puzzle using sliding tiles"
+   },
+   {
+    "number": "US4840602A",
+    "date": "1989-06-20",
+    "assignee": "Coleco Industries, Inc.",
+    "title": "Talking doll responsive to external signal"
+   },
+   {
+    "number": "US4853884A",
+    "date": "1989-08-01",
+    "assignee": "Motorola, Inc.",
+    "title": "Random number generator with digital feedback"
+   },
+   {
+    "number": "US4857273A",
+    "date": "1989-08-15",
+    "assignee": "Plessey Overseas Limited",
+    "title": "Biosensors"
+   },
+   {
+    "number": "US4873481A",
+    "date": "1989-10-10",
+    "assignee": "Radiometrics Corporation",
+    "title": "Microwave radiometer and methods for sensing atmospheric moisture and temperature"
+   },
+   {
+    "number": "US4905176A",
+    "date": "1990-02-27",
+    "assignee": "International Business Machines Corporation",
+    "title": "Random number generator circuit"
+   },
+   {
+    "number": "US4968255A",
+    "date": "1990-11-06",
+    "assignee": "Video Technology Industries, Inc.",
+    "title": "Electronic instructional apparatus"
+   },
+   {
+    "number": "US5001453A",
+    "date": "1991-03-19",
+    "assignee": "Seiko Epson Corporation",
+    "title": "Humidity sensor"
+   },
+   {
+    "number": "US5010399A",
+    "date": "1991-04-23",
+    "assignee": "Inline Connection Corporation",
+    "title": "Video transmission and control system utilizing internal telephone lines"
+   }
+  ],
+  "cited_by": [
+   {
+    "number": "US7495558B2",
+    "date": "2009-02-24",
+    "assignee": "Infratab, Inc.",
+    "title": "Shelf-life monitoring sensor-transponder system"
+   },
+   {
+    "number": "US9104650B2",
+    "date": "2015-08-11",
+    "assignee": "Brooks Automation, Inc.",
+    "title": "Intelligent condition monitoring and fault diagnostic system for preventative maintenance"
+   },
+   {
+    "number": "US20090003832A1",
+    "date": "2009-01-01",
+    "assignee": "Federal Law Enforcement Development Services, Inc.",
+    "title": "Led light broad band over power line communication system"
+   },
+   {
+    "number": "US9455783B2",
+    "date": "2016-09-27",
+    "assignee": "Federal Law Enforcement Development Services, Inc.",
+    "title": "Network security and variable pulse wave form with continuous communication"
+   },
+   {
+    "number": "US11265082B2",
+    "date": "2022-03-01",
+    "assignee": "Federal Law Enforcement Development Services, Inc.",
+    "title": "LED light control assembly and system"
+   },
+   {
+    "number": "US9414458B2",
+    "date": "2016-08-09",
+    "assignee": "Federal Law Enforcement Development Services, Inc.",
+    "title": "LED light control assembly and system"
+   },
+   {
+    "number": "US9100124B2",
+    "date": "2015-08-04",
+    "assignee": "Federal Law Enforcement Development Services, Inc.",
+    "title": "LED Light Fixture"
+   },
+   {
+    "number": "US10997531B2",
+    "date": "2021-05-04",
+    "assignee": "Ciambella Ltd.",
+    "title": "System, method and graphical user interface for workflow generation, deployment and/or execution"
+   },
+   {
+    "number": "JP5058057B2",
+    "date": "2012-10-24",
+    "assignee": "浜松ホトニクス株式会社",
+    "title": "Medical X-ray imaging system"
+   },
+   {
+    "number": "US8179133B1",
+    "date": "2012-05-15",
+    "assignee": "Hypres, Inc.",
+    "title": "High linearity superconducting radio frequency magnetic field detector"
+   },
+   {
+    "number": "US9509436B2",
+    "date": "2016-11-29",
+    "assignee": "Cubic Corporation",
+    "title": "Protection of near-field communication exchanges"
+   },
+   {
+    "number": "US8890773B1",
+    "date": "2014-11-18",
+    "assignee": "Federal Law Enforcement Development Services, Inc.",
+    "title": "Visible light transceiver glasses"
+   },
+   {
+    "number": "US8135912B2",
+    "date": "2012-03-13",
+    "assignee": "Hola Networks, Ltd.",
+    "title": "System and method of increasing cache size"
+   },
+   {
+    "number": "US9496620B2",
+    "date": "2016-11-15",
+    "assignee": "Ubiquiti Networks, Inc.",
+    "title": "Radio system for long-range high-speed wireless communication"
+   },
+   {
+    "number": "US8836601B2",
+    "date": "2014-09-16",
+    "assignee": "Ubiquiti Networks, Inc.",
+    "title": "Dual receiver/transmitter radio devices with choke"
+   },
+   {
+    "number": "US8560604B2",
+    "date": "2013-10-15",
+    "assignee": "Hola Networks Ltd.",
+    "title": "System and method for providing faster and more efficient data communication"
+   },
+   {
+    "number": "US8970217B1",
+    "date": "2015-03-03",
+    "assignee": "Hypres, Inc.",
+    "title": "System and method for noise reduction in magnetic resonance imaging"
+   },
+   {
+    "number": "DE102010022522B4",
+    "date": "2014-02-13",
+    "assignee": "Siemens Aktiengesellschaft",
+    "title": "MRI receiver coil with local data storage"
+   },
+   {
+    "number": "US9906838B2",
+    "date": "2018-02-27",
+    "assignee": "Time Warner Cable Enterprises Llc",
+    "title": "Apparatus and methods for content delivery and message exchange across multiple content delivery networks"
+   },
+   {
+    "number": "US8401600B1",
+    "date": "2013-03-19",
+    "assignee": "Hypres, Inc.",
+    "title": "Superconducting multi-bit digital mixer"
+   },
+   {
+    "number": "KR20120040958A",
+    "date": "2012-04-30",
+    "assignee": "삼성전자주식회사",
+    "title": "Method for communicating in a portable terminal"
+   },
+   {
+    "number": "US8849469B2",
+    "date": "2014-09-30",
+    "assignee": "Microsoft Corporation",
+    "title": "Data center system that accommodates episodic computation"
+   },
+   {
+    "number": "US11064910B2",
+    "date": "2021-07-20",
+    "assignee": "Activbody, Inc.",
+    "title": "Physical activity monitoring system"
+   },
+   {
+    "number": "IL210169A0",
+    "date": "2011-03-31",
+    "assignee": "Yehuda Binder",
+    "title": "System and method for routing-based internet security"
+   },
+   {
+    "number": "EP3429163B1",
+    "date": "2020-08-19",
+    "assignee": "Trilliant Holdings, Inc.",
+    "title": "Device and method for facilitating secure communications over a cellular network"
+   },
+   {
+    "number": "US9857868B2",
+    "date": "2018-01-02",
+    "assignee": "The Board Of Trustees Of The Leland Stanford Junior University",
+    "title": "Method and system for ergonomic touch-free interface"
+   },
+   {
+    "number": "US8840466B2",
+    "date": "2014-09-23",
+    "assignee": "Aquifi, Inc.",
+    "title": "Method and system to create three-dimensional mapping in a two-dimensional game"
+   },
+   {
+    "number": "US8971210B1",
+    "date": "2015-03-03",
+    "assignee": "Redpine Signals, Inc.",
+    "title": "Reconfigurable multi-stream processor for multiple-input multiple-output (MIMO) wireless networks"
+   },
+   {
+    "number": "GB2491896A",
+    "date": "2012-12-19",
+    "assignee": "Univ Bruxelles",
+    "title": "Secret key generation"
+   },
+   {
+    "number": "KR20130050788A",
+    "date": "2013-05-16",
+    "assignee": "삼성전자주식회사",
+    "title": "Proxy communication system in ban environment and method for controlling thereof"
+   }
+  ]
+ },
+ "family": [
+  {
+   "number": "US20130201316A1",
+   "country": "US",
+   "status": "Abandoned"
+  },
+  {
+   "number": "US20170078400A1",
+   "country": "US",
+   "status": "Abandoned"
+  },
+  {
+   "number": "US11128710B2",
+   "country": "US",
+   "status": "Active"
+  },
+  {
+   "number": "US10868867B2",
+   "country": "US",
+   "status": "Active"
+  },
+  {
+   "number": "US20180124181A1",
+   "country": "US",
+   "status": "Abandoned"
+  },
+  {
+   "number": "US11190590B2",
+   "country": "US",
+   "status": "Active"
+  },
+  {
+   "number": "US11349925B2",
+   "country": "US",
+   "status": "Active"
+  },
+  {
+   "number": "US11375018B2",
+   "country": "US",
+   "status": "Active"
+  },
+  {
+   "number": "US20180343304A1",
+   "country": "US",
+   "status": "Abandoned"
+  },
+  {
+   "number": "US20190109904A1",
+   "country": "US",
+   "status": "Abandoned"
+  },
+  {
+   "number": "US11824933B2",
+   "country": "US",
+   "status": "Active"
+  },
+  {
+   "number": "US12192283B2",
+   "country": "US",
+   "status": "Active"
+  },
+  {
+   "number": "US11336726B2",
+   "country": "US",
+   "status": "Active"
+  },
+  {
+   "number": "US11240311B2",
+   "country": "US",
+   "status": "Active"
+  },
+  {
+   "number": "US11245765B2",
+   "country": "US",
+   "status": "Active"
+  },
+  {
+   "number": "US12010174B2",
+   "country": "US",
+   "status": "Active"
+  },
+  {
+   "number": "US11979461B2",
+   "country": "US",
+   "status": "Active"
+  },
+  {
+   "number": "US12081620B2",
+   "country": "US",
+   "status": "Active"
+  },
+  {
+   "number": "US20220078243A1",
+   "country": "US",
+   "status": "Pending"
+  },
+  {
+   "number": "US12149589B2",
+   "country": "US",
+   "status": "Active"
+  },
+  {
+   "number": "US12231497B2",
+   "country": "US",
+   "status": "Active"
+  },
+  {
+   "number": "US12088670B2",
+   "country": "US",
+   "status": "Active"
+  },
+  {
+   "number": "US12556606B2",
+   "country": "US",
+   "status": "Active"
+  },
+  {
+   "number": "US20220321661A1",
+   "country": "US",
+   "status": "Pending"
+  },
+  {
+   "number": "US12137144B2",
+   "country": "US",
+   "status": "Active"
+  },
+  {
+   "number": "US12177301B2",
+   "country": "US",
+   "status": "Active"
+  },
+  {
+   "number": "US12526337B2",
+   "country": "US",
+   "status": "Active"
+  },
+  {
+   "number": "US12316706B2",
+   "country": "US",
+   "status": "Active"
+  },
+  {
+   "number": "US20240396971A1",
+   "country": "US",
+   "status": "Pending"
+  },
+  {
+   "number": "US20240406265A1",
+   "country": "US",
+   "status": "Pending"
+  },
+  {
+   "number": "US20250055911A1",
+   "country": "US",
+   "status": "Pending"
+  },
+  {
+   "number": "US20250055912A1",
+   "country": "US",
+   "status": "Pending"
+  },
+  {
+   "number": "US20250055913A1",
+   "country": "US",
+   "status": "Pending"
+  },
+  {
+   "number": "US12627738B2",
+   "country": "US",
+   "status": "Active"
+  },
+  {
+   "number": "US20250047748A1",
+   "country": "US",
+   "status": "Pending"
+  },
+  {
+   "number": "US12401721B1",
+   "country": "US",
+   "status": "Active"
+  },
+  {
+   "number": "US12401720B1",
+   "country": "US",
+   "status": "Active"
+  },
+  {
+   "number": "US12615313B2",
+   "country": "US",
+   "status": "Active"
+  },
+  {
+   "number": "US12609988B2",
+   "country": "US",
+   "status": "Active"
+  },
+  {
+   "number": "US20250373695A1",
+   "country": "US",
+   "status": "Pending"
+  },
+  {
+   "number": "US20250373694A1",
+   "country": "US",
+   "status": "Pending"
+  },
+  {
+   "number": "US20260122137A1",
+   "country": "US",
+   "status": "Pending"
+  },
+  {
+   "number": "US20260135913A1",
+   "country": "US",
+   "status": "Pending"
+  },
+  {
+   "number": "US20260113376A1",
+   "country": "US",
+   "status": "Pending"
+  },
+  {
+   "number": "US20260135914A1",
+   "country": "US",
+   "status": "Pending"
+  },
+  {
+   "number": "US20260197369A1",
+   "country": "US",
+   "status": "Pending"
+  },
+  {
+   "number": "US20260205516A1",
+   "country": "US",
+   "status": "Pending"
+  }
+ ],
+ "legal_events": [
+  {
+   "text": "PTAB case IPR2026-00280 filed (Pending - Instituted)"
+  },
+  {
+   "date": "2025-05-08",
+   "text": "Priority to US19/201,951"
+  },
+  {
+   "date": "2025-05-08",
+   "text": "Application filed by May Patents Ltd"
+  },
+  {
+   "date": "2025-08-26",
+   "text": "Publication of US12401720B1"
+  },
+  {
+   "date": "2025-08-26",
+   "text": "Application granted"
+  },
+  {
+   "date": "2025-08-28",
+   "text": "Publication of US20250274517A1"
+  },
+  {
+   "date": "2025-05-08",
+   "text": "AS Assignment - Owner name: MAY PATENTS LTD., ISRAEL Free format text: ASSIGNMENT OF ASSIGNORS INTEREST;ASSIGNORS:BINDER, YEHUDA;MAYTAL, BENJAMIN;REEL/FRAME:071058/0343 Effective date: 20130103"
+  },
+  {
+   "date": "2025-05-08",
+   "text": "FEPP Fee payment procedure - Free format text: ENTITY STATUS SET TO UNDISCOUNTED (ORIGINAL EVENT CODE: BIG.); ENTITY STATUS OF PATENT OWNER: SMALL ENTITY"
+  },
+  {
+   "date": "2025-05-22",
+   "text": "FEPP Fee payment procedure - Free format text: ENTITY STATUS SET TO SMALL (ORIGINAL EVENT CODE: SMAL); ENTITY STATUS OF PATENT OWNER: SMALL ENTITY"
+  },
+  {
+   "date": "2025-08-13",
+   "text": "STCF Information on status: patent grant - Free format text: PATENTED CASE"
+  },
+  {
+   "date": "2026-03-10",
+   "text": "AS Assignment - Owner name: SMART SPEAKER LLC, TEXAS Free format text: ASSIGNMENT OF ASSIGNORS INTEREST;ASSIGNOR:MAY PATENTS LTD.;REEL/FRAME:074030/0802 Effective date: 20250318"
+  }
+ ],
+ "title": "System and method for server based control",
+ "abstract": "A system and method in a building or vehicle for an actuator operation in response to a sensor according to a control logic, the system comprising a router or a gateway communicating with a device associated with the sensor and a device associated with the actuator over in-building or in-vehicle networks, and an external Internet-connected control server associated with the control logic implementing a PID closed linear control loop and communicating with the router over external network for controlling the in-building or in-vehicle phenomenon. The sensor may be a microphone or a camera, and the system may include voice or image processing as part of the control logic. A redundancy is used by using multiple sensors or actuators, or by using multiple data paths over the building or vehicle internal or external communication. The networks may be wired or wireless, and may be BAN, PAN, LAN, WAN, or home networks.",
+ "status": "Active",
+ "expiry": "2033-01-03",
+ "completeness": {
+  "bibliographic": true,
+  "abstract": true,
+  "claims": true,
+  "description": true,
+  "classifications": true,
+  "landscapes": true,
+  "citations": true,
+  "family": true,
+  "legal_events": true
+ }
+}

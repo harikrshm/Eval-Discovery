@@ -1,0 +1,19 @@
+{
+  "name": "patent-assist-extension",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "scripts": {
+    "build": "vite build --mode content && vite build --mode background",
+    "lint": "eslint .",
+    "test": "vitest run"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.39.4",
+    "eslint": "^9.39.4",
+    "globals": "^17.4.0",
+    "jsdom": "^29.1.1",
+    "vite": "^8.0.0",
+    "vitest": "^5.1.1"
+  }
+}
