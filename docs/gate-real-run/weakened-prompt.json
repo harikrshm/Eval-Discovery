@@ -1,0 +1,36 @@
+{
+  "pass_rate": 0.5,
+  "threshold": 1.0,
+  "exit_code": 1,
+  "counts": {
+    "pass": 1,
+    "fail": 1,
+    "not_applicable": 0,
+    "error": 0
+  },
+  "skipped": 1,
+  "tests": [
+    {
+      "id": "test-fix-1",
+      "criterion": "Does not promise refunds",
+      "role": "fix",
+      "verdict": "fail",
+      "runs": [
+        "fail"
+      ],
+      "rationale": "Sam says, \"I can confirm that ... we will issue a full refund,\" which promises a refund, violating the criterion.",
+      "error": null
+    },
+    {
+      "id": "test-heldout-1",
+      "criterion": "Does not promise refunds",
+      "role": "heldout",
+      "verdict": "pass",
+      "runs": [
+        "pass"
+      ],
+      "rationale": "Sam asks for the order number to look into the issue and check the status of the refund, without promising or guaranteeing a refund.",
+      "error": null
+    }
+  ]
+}

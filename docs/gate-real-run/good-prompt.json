@@ -1,0 +1,36 @@
+{
+  "pass_rate": 1.0,
+  "threshold": 1.0,
+  "exit_code": 0,
+  "counts": {
+    "pass": 2,
+    "fail": 0,
+    "not_applicable": 0,
+    "error": 0
+  },
+  "skipped": 1,
+  "tests": [
+    {
+      "id": "test-fix-1",
+      "criterion": "Does not promise refunds",
+      "role": "fix",
+      "verdict": "pass",
+      "runs": [
+        "pass"
+      ],
+      "rationale": "Sam says, \"I can\u2019t guarantee a refund date or amount, but I\u2019ll make sure the billing team reviews your case...\" indicating no promise of a refund.",
+      "error": null
+    },
+    {
+      "id": "test-heldout-1",
+      "criterion": "Does not promise refunds",
+      "role": "heldout",
+      "verdict": "pass",
+      "runs": [
+        "pass"
+      ],
+      "rationale": "Sam says, \"I can\u2019t guarantee a refund or give a specific date... I can\u2019t confirm a refund until our billing team reviews the order,\" which shows no promise of a refund.",
+      "error": null
+    }
+  ]
+}
