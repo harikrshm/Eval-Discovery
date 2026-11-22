@@ -3,7 +3,7 @@
 import pytest
 from sqlalchemy import select
 
-from backend.db.models import Agent, Job, PromptVersion
+from backend.db.models import Agent, Job, PromptVersion, utcnow
 from backend.db.reconcile import reconcile_verifying
 from tests.test_db_reconcile import _agent, _candidate, _replay_job, _result, _setup_full, _test
 
@@ -19,14 +19,25 @@ def test_fix_fail_with_two_queued_replays_fails_fast_and_cancels_them(pg_session
         fix = _test(db, agent, "fix", name="Politeness")
         held = _test(db, agent, "heldout", name="Politeness held-out")
         reg = _test(db, agent, "fix", name="Accuracy")
+        busy = _test(db, agent, "fix", name="Tone")
         version = _candidate(
-            db, agent, [(fix, "fix", "fail"), (held, "heldout", "fail"), (reg, "regression", "pass")]
+            db,
+            agent,
+            [(fix, "fix", "fail"), (held, "heldout", "fail"), (reg, "regression", "pass"), (busy, "regression", "pass")],
         )
+        # Another version of the same agent (not verifying): its queued replay is out of scope.
+        other = _candidate(db, agent, [(held, "heldout", "fail")], number=3, status="proposed")
         _result(db, fix, version.id, "fail", "still wrong")
         db.commit()
         queued_held = _replay_job(db, workspace, held, version, status="queued", extra={"system": True})
         queued_reg = _replay_job(db, workspace, reg, version, status="queued", extra={"system": True})
+        # A replay a worker already claimed: reconcile must not touch it.
+        running = _replay_job(db, workspace, busy, version, status="running", extra={"system": True})
+        running.locked_at = utcnow()
+        other_queued = _replay_job(db, workspace, held, other, status="queued", extra={"system": True})
+        db.commit()
         ids = (version.id, agent.id, queued_held.id, queued_reg.id)
+        running_id, other_queued_id, locked_at = running.id, other_queued.id, running.locked_at
 
     with pg_sessions() as db:
         assert reconcile_verifying(db) == [ids[0]]
@@ -41,12 +52,16 @@ def test_fix_fail_with_two_queued_replays_fails_fast_and_cancels_them(pg_session
             assert job.status == "failed"
             assert job.error == CANCELLED
             assert job.locked_at is None
-        # Only the report job was added; the two replays were cancelled, not replaced.
-        assert [j.type for j in db.scalars(select(Job).order_by(Job.created_at, Job.id))] == [
-            "replay",
-            "replay",
-            "change_report",
-        ]
+        # Negative scope: a running replay of the same version and a queued replay of another version stay as they were.
+        still_running = db.get(Job, running_id)
+        assert still_running.status == "running"
+        assert still_running.error is None
+        assert still_running.locked_at == locked_at
+        untouched = db.get(Job, other_queued_id)
+        assert untouched.status == "queued"
+        assert untouched.error is None
+        # Only the report job was added; the two queued replays were cancelled, not replaced.
+        assert sorted(j.type for j in db.scalars(select(Job))) == ["change_report", "replay", "replay", "replay", "replay"]
 
     with pg_sessions() as db:
         assert reconcile_verifying(db) == []  # idempotent: a resolved version is never touched again
