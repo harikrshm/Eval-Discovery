@@ -107,13 +107,13 @@ def test_max_tokens_is_forwarded_only_when_given():
         assert "max_tokens" not in create.call_args.kwargs
 
 
-def test_client_bounds_each_call_with_a_timeout_and_few_retries():
+def test_client_bounds_each_call_with_a_timeout_and_five_retries():
     from backend import groq_client
 
     assert groq_client.GROQ_TIMEOUT_SECONDS == 45.0
-    assert groq_client.GROQ_MAX_RETRIES == 2
+    assert groq_client.GROQ_MAX_RETRIES == 5
     assert groq_client.client.timeout == 45.0
-    assert groq_client.client.max_retries == 2
+    assert groq_client.client.max_retries == 5
 
 
 def test_client_is_built_with_the_timeout_and_retry_arguments():
@@ -121,4 +121,4 @@ def test_client_is_built_with_the_timeout_and_retry_arguments():
 
     with patch("backend.groq_client.Groq") as groq_cls:
         groq_client._make_client("sk-test")
-    groq_cls.assert_called_once_with(api_key="sk-test", timeout=45.0, max_retries=2)
+    groq_cls.assert_called_once_with(api_key="sk-test", timeout=45.0, max_retries=5)

@@ -7,11 +7,12 @@ import pytest
 from sqlalchemy import select
 from sqlalchemy.orm import sessionmaker
 
-from backend.core.judge import JudgeResult
+from backend.core.judge import JudgeCheck, JudgeResult
+from backend.core.replay import ReplayFailed
 from backend.db.models import Agent, Criterion, EvalResult, EvalTest, Job, PromptVersion, Workspace, utcnow
 from backend.jobs import handlers, worker
 from backend.jobs.handlers import HANDLERS, JobFailed
-from backend.jobs.queue import claim_next, enqueue
+from backend.jobs.queue import MAX_JOB_ATTEMPTS, claim_next, enqueue
 from backend.jobs.worker import run_one, worker_loop
 
 T0 = datetime(2026, 1, 1, 12, 0, 0)
@@ -304,6 +305,90 @@ def test_failed_replay_job_fails_candidate_with_exact_reason(db_session, monkeyp
     version = db_session.get(PromptVersion, candidate_id)
     assert version.status == "failed_verification"
     assert version.change_report["outcome"]["reason"] == "A test could not be run: The model timed out."
+
+
+def _real_replay(monkeypatch, replay_effects):
+    """Run the real replay handler with the agent and judge mocked (no network): `replay_effects` in order."""
+    monkeypatch.setattr(handlers, "replay", MagicMock(side_effect=replay_effects))
+    monkeypatch.setattr(handlers, "judge", MagicMock(return_value=JudgeResult("pass", "ok")))
+    monkeypatch.setattr(handlers, "sanity_check", MagicMock(return_value=JudgeCheck(True, "pass", "fail")))
+
+
+TRANSCRIPT = [{"role": "user", "content": "hi"}, {"role": "assistant", "content": "yo"}]
+
+
+def test_system_replay_that_fails_once_is_retried_and_ends_done_after_two_claims(db_session, monkeypatch):
+    ws, agent, test, candidate = _verifying(db_session)
+    job = enqueue(
+        db_session, ws.id, "replay", {"test_id": test.id, "prompt_version_id": candidate.id, "system": True}
+    )
+    candidate_id = candidate.id
+    _real_replay(monkeypatch, [ReplayFailed("429 rate limited"), TRANSCRIPT])
+    now = APPROVED_AT + timedelta(minutes=1)
+
+    assert run_one(db_session, now=now) is True
+    db_session.expire_all()
+    first = db_session.get(Job, job.id)
+    assert first.status == "queued" and first.locked_at is None and first.attempts == 1
+    assert db_session.get(PromptVersion, candidate_id).status == "approved_verifying"  # still waiting
+
+    assert run_one(db_session, now=now) is True
+    db_session.expire_all()
+    second = db_session.get(Job, job.id)
+    assert second.status == "done" and second.attempts == 2
+    assert db_session.get(PromptVersion, candidate_id).status == "promoted"  # reconcile ran in the same pass
+
+
+def test_user_replay_that_fails_is_not_retried(db_session, monkeypatch):
+    ws, agent, test, candidate = _verifying(db_session)
+    job = _replay_job(db_session, ws, test, candidate)  # no "system" key: a person started it
+    _real_replay(monkeypatch, [ReplayFailed("429"), TRANSCRIPT])
+
+    assert run_one(db_session, now=APPROVED_AT + timedelta(minutes=1)) is True
+
+    db_session.expire_all()
+    failed = db_session.get(Job, job.id)
+    assert failed.status == "failed" and failed.attempts == 1
+    assert failed.error == "The agent didn't respond. Try again."
+
+
+def test_system_replay_out_of_attempts_fails_with_the_fixed_message_and_the_candidate_fails(
+    db_session, monkeypatch
+):
+    ws, agent, test, candidate = _verifying(db_session)
+    job = enqueue(
+        db_session, ws.id, "replay", {"test_id": test.id, "prompt_version_id": candidate.id, "system": True}
+    )
+    candidate_id = candidate.id
+    _real_replay(monkeypatch, ReplayFailed("secret provider detail"))
+    now = APPROVED_AT + timedelta(minutes=1)
+
+    for _ in range(MAX_JOB_ATTEMPTS):
+        assert run_one(db_session, now=now) is True
+
+    db_session.expire_all()
+    done = db_session.get(Job, job.id)
+    assert done.status == "failed" and done.attempts == MAX_JOB_ATTEMPTS
+    assert done.error == "The agent didn't respond. Try again."
+    version = db_session.get(PromptVersion, candidate_id)
+    assert version.status == "failed_verification"
+    assert version.change_report["outcome"]["reason"] == (
+        "A test could not be run: The agent didn't respond. Try again."
+    )
+
+
+def test_a_requeued_system_replay_does_not_sleep_the_worker(db_session, monkeypatch):
+    import time
+
+    ws, agent, test, candidate = _verifying(db_session)
+    enqueue(db_session, ws.id, "replay", {"test_id": test.id, "prompt_version_id": candidate.id, "system": True})
+    _real_replay(monkeypatch, [ReplayFailed("429")])
+    sleeper = MagicMock()
+    monkeypatch.setattr(time, "sleep", sleeper)
+
+    run_one(db_session, now=APPROVED_AT + timedelta(minutes=1))
+
+    sleeper.assert_not_called()
 
 
 def test_idle_pass_resolves_candidate_with_all_results_present(db_session):

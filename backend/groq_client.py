@@ -12,8 +12,10 @@ MODEL_JUDGE = "openai/gpt-oss-120b"
 
 _api_key = os.getenv("GROQ_API_KEY") or "sk-test-placeholder"
 # Bound every call: the SDK defaults (10 min timeout) could hold the single job worker for minutes.
+# Five retries ride out the free tier's per-minute token limit on the 120B model (the SDK backs off
+# and honours Retry-After) without failing a verification on one 429.
 GROQ_TIMEOUT_SECONDS = 45.0
-GROQ_MAX_RETRIES = 2
+GROQ_MAX_RETRIES = 5
 
 
 def _make_client(api_key: str) -> Groq:

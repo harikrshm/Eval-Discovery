@@ -26,6 +26,7 @@ from backend.jobs import handlers
 from backend.jobs.handlers import (
     HANDLERS,
     JobFailed,
+    RetryableJobFailure,
     handle_build_tests,
     handle_change_report,
     handle_generate_heldout,
@@ -322,16 +323,24 @@ def test_build_tests_judge_failure_in_runs_fails_job_and_writes_nothing(
     assert crit.judge_check is None
 
 
-def test_build_tests_sanity_check_failure_fails_job(db_session, monkeypatch):
+def test_build_tests_sanity_check_failure_still_builds_the_tests_without_a_judge_check(
+    db_session, monkeypatch, caplog
+):
     ws, agent, pv = _agent(db_session)
     crit = _criterion(db_session, agent)
     _runs(db_session, agent, pv, 1)
     monkeypatch.setattr(handlers, "sanity_check", MagicMock(side_effect=JudgeFailed("boom")))
+    _verdicts(monkeypatch, ["fail"])
     job = _job(db_session, ws, "build_tests", {"criterion_id": crit.id})
 
-    with pytest.raises(JobFailed, match="The judge was unavailable"):
-        handle_build_tests(db_session, job)
-    assert db_session.scalars(select(EvalTest)).first() is None
+    with caplog.at_level("WARNING", logger="backend.jobs.handlers"):
+        result = handle_build_tests(db_session, job)
+
+    assert result["tests_created"] == 1
+    assert len(list(db_session.scalars(select(EvalTest)))) == 1
+    db_session.refresh(crit)
+    assert crit.judge_check is None  # the next replay retries the check
+    assert any("sanity check failure" in r.message for r in caplog.records)
 
 
 def test_build_tests_rejects_foreign_workspace_criterion(db_session, monkeypatch, sanity):
@@ -646,20 +655,67 @@ def test_replay_skips_sanity_check_when_judge_check_is_stored(db_session, monkey
     assert crit.judge_check == {"passed": True, "good_verdict": "pass", "bad_verdict": "fail"}
 
 
-def test_replay_sanity_check_failure_fails_job_and_writes_nothing(db_session, monkeypatch):
+def test_replay_sanity_check_failure_keeps_the_verdict_and_stores_no_judge_check(
+    db_session, monkeypatch, caplog
+):
     ws, agent, pv = _agent(db_session)
     crit = _criterion(db_session, agent)
     test = _test(db_session, crit)
     _patch_replay(monkeypatch)
     _verdicts(monkeypatch, ["pass"])
-    monkeypatch.setattr(handlers, "sanity_check", MagicMock(side_effect=JudgeFailed("boom")))
+    sanity_mock = MagicMock(side_effect=JudgeFailed("boom"))
+    monkeypatch.setattr(handlers, "sanity_check", sanity_mock)
     job = _job(db_session, ws, "replay", {"test_id": test.id, "prompt_version_id": pv.id})
 
-    with pytest.raises(JobFailed, match="The judge was unavailable"):
-        handle_replay(db_session, job)
-    assert db_session.scalars(select(EvalResult)).first() is None
+    with caplog.at_level("WARNING", logger="backend.jobs.handlers"):
+        result = handle_replay(db_session, job)
+
+    row = db_session.scalars(select(EvalResult)).one()
+    assert result == {"result_id": row.id, "verdict": "pass"}
     db_session.refresh(crit)
     assert crit.judge_check is None
+    assert any("sanity check failure" in r.message for r in caplog.records)
+
+    # The next replay tries the check again and stores it.
+    sanity_mock.side_effect = None
+    sanity_mock.return_value = GOOD_CHECK
+    _verdicts(monkeypatch, ["pass"])
+    handle_replay(db_session, _job(db_session, ws, "replay", {"test_id": test.id, "prompt_version_id": pv.id}))
+    db_session.refresh(crit)
+    assert crit.judge_check == {"passed": True, "good_verdict": "pass", "bad_verdict": "fail"}
+
+
+@pytest.mark.parametrize("system", [True, False])
+@pytest.mark.parametrize(
+    "exc, message",
+    [
+        (ReplayFailed("provider says sk-SECRET"), "The agent didn't respond. Try again."),
+        (JudgeFailed("provider says sk-SECRET"), "The judge was unavailable. Try again."),
+    ],
+)
+def test_replay_failure_is_retryable_only_for_system_jobs(db_session, monkeypatch, system, exc, message):
+    ws, agent, pv = _agent(db_session)
+    test = _test(db_session, _criterion(db_session, agent))
+    if isinstance(exc, ReplayFailed):
+        monkeypatch.setattr(handlers, "replay", MagicMock(side_effect=exc))
+    else:
+        _patch_replay(monkeypatch)
+        monkeypatch.setattr(handlers, "judge", MagicMock(side_effect=exc))
+    payload = {"test_id": test.id, "prompt_version_id": pv.id}
+    if system:
+        payload["system"] = True
+
+    with pytest.raises(JobFailed) as err:
+        handle_replay(db_session, _job(db_session, ws, "replay", payload))
+
+    assert str(err.value) == message
+    assert isinstance(err.value, RetryableJobFailure) is system
+    assert db_session.scalars(select(EvalResult)).first() is None
+
+
+def test_retryable_job_failure_is_a_job_failed():
+    assert issubclass(RetryableJobFailure, JobFailed)
+    assert str(RetryableJobFailure("x")) == "x"
 
 
 def test_replay_sanity_check_runs_outside_a_transaction(db_session, monkeypatch):

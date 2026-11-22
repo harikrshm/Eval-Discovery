@@ -68,6 +68,14 @@ class JobFailed(Exception):
     """A job cannot be completed; the message is safe to show the user."""
 
 
+class RetryableJobFailure(JobFailed):
+    """A transient failure of a job the system queued itself (a verification replay).
+
+    The worker retries it like a crash (up to MAX_JOB_ATTEMPTS) and only then fails the job with
+    this fixed message. Jobs a person started raise plain `JobFailed`: they can press Replay again.
+    """
+
+
 def _spec(criterion: Criterion) -> CriterionSpec:
     return CriterionSpec(
         name=criterion.name,
@@ -127,9 +135,14 @@ def handle_build_tests(db: Session, job: Job) -> dict:
     )
     # End the read transaction before the slow LLM calls (expire_on_commit=False keeps rows usable).
     db.commit()
+    # The sanity check is a convenience: if it is unavailable the tests are still built, no
+    # judge_check is stored, and the next replay tries the check again.
     try:
         check = sanity_check(config, spec)
-
+    except JudgeFailed as exc:
+        logger.warning("build_tests sanity check failure for job %s: %s", job.id, exc)
+        check = None
+    try:
         judged: list[tuple[Run, JudgeResult]] = []
         failures = 0
         for run in reversed(recent):  # oldest -> newest
@@ -151,11 +164,12 @@ def handle_build_tests(db: Session, job: Job) -> dict:
     if _has_tests(db, criterion):  # another worker finished first
         return dict(_ALREADY_BUILT)
 
-    criterion.judge_check = {
-        "passed": check.passed,
-        "good_verdict": check.good_verdict,
-        "bad_verdict": check.bad_verdict,
-    }
+    if check is not None:
+        criterion.judge_check = {
+            "passed": check.passed,
+            "good_verdict": check.good_verdict,
+            "bad_verdict": check.bad_verdict,
+        }
     by_run = {run.id: (run, result) for run, result in judged}
     roles: list[str] = []
     for run_id, role in pick_test_runs([(run.id, result.verdict) for run, result in judged]):
@@ -220,16 +234,24 @@ def handle_replay(db: Session, job: Job) -> dict:
     workspace_id = job.workspace_id
     # End the read transaction before the slow LLM calls (expire_on_commit=False keeps rows usable).
     db.commit()
+    # A verification replay (queued by Approve) is retried by the worker on a transient failure;
+    # a replay a person started fails at once, and they can press Replay again.
+    failure = RetryableJobFailure if job.payload.get("system") is True else JobFailed
     try:
         transcript = replay(config, messages)
         verdict = judge(judge_config, spec, transcript)
-        check = sanity_check(judge_config, spec) if needs_check else None
     except ReplayFailed as exc:
         logger.warning("replay failure for job %s: %s", job.id, exc)
-        raise JobFailed(_AGENT_UNAVAILABLE) from exc
+        raise failure(_AGENT_UNAVAILABLE) from exc
     except JudgeFailed as exc:
         logger.warning("replay judge failure for job %s: %s", job.id, exc)
-        raise JobFailed(_JUDGE_UNAVAILABLE) from exc
+        raise failure(_JUDGE_UNAVAILABLE) from exc
+    check = None
+    if needs_check:  # the verdict stands without it; the next replay retries the check
+        try:
+            check = sanity_check(judge_config, spec)
+        except JudgeFailed as exc:
+            logger.warning("replay sanity check failure for job %s: %s", job.id, exc)
 
     _still_exists(db, test, _TEST_GONE)
     if _revision_changed(db, criterion, revision):  # edited while running: the verdict is obsolete

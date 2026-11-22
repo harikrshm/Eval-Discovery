@@ -9,7 +9,7 @@ from sqlalchemy.orm import Session
 from backend.db.models import Job
 from backend.db.reconcile import reconcile_verifying
 from backend.db.session import SessionLocal
-from backend.jobs.handlers import HANDLERS, JobFailed
+from backend.jobs.handlers import HANDLERS, JobFailed, RetryableJobFailure
 from backend.jobs.queue import MAX_JOB_ATTEMPTS, claim_next, complete, fail, requeue_stale
 
 logger = logging.getLogger(__name__)
@@ -39,6 +39,11 @@ def _run_job(db: Session, now: datetime | None) -> bool:
     try:
         result = handler(db, job)
         complete(db, job, result)
+    except RetryableJobFailure as exc:
+        # Counted like a crash: requeued while attempts remain, then failed with the fixed message.
+        # No sleep here (it would block every other job); the SDK's own backoff already waited.
+        db.rollback()
+        _requeue_or_fail(db, job_id, str(exc))
     except JobFailed as exc:
         db.rollback()
         job = _reload(db, job_id)
@@ -47,16 +52,20 @@ def _run_job(db: Session, now: datetime | None) -> bool:
     except Exception:
         logger.exception("Job %s (%s) crashed", job_id, job_type)
         db.rollback()
-        job = _reload(db, job_id)
-        if job is None:
-            return True
-        if job.attempts < MAX_JOB_ATTEMPTS:
-            job.status = "queued"
-            job.locked_at = None
-            db.commit()
-        else:
-            fail(db, job, _UNEXPECTED_ERROR)
+        _requeue_or_fail(db, job_id, _UNEXPECTED_ERROR)
     return True
+
+
+def _requeue_or_fail(db: Session, job_id: str, error: str) -> None:
+    job = _reload(db, job_id)
+    if job is None:
+        return
+    if job.attempts < MAX_JOB_ATTEMPTS:
+        job.status = "queued"
+        job.locked_at = None
+        db.commit()
+    else:
+        fail(db, job, error)
 
 
 def _reconcile(db: Session, now: datetime | None) -> None:
