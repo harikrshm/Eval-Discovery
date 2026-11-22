@@ -1,0 +1,19 @@
+{
+  "scenario": "support-refund",
+  "arm": "baseline",
+  "trial": 3,
+  "converged": true,
+  "previews": 2,
+  "path": "fallback",
+  "final_prompt_changed": true,
+  "model_calls": {
+    "openai/gpt-oss-20b": 8,
+    "openai/gpt-oss-120b": 3
+  },
+  "model_tokens": {
+    "openai/gpt-oss-20b": 6751,
+    "openai/gpt-oss-120b": 3601
+  },
+  "wall_seconds": 62.44337789999554,
+  "notes": []
+}

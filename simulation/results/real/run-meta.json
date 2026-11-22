@@ -1,0 +1,18 @@
+{
+  "mode": "real",
+  "date": "2026-11-22T13:32:09+00:00",
+  "trials": 3,
+  "scenarios": [
+    "support-refund",
+    "booking-confirm"
+  ],
+  "models": {
+    "chat": "openai/gpt-oss-20b",
+    "judge": "openai/gpt-oss-120b",
+    "pattern": "openai/gpt-oss-120b",
+    "criteria": "qwen/qwen3.8-27b"
+  },
+  "max_previews": 12,
+  "git_commit": "eef7fb6",
+  "pacing_tpm_limit": 7000
+}

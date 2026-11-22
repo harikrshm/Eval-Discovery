@@ -1,0 +1,21 @@
+{
+  "scenario": "booking-confirm",
+  "arm": "flywheel",
+  "trial": 2,
+  "converged": true,
+  "previews": 2,
+  "path": "none",
+  "final_prompt_changed": false,
+  "model_calls": {
+    "openai/gpt-oss-120b": 3,
+    "openai/gpt-oss-20b": 8
+  },
+  "model_tokens": {
+    "openai/gpt-oss-120b": 3356,
+    "openai/gpt-oss-20b": 6656
+  },
+  "wall_seconds": 71.44759130000602,
+  "notes": [
+    "The first judged pass came without any prompt change or app fix."
+  ]
+}

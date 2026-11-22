@@ -1,0 +1,24 @@
+{
+  "scenario": "support-refund",
+  "arm": "flywheel",
+  "trial": 2,
+  "converged": true,
+  "previews": 3,
+  "path": "fallback",
+  "final_prompt_changed": true,
+  "model_calls": {
+    "openai/gpt-oss-120b": 10,
+    "openai/gpt-oss-20b": 12,
+    "qwen/qwen3.8-27b": 1
+  },
+  "model_tokens": {
+    "openai/gpt-oss-120b": 10010,
+    "openai/gpt-oss-20b": 9583,
+    "qwen/qwen3.8-27b": 821
+  },
+  "wall_seconds": 142.39134019997437,
+  "notes": [
+    "The app built no fix test for the discovered criterion.",
+    "Falling back to manual prompt rewrites."
+  ]
+}

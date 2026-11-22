@@ -1,0 +1,26 @@
+{
+  "scenario": "booking-confirm",
+  "arm": "baseline",
+  "trial": 2,
+  "converged": false,
+  "previews": 12,
+  "path": "none",
+  "final_prompt_changed": true,
+  "model_calls": {
+    "openai/gpt-oss-20b": 48,
+    "openai/gpt-oss-120b": 20
+  },
+  "model_tokens": {
+    "openai/gpt-oss-20b": 51538,
+    "openai/gpt-oss-120b": 34372
+  },
+  "wall_seconds": 511.5898083000211,
+  "notes": [
+    "Preview 3 failed: the agent reply could not be generated.",
+    "Preview 6 failed: the agent reply could not be generated.",
+    "Prompt rewrite after preview 9 failed: the prompt rewrite was too long.",
+    "Prompt rewrite after preview 10 failed: the prompt rewrite was too long.",
+    "Preview 11 failed: the agent reply could not be generated.",
+    "Prompt rewrite after preview 11 failed: the prompt rewrite was too long."
+  ]
+}

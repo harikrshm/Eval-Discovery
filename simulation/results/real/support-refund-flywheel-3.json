@@ -1,0 +1,24 @@
+{
+  "scenario": "support-refund",
+  "arm": "flywheel",
+  "trial": 3,
+  "converged": true,
+  "previews": 3,
+  "path": "fallback",
+  "final_prompt_changed": true,
+  "model_calls": {
+    "openai/gpt-oss-120b": 13,
+    "openai/gpt-oss-20b": 18,
+    "qwen/qwen3.8-27b": 1
+  },
+  "model_tokens": {
+    "openai/gpt-oss-120b": 13662,
+    "openai/gpt-oss-20b": 10940,
+    "qwen/qwen3.8-27b": 763
+  },
+  "wall_seconds": 168.63376170000993,
+  "notes": [
+    "The fix test did not fail on the current prompt in 3 replays.",
+    "Falling back to manual prompt rewrites."
+  ]
+}
