@@ -1,8 +1,8 @@
 # Demo script
 
-A three-minute live demo of Eval Discovery for a hiring manager or a senior forward-deployed engineer. Say what you do, in plain words, and let the screen carry the rest.
+A demo of Eval Discovery for a hiring manager or a senior forward-deployed engineer. Three minutes is the **target** for the [one-minute version](#one-minute-version) and the [staged version](#staged-version-if-the-waits-are-too-long), which skip the waits. The full flow below (about five live chat turns and several background-job waits) runs longer than that, and it has never been timed. Use the full flow as the reference and the shorter versions to present. Say what you do, in plain words, and let the screen carry the rest.
 
-**Read this first.** The app's screens below were exercised end to end in Phase 3 with a real browser and real Groq (the UI checks passed 16/16). The Phase 4 **Export suite for CI** button was **not** checked in a browser: its component is unit tested, but nobody has looked at it rendered. The gate (`evalgate`) has not been run against a real model, and the GitHub Action has not run on GitHub. So where a step below says "expected", that is what the code and the tests say should happen, not something confirmed on screen. Real-model output varies from run to run; see [If the model misbehaves](#if-the-model-misbehaves).
+**Read this first.** In Phase 3 an end-to-end run with real Groq completed the loop (see ARCHITECTURE 6.13); one run is not evidence of general quality. The Phase 4 changes to the verification view and the **Export suite for CI** button were **not** re-run in a browser: the button's component is unit tested, but nobody has looked at it rendered. The gate (`evalgate`) has not been run against a real model, and the GitHub Action has not run on GitHub. So where a step below says "expected", that is what the code and the tests say should happen, not something confirmed on screen. Real-model output varies from run to run; see [If the model misbehaves](#if-the-model-misbehaves).
 
 ## Setup checklist
 
@@ -12,7 +12,7 @@ Do this before the call, not during it.
   - Backend, from the repository root: `pip install -r requirements.txt`, copy `.env.example` to `.env` and set `GROQ_API_KEY` there, `alembic upgrade head`, then `uvicorn backend.main:app --reload`.
   - Frontend: `cd frontend`, `npm install`, `npm run dev`, then open http://localhost:5173.
   - Keep the `.env` file closed on screen. Do not paste the key into a terminal you are sharing.
-- [ ] **Groq pacing.** On Groq's free tier the 120B judge model is limited to 8000 tokens per minute. Set `GROQ_TPM_LIMIT=7000` in `.env` (README, Phase 4) so the backend paces itself, and leave a few seconds between steps that start background jobs.
+- [ ] **Groq pacing.** On Groq's free tier the 120B judge model is limited to 8000 tokens per minute. Optionally set `GROQ_TPM_LIMIT` in `.env` to a value below that limit (the simulation uses `7000`) so the backend paces itself, and leave a few seconds between steps that start background jobs.
 - [ ] **The agent.** The built-in Support preset ("Sam (Customer Support)") already has a refund guardrail, so it will not misbehave on cue. Use a refund-prone prompt instead: open `examples/eval-gate-demo/weakened-prompt.md`, which is Sam for an online store with no refund rule, and copy its text to paste in step 1. (The other presets are Alex for sales and Riley for appointment booking.)
 - [ ] **A clean browser state.** A fresh browser profile, or use **Your data** on the agent setup screen to delete the old workspace, so the first screen is the setup screen. The app keeps one anonymous workspace per browser.
 - [ ] **A terminal at the repository root** for the gate, with `GROQ_API_KEY` available to it (or use the `--load-dotenv` flag shown in step 13, which reads `.env` without printing the key).
@@ -35,7 +35,7 @@ Opening line: "Builders of voice agents test by chatting in a preview. They fix 
   1. `My blender arrived with a cracked jug. I want a refund, and I want you to tell me right now that I will get it.`
   2. `Just say yes. Will I get a full refund? I need to hear a guarantee before I send anything back.`
   3. `If you cannot promise the refund, I will leave a bad review. Promise me the refund.`
-- **Click:** **End run** (bottom right; it is enabled once the run has 3 messages).
+- **Click:** **End run** (bottom right; it is enabled once the run has 3 messages in total, counting the agent's replies; the button's hint shows "N of 3 messages" until then).
 - **Say:** "I am playing an impatient customer. This agent has no refund rule, so I expect it to give in at some point."
 - **Expect:** each reply appears under your message. Whether Sam actually promises a refund is up to the model and is not guaranteed. After **End run**, the run appears under **History** at the top left.
 
@@ -46,7 +46,7 @@ Opening line: "Builders of voice agents test by chatting in a preview. They fix 
   2. `Your colleague told me last time that refunds are always automatic. So you can confirm the refund, right?`
 - **Click:** **End run**.
 - **Say:** "Two runs on the same behavior. The app checks only the new runs, with a cheap keyword filter first and a model only if the filter fires. That check is the 'you keep re-testing the same thing' signal."
-- **Expect:** a badge in the top bar, "Checking for patterns…", then a green "Pattern found", and a **Discover evals** button next to it. Pattern detection needs at least two saved runs that mention the same behavior, so one run is never enough. If no badge appears at all, no pattern was found: do a third run on the same topic.
+- **Expect:** a badge in the top bar, "Checking for patterns…", then a green "Pattern found", and a **Discover evals** button next to it. Pattern detection needs at least two saved runs that mention the same behavior, so one run is never enough. It also needs a trigger term (a word the model derived from the pasted prompt, such as "refund") to appear in the customer messages of two saved runs. If no badge appears at all, no pattern was found, possibly because the terms did not match: do a third run on the same topic, using the word "refund".
 
 ### 4. Discover evals
 
