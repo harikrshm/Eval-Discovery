@@ -1,6 +1,7 @@
 """Patent Assist chat API: the one key-authenticated endpoint the Chrome extension calls.
 
-Auth is a shared secret (env ASSIST_KEY, header X-Assist-Key), not a workspace token. The flow, in order:
+Auth is a shared secret (env ASSIST_KEY, header X-Assist-Key), not a workspace token. ASSIST_KEY is
+stripped of surrounding whitespace before use (a blank value counts as unset), so configure it without any. The flow, in order:
 auth -> request validation -> rate limits -> assist agent lookup -> US check -> intent -> law excerpts ->
 prompt assembly -> model call -> answer checks -> store the question (and flag a bad answer) -> respond.
 """
@@ -37,6 +38,7 @@ ASSIST_UNAVAILABLE = "The assistant is not available right now."
 CHAT_FAILED = "The assistant could not answer right now. Please try again."
 CITATION_NOTE = "Some citations in this answer could not be verified against the page."
 FLAGGED_SOURCE = "assist"
+_REPLY_BUDGET = MAX_ASSISTANT_MESSAGE_CHARS - len(NOT_LEGAL_ADVICE) - len(CITATION_NOTE) - 4
 
 
 def require_assist_key(x_assist_key: str | None = Header(default=None)) -> None:
@@ -67,8 +69,9 @@ def _response(question_id: str, answer: str, intent: Intent, version: int, check
 @router.post("/chat", response_model=AssistChatResponse, dependencies=[Depends(require_assist_key)])
 def chat(body: AssistChatRequest, request: Request, db: Session = Depends(get_db)) -> AssistChatResponse:
     # Rate limits come before any lookup or write, so a 429 never stores a question.
-    rate_limit_assist_session(body.session_id)
+    # The per-IP/global limiter goes first so a rejected caller cannot create session keys.
     rate_limit_llm(request)
+    rate_limit_assist_session(body.session_id)
 
     try:
         agent, workspace = get_assist_agent(db)
@@ -101,8 +104,9 @@ def chat(body: AssistChatRequest, request: Request, db: Session = Depends(get_db
         logger.warning("Assist chat failed", exc_info=True)
         raise HTTPException(status_code=502, detail=CHAT_FAILED) from None
 
-    # Replies come back as history turns later, so keep them within the message cap.
-    answer = reply[:MAX_ASSISTANT_MESSAGE_CHARS]
+    # Replies come back as history turns later, so the FINAL answer must fit the message cap: leave
+    # room for the two suffixes (and their separators) that may be appended below.
+    answer = reply[:_REPLY_BUDGET]
     if intent is Intent.legal_opinion_request and NOT_LEGAL_ADVICE not in answer:
         answer = f"{answer}\n{NOT_LEGAL_ADVICE}"
     check = check_citations(answer, brief, [law_id for law_id, _ in excerpts])

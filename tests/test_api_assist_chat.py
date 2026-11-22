@@ -9,6 +9,7 @@ from sqlalchemy import select
 from backend import groq_client
 from backend.api import limits
 from backend.api.agents import CHAT_MAX_TOKENS
+from backend.api.limits import MAX_ASSISTANT_MESSAGE_CHARS, MAX_REQUEST_CHARS
 from backend.api.assist import ASSIST_UNAVAILABLE, CITATION_NOTE, CHAT_FAILED
 from backend.core.assist import ASSIST_MODEL
 from backend.core.assist.assemble import NOT_US_ANSWER
@@ -336,10 +337,13 @@ def test_provided_law_id_is_ok(client, db_session, assist_agent, fake):
 
 def test_repeated_flagged_answers_keep_one_run_per_session(client, db_session, assist_agent, fake):
     fake.reply = "Claim 99."
-    post(client)
-    post(client)
-    assert len(list(db_session.scalars(select(Run)))) == 1
+    post(client, body(question="Explain claim 98"))
+    post(client, body(question="Explain claim 99"))
+    runs = list(db_session.scalars(select(Run)))
+    assert len(runs) == 1
     assert len(questions(db_session)) == 2
+    assert [m["content"] for m in runs[0].messages][0] == "Explain claim 99"
+    assert runs[0].messages[1]["role"] == "assistant"
 
 
 # ---- model failure ----------------------------------------------------------
@@ -374,7 +378,8 @@ def _bad(**overrides):
         _bad(question="   \n\t "),
         _bad(history=[{"role": "user", "content": "x"}] * 21),
         _bad(history=[{"role": "user", "content": "x" * 2001}]),
-        _bad(history=[{"role": "assistant", "content": "x" * 2001}]),
+        _bad(history=[{"role": "assistant", "content": "x" * (MAX_ASSISTANT_MESSAGE_CHARS + 1)}]),
+        _bad(history=[{"role": "assistant", "content": "x" * 15000}] * 8, question="q"),  # sum over 120000
         _bad(history=[{"role": "system", "content": "x"}]),
         _bad(history=[{"role": "user", "content": "x", "extra": 1}]),
         _bad(session_id="short"),
@@ -402,6 +407,53 @@ def test_limits_are_inclusive(client, assist_agent, fake):
     )
     assert post(client, payload).status_code == 200
     assert post(client, body(session_id="a" * 8)).status_code == 200
+
+
+def test_assistant_turns_may_be_longer_than_user_turns(client, assist_agent, fake):
+    for n in (2001, MAX_ASSISTANT_MESSAGE_CHARS):
+        history = [{"role": "assistant", "content": "x" * n}]
+        assert post(client, body(history=history)).status_code == 200
+    # The prompt is unaffected: assemble shrinks every history turn to 2000 chars.
+    assert len(fake.calls[-1]["messages"][1]["content"]) == 2000
+    assert post(client, body(history=[{"role": "user", "content": "x" * 2001}])).status_code == 422
+
+
+def test_history_plus_question_total_is_capped(client, assist_agent, fake):
+    turn = {"role": "assistant", "content": "x" * 15000}
+    ok = body(history=[turn] * 7, question="q" * 2000)  # 105000 + 2000
+    assert post(client, ok).status_code == 200
+    exactly = body(history=[turn] * 8, question="q")
+    exactly["history"][0] = {"role": "assistant", "content": "x" * (MAX_REQUEST_CHARS - 7 * 15000 - 1)}
+    assert sum(len(t["content"]) for t in exactly["history"]) + 1 == MAX_REQUEST_CHARS
+    assert post(client, exactly).status_code == 200
+    exactly["question"] = "qq"
+    assert post(client, exactly).status_code == 422
+
+
+def test_a_long_answer_can_be_sent_back_as_history(client, assist_agent, fake):
+    fake.reply = "Claim 1 " + "x" * 20_000
+    first = post(client, body(question="Explain claim 1")).json()
+    assert len(first["answer"]) <= MAX_ASSISTANT_MESSAGE_CHARS
+    history = [
+        {"role": "user", "content": "Explain claim 1"},
+        {"role": "assistant", "content": first["answer"]},
+    ]
+    second = post(client, body(question="And claim 2?", history=history))
+    assert second.status_code == 200
+
+
+def test_the_final_answer_always_fits_the_cap_with_both_suffixes(client, db_session, assist_agent, fake):
+    fake.reply = "Claim 99 " + "x" * 20_000
+    data = post(client, body(question="Is claim 1 valid?")).json()
+    answer = data["answer"]
+    assert len(answer) <= MAX_ASSISTANT_MESSAGE_CHARS
+    assert NOT_LEGAL_ADVICE in answer
+    assert answer.endswith(CITATION_NOTE)
+    assert data["citation_check"]["ok"] is False
+    assert questions(db_session)[0].answer == answer
+    # and it round-trips as an assistant turn
+    history = [{"role": "assistant", "content": answer}]
+    assert post(client, body(history=history)).status_code == 200
 
 
 def test_question_is_stripped(client, db_session, assist_agent, fake):
@@ -463,6 +515,21 @@ def test_the_per_ip_llm_limiter_also_applies(client, db_session, assist_agent, f
     assert post(client, body(session_id="session-three-3")).status_code == 429
     assert len(questions(db_session)) == 2
     assert len(fake.calls) == 2
+
+
+def test_ip_limited_requests_do_not_create_or_consume_session_keys(client, assist_agent, fake, monkeypatch):
+    monkeypatch.setattr(limits, "llm_limiter", limits.RateLimiter(1, 60))
+    assert post(client, body(session_id="legit-session-1")).status_code == 200
+    keys_before = set(limits.assist_session_limiter._calls)
+    assert keys_before == {"legit-session-1"}
+    for i in range(50):
+        assert post(client, body(session_id=f"attacker-session-{i:04d}")).status_code == 429
+    assert set(limits.assist_session_limiter._calls) == keys_before
+    # an IP-limited 429 on the legitimate session consumed none of its budget
+    for _ in range(5):
+        assert post(client, body(session_id="legit-session-1")).status_code == 429
+    assert len(limits.assist_session_limiter._calls["legit-session-1"]) == 1
+    assert len(fake.calls) == 1
 
 
 def test_the_session_limiter_is_reset_by_reset_limiters(client, assist_agent, fake, monkeypatch):

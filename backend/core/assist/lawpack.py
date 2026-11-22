@@ -136,7 +136,7 @@ _QUESTION_RULES: tuple[tuple[re.Pattern, tuple[str, ...]], ...] = tuple(
         (rf"\bmeans for\b|{_sub('112', 'f')}|\bmeans[- ]plus[- ]function", ("usc-112f",)),
         (rf"infring|{_num('271')}|induc|contributory", ("usc-271",)),
         (r"comprising|consisting", ("mpep-2111-03",)),
-        (r"\bterm\b|expir|\b20 years\b|maintenance", ("usc-154",)),
+        (r"\bpatent term\b|expir|\b20 years\b|\bmaintenance\b|\bterm of (?:the|a) patent\b", ("usc-154",)),
         (rf"obvious|{_num('103')}", ("usc-103", "mpep-2141")),
         (rf"novel|{_num('102')}|anticipat|prior art", ("usc-102",)),
         (rf"{_num('101')}|patent eligible|abstract idea", ("usc-101",)),

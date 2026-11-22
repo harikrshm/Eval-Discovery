@@ -397,8 +397,18 @@ _SESSION_ID_RE = re.compile(r"[A-Za-z0-9-]{8,64}", re.ASCII)
 
 
 class AssistTurn(_Strict):
+    """A history turn: user turns are capped at 2000 chars; assistant turns (the model's earlier
+    answers, which the user cannot shorten) at MAX_ASSISTANT_MESSAGE_CHARS, so any answer can be sent back."""
+
     role: Literal["user", "assistant"]
-    content: str = Field(max_length=ASSIST_MAX_TURN_CHARS)
+    content: str
+
+    @model_validator(mode="after")
+    def _content_within_role_cap(self) -> "AssistTurn":
+        cap = ASSIST_MAX_TURN_CHARS if self.role == "user" else MAX_ASSISTANT_MESSAGE_CHARS
+        if len(self.content) > cap:
+            raise ValueError(f"{self.role} turns must be at most {cap} characters")
+        return self
 
 
 class AssistChatRequest(_Strict):
@@ -423,6 +433,13 @@ class AssistChatRequest(_Strict):
         if not value:
             raise ValueError("must not be blank")
         return value
+
+    @model_validator(mode="after")
+    def _total_size(self) -> "AssistChatRequest":
+        total = len(self.question) + sum(len(t.content) for t in self.history)
+        if total > MAX_REQUEST_CHARS:
+            raise ValueError(f"history and question must total at most {MAX_REQUEST_CHARS} characters")
+        return self
 
 
 class CitationCheckOut(BaseModel):
