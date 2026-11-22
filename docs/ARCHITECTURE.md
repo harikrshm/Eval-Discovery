@@ -18,6 +18,7 @@ Today that process is manual and slow. Eval Discovery automates it:
 - The developer reviews, edits, and exports the rubric as JSON for use in automated test pipelines
 - (Phase 2) A background job turns the criterion into replayable tests from the developer's own failing runs. The developer edits the agent's prompt, replays the tests against it, and an LLM judge says pass or fail with a rationale
 - (Phase 3) From a failing test the system suggests a prompt fix and explains why. The developer reads the diff and approves, and the candidate goes live only if it passes the fix test, a held-out test and every previously passing test, by a rule written in code. A model-written report explains the result, any version can be restored, and a chip says how many criteria pass
+- (Phase 4) The saved suite can be exported as a versioned JSON file, and a command-line gate (`evalgate`) replays it against a prompt file in the team's own CI and fails the check when a behavior that passed at export starts failing. A simulation harness compares "preview runs until the first judged pass" with and without the loop (its real-model results are generated separately and are not part of this document), verification now fails as soon as the stored verdicts decide it, and an events script reports acceptance and conversion counts
 
 **Business Value:**
 - Reduces time-to-rubric from hours of manual analysis to minutes
@@ -37,6 +38,7 @@ Today that process is manual and slow. Eval Discovery automates it:
 | Persistence | SQLAlchemy 2 + Alembic on Postgres (SQLite for local dev and tests) | Workspaces, agents, prompt versions (including candidates and their reports), runs, criteria, tests and results, jobs, events |
 | Background jobs | Database-backed queue, one worker loop inside the web process | Building tests, replaying them, suggesting fixes, generating held-out tests and writing change reports, so no LLM chain holds an HTTP request open; the loop also resolves verifying candidates |
 | LLM Services | Groq API (3 models) | Agent simulation and replay, prompt analysis, pattern detection and judging, criteria generation, fix suggestion, held-out scenario generation, change-report narrative |
+| Tooling (Phase 4) | `evalgate/`, `simulation/`, `scripts/metrics.py`, `.github/` | Not part of the web process. The CI gate (imports `backend.core` and `backend.groq_client` only), the simulation harness (drives the real app in-process), the events metrics script, and the repo workflows. See [3.7](#37-export-and-the-ci-gate-phase-4) and [3.8](#38-the-simulation-phase-4) |
 
 ---
 
@@ -54,6 +56,8 @@ graph TB
     Groq["Groq API<br/>(LLM Cloud Service)"]
     Export["JSON Export<br/>(Eval Rubric File)"]
     TestPipeline["External Test Pipeline<br/>(CI / Eval Runner)"]
+    SuiteFile["Suite export<br/>(eval-suite.json, committed to the team's repo)"]
+    Gate["evalgate CI gate<br/>(runs in the team's repository)"]
 
     Dev -->|"Pastes an agent prompt or picks a preset,<br/>chats, reviews & edits eval criteria"| System
     System <-->|"Persists and reloads state"| DB
@@ -61,12 +65,17 @@ graph TB
     Groq -->|"Generated responses"| System
     System -->|"Exports eval rubric"| Export
     Export -->|"Imported by team"| TestPipeline
+    System -->|"Export suite for CI"| SuiteFile
+    SuiteFile -->|"Read by"| Gate
+    Gate <-->|"Replay and judge requests"| Groq
+    Gate -->|"Exit code 0, 1, 2 or 3"| TestPipeline
 ```
 
 **Key relationships:**
 - The developer is both the conversation participant (playing the user role) and the rubric author
 - Groq and the database are the only runtime dependencies — there is no auth service; identity is an anonymous workspace token
 - The output (JSON rubric) flows into the team's broader test infrastructure
+- Since Phase 4 the gate is the only part that runs outside the app: it needs a suite file, a prompt file and a Groq key, not the app, its database or a workspace token
 
 ---
 
@@ -214,6 +223,7 @@ graph TB
             PromptRouter["prompt_versions.py<br/>PUT agents/id/prompt"]
             TestsRouter["tests.py<br/>GET tests · POST replay · POST run-all · POST build-tests · POST suggest-fix · POST generate-heldout · GET jobs"]
             VersionsRouter["versions.py<br/>GET prompt-versions · GET prompt-versions/id · POST approve · reject · restore · GET report"]
+            ExportRouter["export.py<br/>GET agents/id/export (the suite for the CI gate, read-only)"]
         end
 
         ApiSupport["api/deps.py · limits.py · schemas.py<br/>(workspace auth · quotas and rate limiter · strict Pydantic schemas)"]
@@ -229,7 +239,7 @@ graph TB
             Suggest["suggest.py<br/>(suggest_fix)"]
             Heldout["heldout.py<br/>(generate_scenario)"]
             Report["report.py<br/>(write_report)"]
-            Promotion["promotion.py<br/>(decide_promotion · build_outcome_rows · quote_turn)"]
+            Promotion["promotion.py<br/>(decide_promotion · early_failure · build_outcome_rows · quote_turn)"]
             Prompts["prompts.py<br/>(prompt builders · delimiter neutralizing)"]
         end
 
@@ -237,7 +247,7 @@ graph TB
             DbModels["models.py · session.py"]
             DbHelpers["agents.py · workspaces.py · events.py · testsuite.py"]
             Candidates["candidates.py<br/>(create_proposed_version · approve · reject · restore · compute_required)"]
-            Reconcile["reconcile.py<br/>(reconcile_verifying: promote or fail)"]
+            Reconcile["reconcile.py<br/>(reconcile_verifying: promote or fail · fails fast and cancels queued replays)"]
         end
 
         subgraph Jobs["jobs/ — background work, same process"]
@@ -246,7 +256,7 @@ graph TB
             Worker["worker.py<br/>(worker_loop started in the app lifespan)"]
         end
 
-        GroqClient["groq_client.py<br/>(API wrapper · model constants · think-block stripping)"]
+        GroqClient["groq_client.py<br/>(API wrapper · model constants · think-block stripping · bounded request retries · optional token pacing)"]
         Utils["utils.py<br/>(JSON extraction from LLM output)"]
 
         FastAPI --> WsRouter
@@ -256,6 +266,7 @@ graph TB
         FastAPI --> PromptRouter
         FastAPI --> TestsRouter
         FastAPI --> VersionsRouter
+        FastAPI --> ExportRouter
         FastAPI --> Worker
         Routers --> ApiSupport
         Routers --> Core
@@ -281,6 +292,32 @@ graph TB
         AgentRouter --> GroqClient
     end
 
+    subgraph Tools["Phase 4 tools — run from the repo root, outside the web process"]
+        direction TB
+        GateCli["evalgate/cli.py<br/>(flags · exit codes 0, 1, 2, 3 · text, json, markdown output · GITHUB_STEP_SUMMARY)"]
+        GateSuite["evalgate/suite.py<br/>(load and validate eval-discovery.suite v1 · select tests)"]
+        GateRunner["evalgate/runner.py<br/>(replay and judge each test · --repeat majority vote · exit_code)"]
+        SimRun["simulation/run.py · report.py<br/>(resumable runner · results page generator)"]
+        SimArms["simulation/arms.py<br/>(baseline and flywheel arms · path recording)"]
+        SimDriver["simulation/appdriver.py<br/>(the real app through a test client, in-memory SQLite, worker run inline)"]
+        SimRef["simulation/reference.py<br/>(independent reference judge)"]
+        SimFake["simulation/fakeclient.py · clients.py<br/>(deterministic fake model for mock mode · counting wrapper)"]
+        MetricsScript["scripts/metrics.py<br/>(read-only event metrics)"]
+
+        GateCli --> GateSuite
+        GateCli --> GateRunner
+        GateRunner --> Replay
+        GateRunner --> Judge
+        SimRun --> SimArms
+        SimRun --> SimFake
+        SimArms --> SimDriver
+        SimArms --> SimRef
+        SimArms --> GroqClient
+        SimRef --> Judge
+        SimDriver --> FastAPI
+        SimFake -.->|"replaces the client in mock mode"| GroqClient
+    end
+
     subgraph GroqAPI["Groq API"]
         Chat20["openai/gpt-oss-20b<br/>(plays the agent under test · replays)"]
         GPT["openai/gpt-oss-120b<br/>(prompt analysis · pattern detection · judge · suggest fix · generate test · report)"]
@@ -291,6 +328,7 @@ graph TB
 
     ApiClient -->|"HTTP / JSON"| FastAPI
     DbModels --> DB
+    MetricsScript -->|"reads the event table"| DB
     GroqClient --> Chat20
     GroqClient --> GPT
     GroqClient --> Qwen
@@ -421,11 +459,116 @@ sequenceDiagram
 
 Reconcile also covers the cases no single job can: a restart between the last replay and the reconcile (the next pass resolves it), a replay job that failed, was discarded (the criterion changed) or was lost, and malformed `verification` data ("Verification could not be completed."). With results still missing, no replay job queued or running and none failed or discarded, the candidate fails 30 minutes after approval ("Verification timed out."); a queued or running replay keeps it waiting (a stuck one ends through stale-job recovery), and with the worker disabled nothing resolves it. It is idempotent and takes the agent row lock, so overlapping passes cannot resolve a version twice.
 
+**Fail fast (Phase 4).** Reconcile no longer waits for every replay when the stored verdicts already decide the outcome. `core/promotion.early_failure(required, verdicts)` takes the verdicts present so far (a missing verdict never decides anything) and returns a failing decision when the fix or held-out verdict is not `pass`, or any regression verdict is `fail`; it never returns a promotion. A fix or held-out test whose own replay jobs failed or were discarded, with none queued or running, is decisive as well ("A test could not be run: ..." or "A criterion changed during verification."); a missing regression result never is. A failed candidate gets the same reason strings as before and a table with `after = null` for the tests that never ran, and its still-queued replay jobs (matched on the candidate version and the required test ids) are set to `failed` with the error "Cancelled: verification already failed." by an update that re-checks `status = 'queued'`, so a job a worker claims at the same moment is not overwritten. A replay that is already running is not interrupted: `handle_replay` returns `{"skipped": true}` for a `system` job whose version is no longer `approved_verifying`, checked before the model calls and again after them, and stores nothing, so a late result never lands on a resolved version.
+
+---
+
+### 3.7 Export and the CI Gate (Phase 4)
+
+The export is a read-only route, `GET /agents/{id}/export` (workspace-scoped; 404 for another workspace's agent, 409 "Agent has no current prompt." for an agent without one). It returns the `eval-discovery.suite` v1 document and nothing else (no results, transcripts, runs, events or workspace data):
+
+```json
+{
+  "format": "eval-discovery.suite",
+  "version": 1,
+  "agent": {"name": "...", "user_role_label": "..."},
+  "prompt": {"text": "...", "version_number": 3},
+  "criteria": [
+    {
+      "id": "...", "name": "...", "definition": "...", "good_example": "...", "bad_example": "...",
+      "tests": [
+        {"id": "...", "role": "fix", "origin": "run", "scripted_user_messages": ["..."], "current_verdict": "pass"}
+      ]
+    }
+  ]
+}
+```
+
+`current_verdict` is the verdict of the test's newest non-stale replay on the live prompt version (`pass`, `fail`, `not_applicable`), or `null` when there is none. The frontend's "Export suite for CI" button saves the response as `eval-suite.json`.
+
+`evalgate` (`python -m evalgate`, run from the repository root) reads that file and a prompt file. It imports only `backend.core` and `backend.groq_client` (a test imports it in a subprocess and asserts that neither FastAPI nor SQLAlchemy is loaded). Flow:
+
+```mermaid
+flowchart TD
+    Start["python -m evalgate --suite FILE --prompt FILE"] --> Valid{"Suite and prompt valid?"}
+    Valid -->|No| X2["exit 2"]
+    Valid -->|Yes| Select["Select tests: current_verdict is pass<br/>(every test with --all), count the skipped"]
+    Select --> Any{"Any test selected?"}
+    Any -->|No| X3a["exit 3: nothing runnable"]
+    Any -->|Yes| Key{"GROQ_API_KEY set and not a placeholder?"}
+    Key -->|No| X3b["exit 3: no key"]
+    Key -->|Yes| Run["Per test, K runs (--repeat):<br/>replay on the prompt file, then judge at temperature 0"]
+    Run --> Vote["Per test: a strict majority of passes is a pass;<br/>error only when every run errored"]
+    Vote --> Ran{"Any test errored, or no pass or fail verdict at all?"}
+    Ran -->|Yes| X3c["exit 3: the gate could not run"]
+    Ran -->|No| Rate{"passes / (passes + fails)<br/>at or above the threshold?"}
+    Rate -->|Yes| X0["exit 0"]
+    Rate -->|No| X1["exit 1"]
+```
+
+| Exit | Meaning |
+|------|---------|
+| `0` | Pass rate at or above the threshold (default 1.0) |
+| `1` | Pass rate below the threshold |
+| `2` | Usage error, or an invalid or missing suite or prompt file (checked before anything else) |
+| `3` | The gate could not run: no test selected (after skipping), `GROQ_API_KEY` missing or a placeholder, any test errored after the client's retries, no test applicable, or an unexpected exception |
+
+Design rules, each visible in the code: the gate never reports success when it could not run (`runner.exit_code` returns 3 for any error, an empty run or no graded verdict); `not_applicable` is reported separately and left out of the rate; the judge is called with an empty agent prompt, so it never sees the prompt; provider exception text is never stored (each failure maps to a fixed message such as "The judge was unavailable."); the key comes only from the environment mapping and no output path formats it; a `.env` file is read only with `--load-dotenv` (the module sets `GROQ_SKIP_DOTENV` before the Groq client can be imported). The suite loader refuses anything over 60 tests, 20 messages per test, 2000 characters per message, a 4000-character prompt file or a 2,000,000-byte file, and its error messages name the field and never echo input values. Output is text, JSON or markdown on stdout, and when `GITHUB_STEP_SUMMARY` is set a markdown table is appended to it.
+
+**Regression semantics.** By default the gate selects only tests whose exported `current_verdict` is `pass` (the behaviors that worked at export) and prints how many it skipped; `--all` runs every test. With the default, a customer's first run does not fail on a criterion that was never fixed. **Flakiness:** replies vary even at temperature 0, so `--repeat K` (1 to 9) takes a strict majority of K runs per test; there is no other mitigation, and `--pause` only spaces calls out.
+
+**The Action and workflows.** `.github/actions/eval-gate/action.yml` is a composite Action: Python setup, `pip install -r requirements-gate.txt` (`groq`, `python-dotenv`), then `python -m evalgate ... --format markdown` with `PYTHONPATH` set to the Action's own repository root, the key passed through `env`, and the other inputs passed through `env` rather than interpolated into the script. `.github/workflows/eval-gate-demo.yml` runs it on pull requests that change `examples/eval-gate-demo/prompt.md`. `.github/workflows/ci.yml` runs on push and pull request with read-only permissions: a `backend` job (`python -m pytest -q`), a `postgres` job (Postgres 16 service container, `alembic upgrade head`, `python -m pytest tests/pg -q`) and a `frontend` job (`npm ci`, lint, test, build). None of these workflows has been run on GitHub from the development environment (see [6.15](#615-verified-and-not-verified-phase-4)). Pull requests from forks receive no secrets, so the gate exits 3 there.
+
+`tests/pg/` is the real-Postgres suite (migrations over populated rows, reconcile fail-fast, thread-based approval races through `TestClient` with a session per request). It is skipped unless `TEST_DATABASE_URL` is set, and `tests/pg/guard.py` refuses a database whose name does not contain `test` unless `ALLOW_PG_TEST_RESET=1`, because the fixtures run `DROP SCHEMA public CASCADE`.
+
+---
+
+### 3.8 The Simulation (Phase 4)
+
+`simulation/` measures "preview runs until the first judged pass" with and without the loop. It is a harness for a comparison, not a result: what it prints is simulated, and the real-model results page is generated separately.
+
+**Preview and judge.** A preview is two customer messages written by a synthetic builder (`MODEL_CHAT`, a model playing a no-code newcomer who has not seen the agent's instructions), each answered by the agent on its current prompt with the same model, token cap and retry bound as the app's chat route; then the **reference judge** (`simulation/reference.py`) grades the transcript against the scenario's own goal through the app's `core.judge.judge` with an empty agent prompt. Only `pass` converges. The goal is a fixed per-scenario criterion, never the criterion the app discovers, and nothing the app produces feeds the judge. A trial stops at the first pass or at 12 previews and returns a result either way (`converged`, `previews`, `path`, model calls and tokens per model through a `CountingClient`, wall time, notes); a trial that never passes is reported, never dropped or raised.
+
+```mermaid
+flowchart TD
+    Run["simulation.run: per scenario, trial and arm<br/>(each result file saved as the trial finishes)"] --> Arm{"Arm"}
+    Arm -->|baseline| ML["Manual loop: preview, reference judge;<br/>after a fail rewrite the prompt (MODEL_JUDGE, shown the goal), preview again"]
+    Arm -->|flywheel| WS["Fresh workspace in the in-process app"]
+    WS --> FP["Preview through the app's chat route, then save the run"]
+    FP --> FJ{"Reference judge: pass?"}
+    FJ -->|Yes| Done["Trial ends: record converged, previews, path,<br/>model calls, tokens, wall time, notes"]
+    FJ -->|No| Tried{"App flow already attempted?"}
+    Tried -->|Yes| FB["Fall back to the manual loop (path fallback)"]
+    Tried -->|No| Two{"Two runs saved?"}
+    Two -->|No| FP
+    Two -->|Yes| Flow["App flow, one attempt: check-pattern, discover, build tests,<br/>fix test fails on the live prompt, held-out (optional),<br/>suggest, auto-approve, verify"]
+    Flow --> Prom{"Candidate promoted?"}
+    Prom -->|Yes| FP
+    Prom -->|No| FB
+    FB --> ML
+    ML --> Done
+```
+
+Every flywheel trial records its `path`: `loop` (the first judged pass came after a promoted fix), `fallback` (after a manual rewrite) or `none` (never converged; or, for a converged trial, it passed with no prompt change and no app fix, which the page reports as "converged with no fix needed"). A converged baseline trial records `fallback`, because manual rewrites are its only mechanism; the page shows path counts for the flywheel only. If the app flow raises or a step does not go to plan, the arm falls back, so a failure of the product cannot silently drop a trial.
+
+**Modes and seams.** The one model seam is the client object `backend.groq_client.client`. In **mock mode** it is replaced by a deterministic fake whose `chat.completions.create` routes on the distinctive system text of each call type (agent chat, builder, judge, analysis, pattern, criterion, suggester, generator, report) and whose `with_options(...)` returns itself, so retry-bounded calls are caught too; a system text nobody wrote a reply for raises instead of getting a default. In **real mode** (`--mode real`, needs `GROQ_API_KEY`) the real client is used, `GROQ_TPM_LIMIT` pacing is on (default 7000), a rough estimate is printed first, and every trial is written to `simulation/results/<mode>/` as it finishes so `--resume` continues a stopped run. The runner sets `GROQ_SKIP_DOTENV`, so `.env` is read only with `--load-dotenv`.
+
+**Measurement-honesty rules.** Both arms share the scenario prompt, builder model, caps and reference judge. Customer messages use `MODEL_CHAT`; the baseline's rewrite uses `MODEL_JUDGE`, the app suggester's model, so the loop does not win by using a stronger one. Non-converged trials count at the cap in the statistics and are listed. Every table says "simulated" and names N (requested and on file), the models and the date, and an incomplete run (missing trials, unbalanced arms) gets a visible warning. Mock output carries the banner "MOCK MODE: harness test only, the numbers are meaningless." and `simulation.report` refuses to write it to `docs/simulation-results.md`. The page never compares a number with the strategy document's illustrative targets.
+
+**Limitations (stated on the results page too).**
+
+- The baseline rewriter is shown the full goal criterion; the flywheel never sees it. This favours the baseline.
+- Both judge calls, the reference judge and the app's own, use `MODEL_JUDGE`, so they share model bias. In mock mode independence is structural only: the reference judge is a separate code path, but the fake answers both judge calls with the same rule (does the transcript contain the scenario's violation text).
+- The flywheel gets one attempt at the app flow and then falls back to manual rewrites, so a fallback trial starts roughly two previews behind the baseline.
+- A flywheel trial that passes its first preview with no fix is "converged with no fix needed", not a win for the loop.
+- The app limits a workspace to 30 jobs per hour, so each trial uses a fresh workspace; the arms are not rate-limited by it.
+- An LLM plays the builder (more patient and literal than a person), the same model family plays builder and agent, N is a handful of trials, and free-tier pacing dominates wall time.
+
 ---
 
 ## 4. Data Model
 
-Ten tables (Alembic migrations `migrations/versions/0001_foundation.py`, `0002_tests_and_jobs.py` and `0003_evolve.py`; Phase 3 adds columns, no tables). Ids are string UUIDs and timestamps are naive UTC so SQLite and Postgres behave alike. Every foreign key is `ON DELETE CASCADE`.
+Ten tables (Alembic migrations `migrations/versions/0001_foundation.py`, `0002_tests_and_jobs.py` and `0003_evolve.py`; Phase 3 adds columns, no tables; Phase 4 adds neither). Ids are string UUIDs and timestamps are naive UTC so SQLite and Postgres behave alike. Every foreign key is `ON DELETE CASCADE`.
 
 ```mermaid
 erDiagram
@@ -622,12 +765,13 @@ A minimal product event log records `agent_created`, `run_saved`, `loop_detected
 | Verification | a candidate with missing results and no queued or running replay job fails 30 minutes after approval. A queued or running replay keeps it waiting, and with the worker disabled nothing resolves it |
 | Runs sent to pattern detection | the most recent 10 unchecked |
 | LLM-backed calls | 30 per minute per client, plus a process-wide budget of 600 per minute (`LLM_GLOBAL_PER_MINUTE`). The replay, run-all, build-tests, suggest-fix and generate-heldout enqueue routes spend one of these per accepted request (a dedupe hit that returns an existing job does not). Approve, reject and restore do not |
-| Groq client | 45 s timeout and 5 retries per call (the SDK backs off between them) |
+| Groq client | 45 s timeout per call. 5 retries in a job handler (the SDK backs off between them); the request routes that call the model (chat, create agent, discover, check-pattern) run inside `request_retries(2)`, so they retry at most 2 times (Phase 4) |
+| Token pacing | Optional, off unless `GROQ_TPM_LIMIT` is a positive integer: a sliding 60 s window per model records `usage.total_tokens` (a characters/4 estimate when the reply carries none); before a call, if the window plus an estimate would pass the limit the call waits for the oldest record to leave the window, at most 20 s, then proceeds (Phase 4) |
 | Workspace creation | 20 per minute per client |
 
 The LLM calls a background job makes are NOT counted by the per-client or process-wide limiters above (they happen in the worker, not in a request). The jobs a person starts (replay, run-all, build, suggest fix, generate held-out) are bounded by the hourly per-workspace job cap, the global queue-depth cap and the Groq client timeout, so a single stuck call cannot hold the one worker for more than a few minutes. Approve's replays and the report job are exempt from the hourly cap: they are bounded by the 100-job queue cap and by the single worker, which runs one job at a time.
 
-**Operational note: Groq's free tier.** The free tier limits `gpt-oss-120b` to 8000 tokens per minute. One build or one verification fan-out (several judge calls in a row) can hit it. A call that is rate limited is retried by the client (5 retries); if it still fails the job fails with "The judge was unavailable. Try again.", except a verification replay, which the worker retries up to its 3 attempts. Consider a paid tier, or spacing jobs, if you see these. One live run is not a capacity test.
+**Operational note: Groq's free tier.** The free tier limits `gpt-oss-120b` to 8000 tokens per minute. One build or one verification fan-out (several judge calls in a row) can hit it. A call that is rate limited is retried by the client (5 retries in a job, 2 on a request route since Phase 4); if it still fails the job fails with "The judge was unavailable. Try again.", except a verification replay, which the worker retries up to its 3 attempts. Consider a paid tier, spacing jobs, or setting `GROQ_TPM_LIMIT` (for example `7000`) so the client paces itself; pacing is a bounded wait (20 s at most), so it lowers the chance of a 429 and does not remove it. One live run is not a capacity test.
 
 Limiters are in-memory sliding windows, per process: they reset on restart and are not shared across instances. The client key is derived from `X-Forwarded-For` by taking the Nth entry from the right, where N is `TRUSTED_PROXY_HOPS` (default 1; 0 uses the direct peer address; a missing or too-short header also falls back to the peer address). Entries to the left of that are client-supplied and ignored.
 
@@ -640,6 +784,8 @@ Limiters are in-memory sliding windows, per process: they reset on restart and a
 | Judge (verdicts and the sanity check) | openai/gpt-oss-120b, temperature 0 | The larger model for grading against a rubric; temperature 0 for repeatability (not a guarantee) |
 | Fix suggestion, held-out scenario generation, change-report narrative | openai/gpt-oss-120b, temperatures 0.2, 0.7 and 0 | Same model as the judge; the suggester is slightly creative, the generator needs variety, the report writer must be repeatable. None of them can decide a verdict or a promotion |
 | Structured criteria generation | qwen/qwen3.8-27b | Reasoning-capable model for grounded, structured JSON rubrics (reasoning output hidden) |
+| Simulation (Phase 4) | customer messages: openai/gpt-oss-20b; baseline prompt rewrite and the reference judge: openai/gpt-oss-120b | The rewrite uses the app suggester's model so the loop does not win by using a stronger one; the reference judge is the app's judge function with a different criterion and an empty agent prompt |
+| CI gate (Phase 4) | replay: openai/gpt-oss-20b, judge: openai/gpt-oss-120b, temperature 0 | The same functions and models the app uses for a replay and a verdict |
 
 ### 6.8 Judge
 
@@ -653,7 +799,7 @@ Limiters are in-memory sliding windows, per process: they reset on restart and a
 
 `jobs/queue.py` is a plain-function queue over the `job` table. `claim_next` takes the oldest `queued` job with `SELECT ... FOR UPDATE SKIP LOCKED` (a no-op on SQLite), marks it `running`, stamps `locked_at`, counts the attempt and commits before returning. `requeue_stale` runs at the start of every worker pass: a `running` job whose lock is older than 180 s goes back to `queued`, or to `failed` once it has used 3 attempts. `worker_loop` (started in the FastAPI lifespan, stopped on shutdown) runs one job per pass in a thread and sleeps one second when idle. At the end of **every** pass, also an idle one and also when the job step raised, it calls `reconcile_verifying` (errors are logged, never raised), which resolves candidates being verified (see [6.11](#611-the-fix-loop-and-promotion)).
 
-Handlers do their LLM work first and write rows in one commit at the end, so a failure leaves no partial rows. Provider errors are logged and never copied into the user-facing job error. A criterion, test or prompt version deleted while its job waits fails the job with a clear message; the loop keeps running. Starting the same replay, build, suggestion or held-out generation twice returns the already-active job instead of queueing a second. A replay queued by Approve (payload `system: true`) that hits a transient agent or judge failure raises `RetryableJobFailure` (a `JobFailed`): the worker requeues it like a crash while attempts remain (3 in all, no sleep, so the queue is not blocked) and only then fails it with the fixed message, which fails the candidate ("A test could not be run: ..."). A replay a person started fails at once; they can press Replay again. A replay that stores a result deletes older replay results for the same test and version, and a replay or build whose criterion was edited while it ran stores nothing and returns `{"discarded": true}`.
+Handlers do their LLM work first and write rows in one commit at the end, so a failure leaves no partial rows. Provider errors are logged and never copied into the user-facing job error. A criterion, test or prompt version deleted while its job waits fails the job with a clear message; the loop keeps running. Starting the same replay, build, suggestion or held-out generation twice returns the already-active job instead of queueing a second. A replay queued by Approve (payload `system: true`) that hits a transient agent or judge failure raises `RetryableJobFailure` (a `JobFailed`): the worker requeues it like a crash while attempts remain (3 in all, no sleep, so the queue is not blocked) and only then fails it with the fixed message, which fails the candidate ("A test could not be run: ..."). A replay a person started fails at once; they can press Replay again. Since Phase 4 a `system` replay for a version that is no longer `approved_verifying` returns `{"skipped": true}` without model calls, and one that was running when its version resolved stores nothing (see the fail-fast paragraph under [3.6](#36-suggest-approve-and-verify-sequence-phase-3)). A replay that stores a result deletes older replay results for the same test and version, and a replay or build whose criterion was edited while it ran stores nothing and returns `{"discarded": true}`.
 
 **Operations.**
 - Run **one** backend process per deployment (no `uvicorn --workers` above 1, no second instance): a job can legitimately outlive the 180 s window, and a second process would requeue and re-run it. The in-memory rate limiters are per process too.
@@ -686,7 +832,7 @@ Phase 3 folded in four Phase 2 deferrals: M4 (the stale banner now reads "N test
 
 **Approve** (`POST /prompt-versions/{id}/approve`). Under the agent row lock it re-reads the version (must be `proposed`, 409 otherwise), refuses a fix whose parent is no longer the current version (409 "That fix is based on an older prompt. Reject it and suggest a new fix."), refuses when another version is verifying, checks the queue cap, then computes the **required set** once and stores it in `verification`: the fix test, the criterion's held-out test if any, and a **regression set** (every other test whose current non-stale replay on the *current* prompt is `pass`). `before` is read from stored results at approval time, never assumed: for the fix and held-out tests it is the verdict of the test's current non-stale replay on the current version, else the baseline's verdict when the baseline was taken on the current version, else null (the report shows "Not run"); it is `pass` for regressions. So a held-out test that already passes on the current prompt is not credited with a change, and the report cannot drift. Strength is `full` with a held-out test, else `weaker`. Status becomes `approved_verifying` and one `replay` job per required test (payload `system: true`, pointing at the candidate version) is enqueued in the same commit. Chat keeps the current version throughout.
 
-**Promotion rule** (`core/promotion.decide_promotion`, pure code): promote if and only if the fix test passes, the held-out test passes when present, and no regression test has verdict `fail`. A `not_applicable` fix or held-out verdict counts as not passing; a `not_applicable` regression verdict is ignored. Reasons: "The fix test did not pass.", "The held-out test did not pass.", "A previously passing test now fails." Reconcile promotes only while the candidate's parent is still the current version; otherwise it fails the candidate with "The prompt changed during verification." (and the same table) instead of replacing the newer prompt. On promotion the previous current version becomes `superseded`, any other `proposed` version too, and the agent points at the candidate. Other failure reasons: "A test could not be run: {job error}", "A criterion changed during verification.", "The prompt changed during verification.", "Verification timed out." and "Verification could not be completed.".
+**Promotion rule** (`core/promotion.decide_promotion`, pure code): promote if and only if the fix test passes, the held-out test passes when present, and no regression test has verdict `fail`. A `not_applicable` fix or held-out verdict counts as not passing; a `not_applicable` regression verdict is ignored. Reasons: "The fix test did not pass.", "The held-out test did not pass.", "A previously passing test now fails." Reconcile promotes only while the candidate's parent is still the current version; otherwise it fails the candidate with "The prompt changed during verification." (and the same table) instead of replacing the newer prompt. On promotion the previous current version becomes `superseded`, any other `proposed` version too, and the agent points at the candidate. Other failure reasons: "A test could not be run: {job error}", "A criterion changed during verification.", "The prompt changed during verification.", "Verification timed out." and "Verification could not be completed.". Since Phase 4 the same rule also runs on partial results as `early_failure` (see [3.6](#36-suggest-approve-and-verify-sequence-phase-3)): only a failure can be decided early, never a promotion.
 
 **The report.** Stage 1 (`why`) is written with the suggestion. Stage 2 is the `outcome`: the status, the reason and the before-to-after table (per required test: role, criterion name, before and after verdicts, the judge rationale capped at 600 characters and the replay transcript truncated to 6000 characters) are built in code from stored results, so a stored report is self-contained. A `change_report` job then asks the report writer (which may see the prompt diff, unlike the verdict judge) for an explanation and a next step; the diff, table and rationales are delimited data, it cannot decide a verdict or status, and any cited test id that is not in the table is dropped. If the call fails the outcome carries `explanation_unavailable: true` and the table and diff still show. `GET /prompt-versions/{id}/report` returns `{why, outcome}`; it logs `report_viewed` only for `?view=1`, which the page sends on its first fetch and not on its polls.
 
@@ -716,6 +862,62 @@ An end-to-end run with real Groq on a local Postgres completed the loop (held-ou
 **Not yet verified:** a real Render deploy; the quality of the real judge and suggester across many agents (every LLM call is mocked in the tests); several worker processes (still unsupported, one process per deployment).
 
 **Known weaknesses.** The judge sanity check is weak by construction (carried from Phase 2). A generated held-out scenario can be a light paraphrase of the fix test, because the copy check compares whole message lists. `GET /agents/{id}/tests` makes many small queries, which is fine at tens of tests.
+
+### 6.14 Phase 4 Decisions
+
+Decisions made with the user (design addendum, section 2): the simulation has a deterministic mock mode that proves the harness plus a small real-Groq run for the results table (every table labelled simulated, with N, models and date); the gate is a command-line tool in this repository that reuses `backend/core/` directly, with no server or database, shipped with a thin composite Action and a worked example; the simulation runs in-process against the real app; the Phase 3 carry-overs are included.
+
+Calls made in the Phase 4 plan (P1 to P6):
+
+- **P1.** `evalgate/` and `simulation/` are top-level packages run from the repository root (`python -m evalgate`, `python -m simulation.run`); the Action sets `PYTHONPATH` to the repository root.
+- **P2.** `evalgate --load-dotenv` (off by default) loads `.env` for local convenience; CI and mock runs use the environment only.
+- **P3.** `--repeat K` is a majority vote: a test passes when `passes * 2 > K`, and is `error` only when every run of it errored.
+- **P4.** The simulation counts model calls through a `CountingClient` wrapped around whatever client is installed (fake or real) and records wall time per trial.
+- **P5.** A preview is two builder-written customer messages (`MODEL_CHAT`) answered by the agent, then the reference judge; the cap is 12 previews per trial.
+- **P6.** The real simulation run and the real gate run are executed after review, and their results are committed to `docs/simulation-results.md` and quoted in the case study. At the time of this document neither has been run (see [6.15](#615-verified-and-not-verified-phase-4)).
+
+Author's calls in the design addendum (section 12), made after a fresh reader found places where a wrong guess would matter; any may be overruled:
+
+1. **The flywheel builder has a fallback.** The arm is a fixed state machine with one attempt at the app flow; any step that does not go to plan, or a promoted fix that still fails the reference judge, hands the trial to the same manual rewrite the baseline uses. Every trial records its `path` (`loop`, `fallback`, `none`) and the results page reports the counts.
+2. **`.env` handling.** `GROQ_SKIP_DOTENV=1` makes `groq_client` skip `load_dotenv()`. The test suite, the gate and the simulation set it, so none of them reads `.env` unless `--load-dotenv` is passed. The gate checks `GROQ_API_KEY` itself and exits 3 when it is missing or a placeholder, so the `"sk-test-placeholder"` fallback in `groq_client` is never accepted.
+3. **The model seam is the client object.** The fake replaces `backend.groq_client.client` whole, and `with_options(...)` returns itself. Bounded retries use a context variable (`request_retry_limit`, set by `request_retries(n)` around the routes' model calls and read by `groq_chat`), so no pure core signature changed.
+4. **Postgres in CI is real.** `tests/pg/` runs only when `TEST_DATABASE_URL` is set; the CI `postgres` job sets it against a service container.
+5. **Models in the simulation.** Customer messages use `MODEL_CHAT`; the baseline's rewrite uses `MODEL_JUDGE`; `GROQ_TPM_LIMIT` is one number applied to a separate window per model. The planned real run is small: 2 scenarios, 3 trials per arm, a 12-preview cap, an estimated 1 to 1.5 hours on the free tier, saved incrementally and resumable.
+6. **Scope of the deferred list.** The events script `scripts/metrics.py` is in. Still deferred: a 401 mid-poll that can create an empty workspace (M8), sliding token expiry, deleting a single agent, `passive_deletes`, picking a saved run or writing a held-out test by hand, candidate replay jobs under per-test keys, queue fairness of the exempt fan-out, the UI poll horizon versus the server timeout, and the suite endpoint's many small queries.
+7. **Action scope.** Only the in-repo example is verified (by running the same commands locally, with model calls faked). The Action locates the gate through `github.action_path`, so it could work from another repository, but that use is unverified, and fork pull requests receive no secrets.
+8. **The gate is a regression gate.** The export adds `tests[].current_verdict`; by default the gate runs only tests whose `current_verdict` is `pass` and prints the skip count; `--all` runs everything.
+9. **Fail-fast edge cases.** A fix or held-out replay job that ended `failed` or was discarded is decisive immediately; after a candidate resolves, a still-queued verification replay is cancelled, and a running or requeued one becomes a no-op in `handle_replay`.
+
+Small fixes: the stale-fix text is now "That fix is based on an older prompt. Reject it and suggest a new fix."; `version_out` tolerates a non-dict `verification` (strength `null`); `npm run lint` reports zero problems (it reported three errors before).
+
+### 6.15 Verified and Not Verified (Phase 4)
+
+**Verified (actually run in the development environment):**
+
+- `python -m pytest -q` from the repository root: 1387 passed, 19 skipped (the real-Postgres tests, skipped without `TEST_DATABASE_URL`). Every model call in these tests is faked at `backend.groq_client.client` or at the function under test.
+- Frontend: `npm test` 434 tests in 25 files passed, `npm run lint` reports no problems, `npm run build` succeeds.
+- The 19 real-Postgres tests in `tests/pg/` (migrations over populated rows, reconcile fail-fast with cancellation, approval races) were run once locally against a throwaway Docker Postgres and passed. They have never run in GitHub Actions from this environment.
+- The mock-mode simulation ran end to end (both arms, both scenarios, one trial each) and its report rendered. This shows the harness works; the numbers it prints are meaningless.
+- The YAML of the Action and the workflows is parsed in unit tests (structure and security properties: read-only permissions, no secrets in the CI workflow, inputs passed through `env` and never interpolated into a script, the key reaching only the gate step, actions pinned to a major version), and the example suite's pass and fail behaviour is tested with the gate's model calls faked.
+
+**Not yet verified:**
+
+- A real-Groq run of the gate on the example suite (the real gate run is added after this document).
+- A real-Groq simulation run. There are no simulation results yet, so nothing in this repository claims a result; `docs/simulation-results.md` does not exist until the real run is generated.
+- The GitHub Action, the demo workflow and the CI workflow on GitHub, including the Postgres service container and fork pull requests (which get no secrets, so the gate exits 3).
+- The layout of the "Export suite for CI" button in a browser (the component is unit tested; nobody has looked at it rendered).
+- `scripts/metrics.py` on real usage data (unit tested with fake rows; there is no deployed database).
+- A real Render deploy, and several worker processes (still unsupported).
+
+**Known limitations and weaknesses.**
+
+- The simulation's builder is a model, N is tiny, and the same model family plays builder and agent (see [3.8](#38-the-simulation-phase-4)).
+- The baseline rewriter is shown the full goal criterion and the flywheel never sees it, which favours the baseline.
+- Both judge calls use `MODEL_JUDGE` and so share model bias; in mock mode independence is structural only.
+- The flywheel gets one attempt at the app flow and then falls back, so a fallback trial starts roughly two previews behind the baseline; a flywheel trial that passes its first preview with no fix is reported as "converged with no fix needed".
+- The app allows 30 jobs per workspace per hour, so each simulated trial uses a fresh workspace.
+- The gate samples a stochastic model: a single run of a borderline test can flip, and `--repeat` only reduces that. Token pacing is a bounded wait, not a guarantee against a 429. The events metrics use the app's own replay verdicts, not an independent judge.
+- The carried-over weaknesses of Phases 2 and 3 (a weak judge sanity check, a held-out scenario that can be a light paraphrase of the fix test, many small queries in the suite endpoint) are unchanged.
 
 ---
 
@@ -750,6 +952,7 @@ An end-to-end run with real Groq on a local Postgres completed the loop (held-ou
 | `/prompt-versions/{id}/restore` | POST | Create a new promoted version from an earlier version's text (from `promoted`, `superseded` or `failed_verification`) |
 | `/prompt-versions/{id}/report` | GET | The change report `{version_id, number, status, strength, why, outcome}`; logs `report_viewed` only with `?view=1` |
 | `/jobs/{id}` | GET | Job status: `{id, type, status, result, error}` |
+| `/agents/{id}/export` | GET | The agent's suite as an `eval-discovery.suite` v1 document for the CI gate (see [3.7](#37-export-and-the-ci-gate-phase-4)); read-only, workspace-scoped, 404 for another workspace's agent, 409 "Agent has no current prompt." for an agent without one |
 
 **Error codes:** `400` nothing or too little to check, `401` unknown or expired token, `404` agent, criterion, test or job not found in this workspace, `409` run-save race, no pattern to build from, tests already exist, a prompt edit whose `base_version_id` is no longer the current version ("The prompt changed to v{n} while you were editing. Reload the prompt to continue."), a candidate action in the wrong state (approve or reject on a version that is not `proposed`, restore of a version that cannot be restored, which includes a suggestion that was never approved), "That fix is based on an older prompt. Reject it and suggest a new fix." (approve after the prompt moved on), "A fix is already proposed or being verified." (suggest fix while any candidate is open, also a merely proposed one), "This fix can't be approved in its current state." (a second approval) or "A fix is being verified. Wait for it to finish." (manual edit, restore, approving another version, or a judged-field criterion edit while a fix verifies), `422` invalid input, `429` quota, rate limit, hourly job cap, queue cap or version cap, `502` upstream LLM failure.
 
@@ -763,20 +966,26 @@ An end-to-end run with real Groq on a local Postgres completed the loop (held-ou
 eval-discovery/
 ├── backend/
 │   ├── main.py               # App init, CORS, routers, startup purge, worker loop in the lifespan
-│   ├── api/                  # Routers (workspaces, agents, runs, criteria, prompt_versions, tests, versions), deps, limits, schemas
+│   ├── api/                  # Routers (workspaces, agents, runs, criteria, prompt_versions, tests, versions, export), deps, limits, schemas
 │   ├── core/                 # Pure logic: config + presets, analyze, pattern, criteria, judge, replay, testsuite, suggest, heldout, report, promotion, prompts
 │   ├── db/                   # SQLAlchemy models, session, agent/workspace/event/testsuite helpers, candidates, reconcile
 │   ├── jobs/                 # DB-backed queue, handlers (build_tests, replay, suggest_fix, generate_heldout, change_report), worker loop
-│   ├── groq_client.py        # Groq API wrapper, model constants
+│   ├── groq_client.py        # Groq API wrapper, model constants, bounded request retries, optional token pacing
 │   └── utils.py              # JSON extraction from LLM output
+├── evalgate/                 # The CI gate: suite.py (load and validate), runner.py (replay, judge, exit code), cli.py
+├── simulation/               # Fake model, scenarios, builder, reference judge, in-process app driver, arms, run, report
+├── scripts/metrics.py        # Events metrics (read-only)
+├── examples/eval-gate-demo/  # Worked example: prompt, weakened prompt, exported suite, README
+├── .github/                  # actions/eval-gate/action.yml, workflows/ci.yml, workflows/eval-gate-demo.yml
 ├── migrations/               # Alembic environment and versions
 ├── alembic.ini
 ├── frontend/src/             # App.jsx, api.js, hooks/ (useSession, useTests, useReport, useVersions), components/, lib/
-├── tests/                    # pytest suite
+├── tests/                    # pytest suite; tests/pg/ is the real-Postgres suite (skipped without TEST_DATABASE_URL)
 ├── docs/                     # This document, specs and plans
 ├── docker-compose.yml        # Local Postgres 16
 ├── Procfile                  # Start command for Procfile-based hosts (Render ignores it)
 ├── requirements.txt
+├── requirements-gate.txt     # What the gate imports: groq, python-dotenv
 └── README.md
 ```
 
@@ -811,12 +1020,27 @@ npm run dev                # http://localhost:5173
 | `ALLOWED_ORIGINS` | In production | Comma-separated CORS origins; default `http://localhost:5173` (may live in `.env`) |
 | `WORKER_ENABLED` | No | `0` disables the in-process job worker loop; anything else (default) runs it. Keep one backend process per deployment (may live in `.env`) |
 | `VITE_API_URL` | Frontend build | Backend base URL baked into the frontend; default `http://localhost:8000` |
+| `GROQ_TPM_LIMIT` | No | Optional token pacing (Phase 4): tokens per minute per model; unset means off. May live in `.env` (see [6.6](#66-limits)) |
+| `GROQ_SKIP_DOTENV` | No | `1` makes the Groq client skip `load_dotenv()`. Set it in the process environment, not in `.env`. The tests, the gate and the simulation set it themselves |
+| `TEST_DATABASE_URL` | Only for `tests/pg` | A `postgresql+psycopg://` URL of a throwaway database whose name contains `test`; without it the real-Postgres tests are skipped |
+| `ALLOW_PG_TEST_RESET` | No | `1` lets `tests/pg` reset a database whose name does not contain `test`. The suite runs `DROP SCHEMA public CASCADE`, so leave it unset unless you mean it |
 
 ### Running Tests
 
 ```bash
-python -m pytest tests -q
+python -m pytest -q                       # backend, SQLite, every model call faked; tests/pg skips without TEST_DATABASE_URL
+TEST_DATABASE_URL=postgresql+psycopg://postgres:postgres@localhost:5432/eval_test python -m pytest tests/pg -q   # a throwaway database
 cd frontend && npm test && npm run lint && npm run build
+```
+
+Phase 4 tools, from the repository root:
+
+```bash
+python -m evalgate --suite eval-suite.json --prompt prompts/agent.md      # the gate (needs GROQ_API_KEY)
+python -m simulation.run                                                  # mock mode, offline (numbers meaningless)
+python -m simulation.run --mode real --trials 3 --resume                  # real Groq (spends quota)
+python -m simulation.report --results simulation/results --mode real      # writes docs/simulation-results.md
+python scripts/metrics.py --database-url postgresql://...                 # events metrics
 ```
 
 ### Deployment
@@ -831,24 +1055,24 @@ cd frontend && npm test && npm run lint && npm run build
 
   Migrations run on every start (this is what applies `0002` and `0003` on deploy; deploy the backend before the frontend). The command starts one uvicorn process, which is what the in-process job worker needs: do not add `--workers`. A free-tier spin-down interrupts a running job; it is requeued after 180 s. Do not pass `--proxy-headers --forwarded-allow-ips="*"`: uvicorn would then take the left-most `X-Forwarded-For` entry, which the client controls, and a forged value per request would defeat the per-IP limiter. The app derives the client key itself (see [6.6](#66-limits)): the Nth entry from the right of `X-Forwarded-For`, N being `TRUSTED_PROXY_HOPS` (default 1; 0 ignores the header). Render's real header chain was not observed. After deploying, send `POST /workspaces` 31 times with different forged left-most `X-Forwarded-For` values and expect a 429 by the 21st; if it never comes, raise `TRUSTED_PROXY_HOPS`, and if all users are throttled together, lower it.
 - **Frontend (Cloudflare Worker, static assets):** deploy after the backend, then rebuild with `VITE_API_URL=<backend url> npm run build`, then deploy `frontend/dist`.
-- No CI/CD pipeline is configured.
+- **CI:** `.github/workflows/ci.yml` runs the backend tests, the real-Postgres tests (service container) and the frontend lint, test and build on every push and pull request; `.github/workflows/eval-gate-demo.yml` runs the gate Action on the example. Neither workflow has been run on GitHub from the development environment, and the gate Action needs the repository secret `GROQ_API_KEY` set by the owner (see [3.7](#37-export-and-the-ci-gate-phase-4)). There is no CD: deploys are manual.
 
 ---
 
 ## 9. Roadmap
 
-Phases 1 and 2 (persistence, saved tests, replay, judging and the manual prompt editor) and Phase 3 (suggested fixes, diff and change report, held-out and regression promotion gate, version history and restore, readiness chip) are implemented. Phase 3 builds on the unmerged Phase 2 branch, so merge Phase 2 first. The design is in [docs/superpowers/specs/2026-11-21-agent-ready-eval-flywheel-design.md](superpowers/specs/2026-11-21-agent-ready-eval-flywheel-design.md) and the Phase 3 addendum [docs/superpowers/specs/2026-11-21-phase3-evolve-design.md](superpowers/specs/2026-11-21-phase3-evolve-design.md). Deferred to Phase 4:
+Phases 1 and 2 (persistence, saved tests, replay, judging and the manual prompt editor), Phase 3 (suggested fixes, diff and change report, held-out and regression promotion gate, version history and restore, readiness chip) and Phase 4 (suite export, the `evalgate` CI gate with a GitHub Action and example, repo CI with real-Postgres tests, fail-fast verification, bounded retries and optional token pacing, the events metrics script and the simulation harness) are implemented. Phases 2, 3 and 4 are on unmerged branches that build on each other (`feat/phase2-tests`, `feat/phase3-evolve`, `feat/phase4-ship`), so merge them in that order. The design is in [docs/superpowers/specs/2026-11-21-agent-ready-eval-flywheel-design.md](superpowers/specs/2026-11-21-agent-ready-eval-flywheel-design.md), the Phase 3 addendum [docs/superpowers/specs/2026-11-21-phase3-evolve-design.md](superpowers/specs/2026-11-21-phase3-evolve-design.md) and the Phase 4 addendum [docs/superpowers/specs/2026-11-22-phase4-ship-design.md](superpowers/specs/2026-11-22-phase4-ship-design.md).
 
-- The CI eval gate and the export endpoint
-- The simulated before/after comparison and its results table
-- Event-derived metrics
+Not done yet (see [6.15](#615-verified-and-not-verified-phase-4)): the real-Groq runs of the gate and of the simulation (and with them `docs/simulation-results.md`), and the first run of the Action and the workflows on GitHub. Still deferred:
+
 - Picking a saved run for a manual criterion or writing a held-out test by hand (options A and B, D2)
 - Editing a candidate by hand (reject it and use the prompt editor)
 - Per-agent delete
 - Sliding expiry for workspace tokens
 - M8: a 401 mid-poll can create an empty workspace
 - `passive_deletes` on the new relationships
+- Candidate replay jobs shown under per-test keys, queue fairness of the exempt verification fan-out, the UI poll horizon versus the server timeout, and the suite endpoint's many small queries
 
 ---
 
-*Updated November 2026 for the persisted, agent-ready architecture with saved tests, replay and judging, and the evaluator-driven fix loop (Phases 1 to 3). For questions, see the project README or open an issue.*
+*Updated November 2026 for the persisted, agent-ready architecture with saved tests, replay and judging, the evaluator-driven fix loop, and the CI gate, simulation harness and fail-fast verification (Phases 1 to 4). For questions, see the project README or open an issue.*

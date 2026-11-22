@@ -12,6 +12,7 @@ Helps voice-agent builders break out of the preview run loop by generating eval 
 6. **Edit** the criteria, add your own, and **Export all** as JSON for your test pipeline.
 7. **Test your fix** (Phase 2, see [below](#phase-2-tests)): discovered criteria become replayable tests, you edit the agent's prompt, and **Run all tests** shows whether the agent now passes.
 8. **Let the evaluator fix the prompt** (Phase 3, see [below](#phase-3-evolve)): from a failing test the app suggests a prompt change and explains why, you read the diff and approve, and the change goes live only after it passes the fix test, a held-out test and every previously passing test. Any version can be restored, and a chip says how many criteria pass.
+9. **Take the suite to CI** (Phase 4, see [below](#phase-4-ship)): export the saved tests, and a command-line gate replays them against your prompt file in your own pipeline and fails the check if a behavior you had fixed regresses.
 
 Everything is saved server-side in an anonymous workspace, so a reload or a return visit picks up where you left off.
 
@@ -27,15 +28,23 @@ Browser (React)  ->  FastAPI  ->  Postgres / SQLite
                        jobs/    (worker loop, same process)
                           ->  Groq API (chat, prompt analysis, pattern, criteria, judge,
                                         suggested fix, generated test, change report)
+
+Outside the app (Phase 4):
+  GET /agents/{id}/export  ->  eval-suite.json  ->  evalgate (CI gate)  ->  Groq API
+  simulation/ drives the same app in-process (no server) to compare two arms
+  scripts/metrics.py reads the event table
 ```
 
 | Part | Where | Notes |
 |------|-------|-------|
-| API routers | `backend/api/` | workspaces, agents (presets, create, state, chat), runs (save, check-pattern), criteria (discover, add, edit), prompt editor, tests (suite, replay, run-all, build-tests, suggest-fix, generate-heldout, job status), prompt versions (list, detail, approve, reject, restore, report) |
+| API routers | `backend/api/` | workspaces, agents (presets, create, state, chat), runs (save, check-pattern), criteria (discover, add, edit), prompt editor, tests (suite, replay, run-all, build-tests, suggest-fix, generate-heldout, job status), prompt versions (list, detail, approve, reject, restore, report), export (`GET /agents/{id}/export`, Phase 4) |
 | Pure logic | `backend/core/` | agent config and presets, prompt analysis, pattern detection, criterion generation, judge, replay, test-suite rules, suggester, held-out scenario generator, change-report writer, the promotion rule, prompt builders; no web, DB or jobs imports |
 | Job queue | `backend/jobs/` | database-backed queue, handlers (`build_tests`, `replay`, `suggest_fix`, `generate_heldout`, `change_report`) and the worker loop started in the app lifespan; the loop also resolves verifying candidates |
-| Persistence | `backend/db/`, `migrations/` | SQLAlchemy models, candidate and reconcile logic (`candidates.py`, `reconcile.py`), Alembic migrations `0001_foundation`, `0002_tests_and_jobs` and `0003_evolve` |
-| Frontend | `frontend/src/` | `useSession` hook hydrates from the server; `useTests` hook polls jobs; `useReport` and `useVersions` load a change report and the version list; `AgentSetup` screen; chat, history and criteria panels (with the prompt editor, the Tests section, the change review, version history and the readiness chip) |
+| Persistence | `backend/db/`, `migrations/` | SQLAlchemy models, candidate and reconcile logic (`candidates.py`, `reconcile.py`), Alembic migrations `0001_foundation`, `0002_tests_and_jobs` and `0003_evolve` (Phase 4 adds none) |
+| Frontend | `frontend/src/` | `useSession` hook hydrates from the server; `useTests` hook polls jobs; `useReport` and `useVersions` load a change report and the version list; `AgentSetup` screen; chat, history and criteria panels (with the prompt editor, the Tests section, the change review, version history and the readiness chip; Phase 4 adds the Export suite for CI button) |
+| CI gate | `evalgate/`, `.github/actions/eval-gate/`, `examples/eval-gate-demo/` | Phase 4: the `evalgate` command, a composite GitHub Action and a worked example; imports `backend.core` and `backend.groq_client`, never FastAPI or SQLAlchemy |
+| Simulation | `simulation/` | Phase 4: a fake model client, two scenarios, a synthetic builder, an independent reference judge, an in-process driver of the real app, the two arms, a resumable runner and a results-page generator |
+| Scripts | `scripts/metrics.py` | Phase 4: product metrics derived from the event table |
 
 Full document with diagrams: **[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)**
 
@@ -50,7 +59,7 @@ Full document with diagrams: **[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)**
 
 After pulling Phase 2, run `alembic upgrade head` **before** starting the backend: migration `0002` adds the job and test tables, and without it the worker loop logs an error every second. The same goes for Phase 3 and migration `0003` (see [Phase 3: evolve](#phase-3-evolve)).
 
-`.env` only supplies `GROQ_API_KEY`, `ALLOWED_ORIGINS` and `WORKER_ENABLED`. `DATABASE_URL` is read from the process environment, **not** from `.env` (a value there is silently ignored). Unset, the backend uses SQLite at `./dev.db`. To use Postgres instead, run `docker compose up -d`, then export the variable in the same shell before `alembic upgrade head` and `uvicorn`:
+`.env` only supplies `GROQ_API_KEY`, `ALLOWED_ORIGINS`, `WORKER_ENABLED` and the optional `GROQ_TPM_LIMIT` (see [Phase 4: ship](#phase-4-ship)). `GROQ_SKIP_DOTENV=1` makes the backend skip reading `.env` entirely, so it has to be set in the process environment, not inside `.env`. `DATABASE_URL` is read from the process environment, **not** from `.env` (a value there is silently ignored). Unset, the backend uses SQLite at `./dev.db`. To use Postgres instead, run `docker compose up -d`, then export the variable in the same shell before `alembic upgrade head` and `uvicorn`:
 
     export DATABASE_URL=postgresql://postgres:postgres@localhost:5432/eval_discovery    # Git Bash / bash
     $env:DATABASE_URL="postgresql://postgres:postgres@localhost:5432/eval_discovery"    # PowerShell
@@ -90,7 +99,7 @@ Operational notes:
 
 **Limitations.** The judge sanity check is weak by construction: the good and bad examples appear both inside the criterion and as the transcript, so the judge is partly graded on text it was just given. The check is not re-run after you edit a criterion's definition or examples (the old result is cleared instead). A pass is a signal, not proof. LLM output is not deterministic even at temperature 0, so a verdict can flip between runs.
 
-**Deferred after Phase 2:** suggested prompt fixes, a diff and change report, a held-out/regression promotion gate, prompt version history and restore, and an aggregate readiness chip (all now in [Phase 3](#phase-3-evolve)); picking a specific run for a manual criterion, the export endpoint and CI gate, event-derived metrics and the simulation script, deleting a single agent, and sliding expiry for workspace tokens (still deferred, see Phase 3's list).
+**Deferred after Phase 2:** suggested prompt fixes, a diff and change report, a held-out/regression promotion gate, prompt version history and restore, and an aggregate readiness chip (all now in [Phase 3](#phase-3-evolve)); the export endpoint and CI gate, event-derived metrics and the simulation script (all now in [Phase 4](#phase-4-ship)); picking a specific run for a manual criterion, deleting a single agent, and sliding expiry for workspace tokens (still deferred, see Phase 4's list).
 
 ## Phase 3: evolve
 
@@ -120,17 +129,134 @@ Phase 3 closes the loop the project exists to show: an evaluator-driven prompt f
 - Deploy the backend before the frontend (a new frontend against an old backend has no candidate or version routes to call).
 - Phase 3 builds on the unmerged Phase 2 branch, so merge Phase 2 first (or include it in the Phase 3 pull request).
 - No new environment variables. Still one backend process per deployment.
-- **Groq free tier.** The free tier limits the 120B model (`gpt-oss-120b`, used by the judge, suggester and generator) to 8000 tokens per minute. One build or a verification fan-out can hit it; the client retries 5 times, and a job that still fails reports "The judge was unavailable. Try again." (verification replays are retried by the worker first). Consider a paid tier, or spacing your jobs, if you see this.
+- **Groq free tier.** The free tier limits the 120B model (`gpt-oss-120b`, used by the judge, suggester and generator) to 8000 tokens per minute. One build or a verification fan-out can hit it; the client retries 5 times in a job (2 on a request route, since Phase 4), and a job that still fails reports "The judge was unavailable. Try again." (verification replays are retried by the worker first). Consider a paid tier, or spacing your jobs, if you see this. Since Phase 4 you can also set `GROQ_TPM_LIMIT` to make the client pace itself (see [Phase 4: ship](#phase-4-ship)).
 
 **What was verified, and what was not.** Migration `0003` was applied to a throwaway real Postgres on top of populated Phase 2 rows: the new columns backfilled their defaults, Postgres enforced the unique `(agent_id, number)` constraint, deleting a workspace cascaded cleanly, and downgrade then upgrade round-tripped. A race test ran against a real Postgres with a live backend: 15 rounds each of two simultaneous approvals, approve against a manual prompt edit, approve against reject, and approve against restore. Exactly one request won every time, and the invariants held (at most one version verifying, exactly one promoted, the agent pointing at it). An end-to-end run with real Groq on a local Postgres completed the loop (held-out generated, fix suggested, approved, verified, promoted, explained, restored); one run is not evidence of general quality. **Not yet verified:** a real Render deploy, the quality of the real judge and suggester across many agents (every LLM call is mocked in the tests), and several worker processes (still unsupported).
 
 **Limitations.** A generated held-out scenario can be a light paraphrase of the fix test: the copy check only rejects a scenario whose whole message list repeats the fix test's. The judge sanity check is still weak by construction (see Phase 2). A suggested fix can fail verification, and that is a valid outcome. `GET /agents/{id}/tests` makes many small queries, which is fine at tens of tests.
 
-**Deferred to Phase 4:** the CI eval gate and the export endpoint, a simulated before/after comparison, event-derived metrics, picking a saved run or writing a held-out test by hand, editing a candidate by hand (reject it and use the prompt editor), deleting a single agent, sliding expiry for workspace tokens, a 401 mid-poll that can create an empty workspace, and `passive_deletes` on the new relationships.
+**Deferred to Phase 4:** the CI eval gate and the export endpoint, a simulated before/after comparison and event-derived metrics (the gate, export, simulation harness and metrics script are built, see [Phase 4: ship](#phase-4-ship); the simulation's real results page is generated separately). The rest of that list is still deferred, see the end of Phase 4.
+
+## Phase 4: ship
+
+Phase 4 makes the loop portable and measurable: the saved suite leaves the app and gates prompt changes in your own repository, a simulation compares the loop with a manual baseline, and the Phase 3 carry-overs that bear on cost and hangs are fixed. Phase 4 adds no migration and no required environment variable (`GROQ_TPM_LIMIT` and `GROQ_SKIP_DOTENV` are optional).
+
+### Export the suite
+
+**Export suite for CI** (a button in the Eval criteria panel, below **Export all**, which is unchanged) downloads `eval-suite.json` from `GET /agents/{id}/export`. The file has the format `eval-discovery.suite`, version `1`: the agent's name and role label, the live prompt's text and version number, and per criterion its name, definition, good and bad example and its tests (`id`, `role`, `origin`, `scripted_user_messages` and `current_verdict`). `current_verdict` is the verdict of the test's latest non-stale replay on the live prompt (`pass`, `fail`, `not_applicable`), or `null` when there is none. The export has no results, transcripts, runs, events or workspace data, and it is scoped to the workspace (another workspace's agent is a 404).
+
+### The CI gate: `evalgate`
+
+`evalgate` replays an exported suite against a prompt file and exits non-zero when the pass rate falls below a threshold. It runs from the repository root, imports only `backend.core` and `backend.groq_client` (never FastAPI or the database), and needs `pip install -r requirements-gate.txt` (`groq` and `python-dotenv`):
+
+    export GROQ_API_KEY=...        # PowerShell: $env:GROQ_API_KEY="..."
+    python -m evalgate --suite eval-suite.json --prompt prompts/agent.md
+
+For each selected test it replays the saved user messages against the prompt file (the agent name and role label come from the suite) and has the same judge as the app, at temperature 0, grade the transcript. The judge never sees the prompt. **The gate tests the prompt file you give it, not the prompt text stored in the export.**
+
+| Flag | Meaning |
+|------|---------|
+| `--suite FILE`, `--prompt FILE` | Required. The exported suite and the agent prompt to test (at most 4000 characters). A suite may have at most 60 tests, each with 1 to 20 messages of at most 2000 characters, and a file may be at most 2,000,000 bytes |
+| `--threshold FLOAT` | Minimum pass rate from 0 to 1 (default `1.0`) |
+| `--all` | Also run tests whose `current_verdict` was not `pass` (see below) |
+| `--repeat K` | Run each test K times (1 to 9, default 1); a test passes when a strict majority of its runs pass |
+| `--pause SECONDS` | Wait between tests (default 0), a manual way to stay under a rate limit |
+| `--max-tests N` | Run only the first N selected tests (a warning says how many were not run) |
+| `--format text\|json\|markdown` | Output on stdout (default `text`) |
+| `--load-dotenv` | Load a `.env` file from the working directory before the key check. Off by default: CI and tests use the environment only |
+
+**Exit codes.**
+
+| Code | Meaning |
+|------|---------|
+| `0` | The pass rate is at or above the threshold |
+| `1` | The pass rate is below the threshold |
+| `2` | Bad usage: invalid arguments, or a missing or invalid suite or prompt file |
+| `3` | The gate could not run: `GROQ_API_KEY` is not set (or is a placeholder), a test errored, no test was runnable, or no test was applicable |
+
+The gate never reports success when it could not run: a missing key, a provider outage after retries, an empty selection or an unexpected exception is a `3`, which fails a CI check just like a `1`. The key is read only from the `GROQ_API_KEY` environment variable and is never printed or written. When `GITHUB_STEP_SUMMARY` is set, a markdown table is appended to it.
+
+**It is a regression gate.** By default the gate runs only tests whose exported `current_verdict` is `pass`: behaviors that worked when you exported must not start failing. Tests that were failing or never graded are skipped and the skip count is printed (if nothing is left to run, the exit code is `3`), so a first run does not fail on a criterion you never fixed. `--all` runs every test. The pass rate is passes divided by passes plus fails; `not_applicable` results are reported separately and left out of the rate.
+
+**Flakiness.** A model's reply varies even at temperature 0, so one run of a borderline test can flip between runs. `--repeat 3` smooths this at three times the model calls. The gate has no other flakiness handling, and a pass is a signal, not proof.
+
+### The Action and the example
+
+`.github/actions/eval-gate/action.yml` is a composite GitHub Action around the same command (inputs `suite`, `prompt`, `groq-api-key`, and optionally `threshold`, `repeat`, `python-version` and `extra-args`). `examples/eval-gate-demo/` holds a support-agent prompt with a refund guardrail, a weakened copy without it, an exported suite, and a README that shows how to wire the Action into a repository and how to try the demo. `.github/workflows/eval-gate-demo.yml` runs the Action on pull requests that change `examples/eval-gate-demo/prompt.md` (and on manual dispatch).
+
+**Not run on GitHub.** The Action, the demo workflow and the CI workflow below have NOT been run on GitHub from this repository's development environment. What was tested: the `evalgate` command with its model calls faked, the structure and security properties of the YAML files (parsed in unit tests) and the example's pass and fail behaviour with faked model calls. Using the Action from another repository is documented but unverified. Before relying on it:
+
+- **The repository owner must add the repository secret `GROQ_API_KEY`** (Settings, Secrets and variables, Actions). Without it the gate exits `3`.
+- **Pull requests from forks get no secrets**, so on a fork PR the key is empty and the gate exits `3`: the check fails, which is the safe behaviour. Do not switch the trigger to `pull_request_target` to get around it.
+- A first real run on GitHub may reveal problems the local tests cannot.
+
+### Repo CI and the real-Postgres tests
+
+`.github/workflows/ci.yml` runs on every push and pull request with read-only permissions and no secrets: a `backend` job (`python -m pytest -q`), a `postgres` job (a Postgres 16 service container, `alembic upgrade head`, then `python -m pytest tests/pg -q`) and a `frontend` job (`npm ci`, lint, test, build). No real model call is made.
+
+`tests/pg/` is a real-Postgres suite: migrations over populated rows, the fail-fast reconcile on Postgres, and thread-based races between concurrent requests (two approvals; approve against a manual edit). It is skipped unless `TEST_DATABASE_URL` is set. To run it locally against a throwaway database:
+
+    docker compose up -d
+    docker compose exec postgres createdb -U postgres eval_test      # a database whose name contains "test"
+    export TEST_DATABASE_URL=postgresql+psycopg://postgres:postgres@localhost:5432/eval_test
+    python -m pytest tests/pg -q
+
+The URL must use the `postgresql+psycopg://` driver. **Safety rule:** the suite resets the database's `public` schema (`DROP SCHEMA public CASCADE`), so it refuses to run, and skips with a message that never shows the URL, unless the database name contains `test` or `ALLOW_PG_TEST_RESET=1` is set. Never point it at data you want to keep.
+
+### Fail-fast verification
+
+Verification used to wait for every replay. Since Phase 4 a candidate fails as soon as the stored verdicts decide it (`core/promotion.early_failure`): a fix or held-out verdict that is not `pass`, or any regression `fail`, is decisive even while other replays are still missing. A fix or held-out test whose own replay job failed or was discarded (with none queued or running) is decisive too, with "A test could not be run: ..."; a missing regression result never is. When a candidate fails, its still-queued replay jobs are cancelled (status `failed`, error "Cancelled: verification already failed.") so no model calls are spent on it. A replay that is already running is left alone: the handler skips its model calls for a candidate that is no longer verifying, checked at the start and again after the model calls, and stores nothing. The failure reasons are the ones Phase 3 already had.
+
+### Bounded retries, token pacing and `.env` handling
+
+- **Bounded retries.** The request routes that call the model (chat, create agent, discover, check-pattern) retry at most 2 times, so a rate-limited request fails in seconds. Job handlers keep 5 retries.
+- **`GROQ_TPM_LIMIT`** (unset by default, which means off) is optional client-side pacing: a sliding 60-second window per model records each call's `usage.total_tokens`, and a call waits when the window plus an estimate would pass the limit. It waits at most 20 seconds and then proceeds anyway, so it reduces rate-limit errors on the free tier but does not guarantee none. One number applies to a separate window per model; for the free tier's 8000 tokens per minute on the 120B model, `7000` leaves headroom. It is read from the environment or `.env`.
+- **`GROQ_SKIP_DOTENV=1`** makes `backend.groq_client` skip `load_dotenv()`. The test suite, the gate (unless you pass `--load-dotenv`) and the simulation set it themselves, so none of them reads `.env` unless you ask. Set it in the process environment, not in `.env`.
+
+### The simulation
+
+`simulation/` measures one thing, in a simulation: **preview runs until the first judged pass**, with and without the flywheel. A **preview** is one conversation: a synthetic builder (a model playing a no-code newcomer, `openai/gpt-oss-20b`) writes two customer messages, each answered by the agent on its current prompt. The preview passes when an **independent reference judge** grades the transcript against a fixed per-scenario goal (for example "never promises a refund; asks for the order number and escalates") and says `pass`. That goal is not the criterion the app discovers, so the measure is not circular. A trial stops at the first pass or after 12 previews; a trial that never passes is reported as not converged, never dropped. Two scenarios ship: `support-refund` and `booking-confirm`.
+
+- **Baseline arm.** After each failing preview the builder rewrites the prompt in one model call (`openai/gpt-oss-120b`, the app suggester's model, so the flywheel does not win by using a stronger one), standing in for the manual prompt editor. No detection, tests or fix loop.
+- **Flywheel arm.** The builder previews through the real app, driven in-process (FastAPI's test client, in-memory SQLite, the worker run inline). After two saved runs it runs the app's flow: check-pattern, discover, build tests, confirm the fix test fails, an optional held-out test, suggest, approve (auto-approve stands in for the human gate), verify. It then keeps previewing on the live prompt. It gets **one attempt** at that flow per trial: if any step does not go to plan, or a promoted fix still fails the reference judge, it falls back to the same manual rewrite as the baseline.
+- **Paths.** Every flywheel trial records `loop` (the first judged pass came after a promoted fix), `fallback` (after a manual rewrite) or `none`. A converged trial with path `none` is reported as "converged with no fix needed". The results page counts them, so a flywheel number that is really the fallback is visible.
+
+Two modes:
+
+    python -m simulation.run                                       # mock mode (the default), offline
+    python -m simulation.run --mode real --trials 3                # real Groq: needs GROQ_API_KEY (or --load-dotenv)
+    python -m simulation.run --mode real --trials 3 --resume       # continue a stopped run
+    python -m simulation.report --results simulation/results --mode real
+
+- **Mock mode** swaps the model client for a deterministic fake that routes on each call type's system text. It exists to test the harness; **its numbers are meaningless**, its output carries the banner "MOCK MODE: harness test only, the numbers are meaningless.", and the report generator refuses to write it to `docs/simulation-results.md`.
+- **Real mode** prints a rough cost and time estimate first, paces itself with `GROQ_TPM_LIMIT` (default 7000 here), and saves every trial as it finishes under `simulation/results/<mode>/`, so a stopped or crashed run continues with `--resume`. It spends the Groq quota of whoever runs it.
+- **Results page.** `docs/simulation-results.md` will be generated from a real run by `python -m simulation.report` and linked from here. It does not exist yet, so until it does this repository contains no simulation numbers. Every table it renders is labelled simulated, names N, the models and the date, and says the figures are not measurements of real builders.
+
+**Limitations of the simulation.** A model, not a human, plays the builder, so it is more patient and literal than a real newcomer. N is tiny (a handful of trials per scenario and arm), so no difference is statistically established. The baseline's rewriter is shown the full goal criterion while the flywheel never sees it, which favours the baseline. Both judge calls (the reference judge and the app's own) use `MODEL_JUDGE`, so they share model bias; in mock mode independence is structural only. Because of the fallback, a fallback trial starts roughly two previews behind the baseline. The app limits a workspace to 30 jobs per hour, so every trial uses a fresh workspace. Wall times mostly describe free-tier pacing.
+
+### Metrics from events
+
+`scripts/metrics.py` reads the `event` table (read-only; the URL comes from `--database-url` or `DATABASE_URL`, and its password is masked in output) and prints counts per workspace and in total, then rates: acceptance rate (`criterion_created` / `loop_detected`), test conversion (workspaces that have both a criterion and a test / workspaces with a criterion, computed for the total only), fix approval rate (`fix_approved` / `fix_suggested`) and verification pass rate (`fix_verified` / `fix_approved`). It also reports "runs until first pass": the `run_saved` events before the first `replay_passed` of each workspace, with the median across workspaces in the total column. A rate with a zero denominator is `n/a`; `--format json` prints the same data with the definitions. This is derived from the app's own replay verdicts, not from an independent judge, so it is not the simulation's measure.
+
+    python scripts/metrics.py --database-url postgresql://...        # or set DATABASE_URL
+
+### Small fixes
+
+The stale-fix message now reads "That fix is based on an older prompt. Reject it and suggest a new fix."; a version whose stored `verification` is not an object no longer raises in the version list; and `npm run lint` reports zero problems (it reported three errors before).
+
+### What was verified, and what was not
+
+**Verified (run in the development environment):** `python -m pytest -q` passes 1387 tests with 19 skipped (the real-Postgres tests, skipped without `TEST_DATABASE_URL`); the frontend suite passes 434 tests in 25 files, `npm run lint` reports no problems and `npm run build` succeeds. The 19 Postgres tests were run once locally against a throwaway Docker Postgres and passed; they have never run in GitHub Actions from this environment. The mock-mode simulation was run end to end (both arms, both scenarios) and its report rendered. Every model call in the tests is faked.
+
+**Not yet verified:** a real-Groq run of the gate on the example suite, a real-Groq simulation run (so there are no simulation results yet), the Action and the CI and demo workflows on GitHub (including fork pull requests), `scripts/metrics.py` on real usage data (it is unit tested only, and nothing is deployed), a real Render deploy, and the layout of the Export suite for CI button in a browser.
+
+### Still deferred
+
+A 401 mid-poll that can create an empty workspace, sliding expiry for workspace tokens, deleting a single agent, `passive_deletes` on the new relationships, picking a saved run for a manual criterion or writing a held-out test by hand, editing a candidate by hand (reject it and use the prompt editor), candidate replay jobs shown under per-test keys, queue fairness of the exempt verification fan-out, the UI poll horizon versus the server timeout, and the suite endpoint's many small queries.
 
 ## Tests
 
-    python -m pytest tests -q          # backend (SQLite, Groq is mocked)
+    python -m pytest -q                # backend (SQLite, Groq is mocked; tests/pg skips without TEST_DATABASE_URL)
     cd frontend && npm test            # frontend (Vitest)
     cd frontend && npm run lint && npm run build
 
@@ -141,13 +267,13 @@ Phase 3 closes the loop the project exists to show: an evaluator-driven prompt f
 - **Behavior map instead of hardcoded keywords.** Each agent has a stored map of behaviors with trigger terms (presets ship theirs; pasted prompts get one from the analysis call). The pattern pre-filter checks those terms in user messages and only asks the LLM when a term appears in at least 2 new runs.
 - **Delta batching on the server.** Each agent remembers the last run it checked; a check only sends the runs saved since then. `check_due` in the save-run response tells the UI when to run it.
 - **Pasted text is data.** Agent prompts, transcripts and pattern summaries are wrapped in delimiter tags, and the system text says tagged content is data, not instructions. Delimiter tags inside pasted text are neutralized.
-- **Limits.** 5 agents and 50 runs per workspace, 4000-character prompts, 2000-character messages, at most 40 messages per request (a saved run may hold one more, the reply to the last message), 30 criteria and 20 prompt versions per agent (rejected and failed-verification candidates do not count; 60 version rows in all), 30 background jobs per workspace per hour (the replays queued by Approve and the report job are exempt), at most 100 queued jobs across all workspaces (beyond that replay, run-all and build-tests get a 429 "The test queue is busy"), a 45 s timeout and 5 retries on each Groq call, and 30 LLM-backed calls per minute per client IP (in-memory, per process; the replay, run-all, build-tests, suggest-fix and generate-heldout routes count against it, but Approve and the LLM calls a job makes in the worker do not).
+- **Limits.** 5 agents and 50 runs per workspace, 4000-character prompts, 2000-character messages, at most 40 messages per request (a saved run may hold one more, the reply to the last message), 30 criteria and 20 prompt versions per agent (rejected and failed-verification candidates do not count; 60 version rows in all), 30 background jobs per workspace per hour (the replays queued by Approve and the report job are exempt), at most 100 queued jobs across all workspaces (beyond that replay, run-all and build-tests get a 429 "The test queue is busy"), a 45 s timeout on each Groq call with 5 retries in a job and 2 on a request route, and 30 LLM-backed calls per minute per client IP (in-memory, per process; the replay, run-all, build-tests, suggest-fix and generate-heldout routes count against it, but Approve and the LLM calls a job makes in the worker do not).
 - **Events.** A small product event log (`agent_created`, `run_saved`, `loop_detected`, `criterion_created`, `test_created`, `replay_started`, `replay_passed`, `replay_failed`, and for Phase 3 `test_generated`, `fix_suggested`, `fix_approved`, `fix_rejected`, `fix_verified`, `fix_verification_failed`, `fix_promoted`, `version_restored`, `report_viewed`) is written best-effort: a failed write never fails a request.
 - **Models.** `openai/gpt-oss-20b` plays the agent (and runs replays), `openai/gpt-oss-120b` analyzes prompts, detects patterns, judges, suggests fixes (temperature 0.2), generates held-out scenarios (0.7) and writes the change report (0), `qwen/qwen3.8-27b` writes criteria.
 
 ## Deploy
 
-**Not yet deployed.** Migrations `0002` and `0003`, the job queue and the approval races were exercised on a throwaway real Postgres (see [Phase 2: tests](#phase-2-tests) and [Phase 3: evolve](#phase-3-evolve)), but nothing has run on Render. The first thing to check after deploying is that `alembic upgrade head` succeeds, then `POST /workspaces` and `GET /presets` respond. Run one backend process only (no `--workers` above 1; the start command below uses one). On Groq's free tier the 120B model is limited to 8000 tokens per minute, so one build or a verification fan-out can hit the limit (jobs then fail with "The judge was unavailable. Try again." or are retried); consider a paid tier or spacing your jobs.
+**Not yet deployed.** Migrations `0002` and `0003`, the job queue and the approval races were exercised on a throwaway real Postgres (see [Phase 2: tests](#phase-2-tests) and [Phase 3: evolve](#phase-3-evolve)), but nothing has run on Render. The first thing to check after deploying is that `alembic upgrade head` succeeds, then `POST /workspaces` and `GET /presets` respond. Run one backend process only (no `--workers` above 1; the start command below uses one). On Groq's free tier the 120B model is limited to 8000 tokens per minute, so one build or a verification fan-out can hit the limit (jobs then fail with "The judge was unavailable. Try again." or are retried); consider a paid tier, spacing your jobs, or setting `GROQ_TPM_LIMIT` (for example `7000`) so the client paces itself (see [Phase 4: ship](#phase-4-ship)).
 
 Backend on Render (web service):
 
@@ -172,4 +298,4 @@ Frontend (Cloudflare Worker with static assets): deploy the backend first, and l
 
 ## Roadmap
 
-Phases 1 (persistence, any agent), 2 (tests, replay, judging, manual prompt editor) and 3 (suggested fixes, diff and change report, held-out and regression promotion gate, version history and restore, readiness chip) are implemented. Phase 3 builds on the unmerged Phase 2 branch, so merge Phase 2 first. The rest of the plan (export and CI gate, simulated before/after comparison, event-derived metrics) is described in [docs/superpowers/specs/2026-11-21-agent-ready-eval-flywheel-design.md](docs/superpowers/specs/2026-11-21-agent-ready-eval-flywheel-design.md) and the Phase 3 addendum [docs/superpowers/specs/2026-11-21-phase3-evolve-design.md](docs/superpowers/specs/2026-11-21-phase3-evolve-design.md), and is not implemented yet.
+Phases 1 (persistence, any agent), 2 (tests, replay, judging, manual prompt editor), 3 (suggested fixes, diff and change report, held-out and regression promotion gate, version history and restore, readiness chip) and 4 (suite export, the `evalgate` CI gate with a GitHub Action and example, repo CI with real-Postgres tests, fail-fast verification, bounded retries and optional token pacing, an events metrics script and the simulation harness) are implemented. Phases 2, 3 and 4 are on unmerged branches that build on each other (`feat/phase2-tests`, `feat/phase3-evolve`, `feat/phase4-ship`), so merge them in that order. Not done yet: the real-Groq runs of the gate and of the simulation (and with them `docs/simulation-results.md`), and the first run of the Action and the workflows on GitHub. The deferred items are listed at the end of [Phase 4: ship](#phase-4-ship). The design is in [docs/superpowers/specs/2026-11-21-agent-ready-eval-flywheel-design.md](docs/superpowers/specs/2026-11-21-agent-ready-eval-flywheel-design.md), the Phase 3 addendum [docs/superpowers/specs/2026-11-21-phase3-evolve-design.md](docs/superpowers/specs/2026-11-21-phase3-evolve-design.md) and the Phase 4 addendum [docs/superpowers/specs/2026-11-22-phase4-ship-design.md](docs/superpowers/specs/2026-11-22-phase4-ship-design.md).
