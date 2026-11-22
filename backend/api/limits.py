@@ -118,12 +118,14 @@ ASSIST_QUESTIONS_PER_SESSION_PER_HOUR = 30
 _SESSION_TOO_MANY = "Too many questions in this session. Try again later."
 assist_session_limiter = RateLimiter(ASSIST_QUESTIONS_PER_SESSION_PER_HOUR, 3600)
 
-# Signal writes (page-view heartbeats, ratings, re-asks) are cheap and frequent: their own budgets,
-# never the LLM limiters.
-ASSIST_SIGNALS_PER_IP_PER_MINUTE = 120
-ASSIST_HEARTBEATS_PER_SESSION_PER_HOUR = 240
-assist_signals_limiter = RateLimiter(ASSIST_SIGNALS_PER_IP_PER_MINUTE, 60)
+# Signal writes are cheap and frequent: their own budgets, never the LLM limiters. Heartbeats and
+# ratings/re-asks have separate per-IP limiters, so a heartbeat flood can never block a thumbs-down.
+ASSIST_HEARTBEATS_PER_IP_PER_MINUTE = 300
+ASSIST_HEARTBEATS_PER_SESSION_PER_HOUR = 600
+ASSIST_FEEDBACK_PER_IP_PER_MINUTE = 30
+assist_heartbeat_ip_limiter = RateLimiter(ASSIST_HEARTBEATS_PER_IP_PER_MINUTE, 60)
 assist_heartbeat_limiter = RateLimiter(ASSIST_HEARTBEATS_PER_SESSION_PER_HOUR, 3600)
+assist_feedback_limiter = RateLimiter(ASSIST_FEEDBACK_PER_IP_PER_MINUTE, 60)
 
 
 def reset_limiters() -> None:
@@ -133,8 +135,9 @@ def reset_limiters() -> None:
         global_llm_limiter,
         workspace_limiter,
         assist_session_limiter,
-        assist_signals_limiter,
+        assist_heartbeat_ip_limiter,
         assist_heartbeat_limiter,
+        assist_feedback_limiter,
     ):
         limiter.reset()
 
@@ -178,15 +181,17 @@ def rate_limit_assist_session(session_id: str) -> None:
         raise HTTPException(status_code=429, detail=_SESSION_TOO_MANY)
 
 
-def rate_limit_assist_signals(request: Request) -> None:
-    """Raise 429 when one client sends assist signals (page views, ratings, re-asks) too fast."""
-    if not assist_signals_limiter.check(client_key(request)):
+def rate_limit_assist_heartbeat(request: Request, session_id: str) -> None:
+    """Raise 429 when a client or one session sends page-view heartbeats too fast (per-IP check first)."""
+    if not assist_heartbeat_ip_limiter.check(client_key(request)):
+        raise HTTPException(status_code=429, detail=_TOO_MANY)
+    if not assist_heartbeat_limiter.check(session_id):
         raise HTTPException(status_code=429, detail=_TOO_MANY)
 
 
-def rate_limit_assist_heartbeat(session_id: str) -> None:
-    """Raise 429 when one assist session sends more than its hourly heartbeat budget."""
-    if not assist_heartbeat_limiter.check(session_id):
+def rate_limit_assist_feedback(request: Request) -> None:
+    """Raise 429 when one client sends ratings and re-asks too fast."""
+    if not assist_feedback_limiter.check(client_key(request)):
         raise HTTPException(status_code=429, detail=_TOO_MANY)
 
 

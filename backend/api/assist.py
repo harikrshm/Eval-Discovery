@@ -19,9 +19,9 @@ from sqlalchemy.orm import Session
 from backend.api.agents import CHAT_MAX_TOKENS
 from backend.api.limits import (
     MAX_ASSISTANT_MESSAGE_CHARS,
+    rate_limit_assist_feedback,
     rate_limit_assist_heartbeat,
     rate_limit_assist_session,
-    rate_limit_assist_signals,
     rate_limit_llm,
 )
 from backend.api.schemas import (
@@ -40,6 +40,7 @@ from backend.core.assist.intent import Intent, classify_intent, primary_section
 from backend.core.assist.lawpack import NOT_LEGAL_ADVICE, excerpts_for_question
 from backend.db.agents import current_prompt_version
 from backend.db.assist import (
+    SessionConflict,
     add_question,
     count_runs,
     get_assist_agent,
@@ -67,6 +68,7 @@ FLAGGED_SOURCE = "assist"
 MAX_ASSIST_RUNS = 1000  # flagged conversations kept per workspace; past it new sessions are not saved
 QUESTION_NOT_FOUND = "Question not found."
 SESSION_CONFLICT = "This session cannot be updated."
+BRIEF_MISMATCH = "The brief does not match the question."
 _REPLY_BUDGET = MAX_ASSISTANT_MESSAGE_CHARS - len(NOT_LEGAL_ADVICE) - len(CITATION_NOTE) - 4
 
 
@@ -162,9 +164,8 @@ def chat(body: AssistChatRequest, request: Request, db: Session = Depends(get_db
 
 @router.post("/page-views", status_code=204, dependencies=[Depends(require_assist_key)])
 def page_view(body: AssistPageViewRequest, request: Request, db: Session = Depends(get_db)) -> Response:
-    # The per-IP limiter goes first so a rejected caller cannot create session keys.
-    rate_limit_assist_signals(request)
-    rate_limit_assist_heartbeat(body.session_id)
+    # The per-IP limiter goes first (inside) so a rejected caller cannot create session keys.
+    rate_limit_assist_heartbeat(request, body.session_id)
     agent, workspace = _assist_agent_or_503(db)
     try:
         # bounce=None: the server decides from the merged values; the client's own flag is ignored.
@@ -172,16 +173,17 @@ def page_view(body: AssistPageViewRequest, request: Request, db: Session = Depen
             db, workspace.id, body.session_id, body.patent_number, body.dwell_ms, body.sections,
             None, current_prompt_version(agent).number, "live",
         )
-    except LookupError:
+    except SessionConflict:
         raise HTTPException(status_code=409, detail=SESSION_CONFLICT) from None
     return Response(status_code=204)
 
 
 @router.post("/ratings", status_code=204, dependencies=[Depends(require_assist_key)])
 def rating(body: AssistRatingRequest, request: Request, db: Session = Depends(get_db)) -> Response:
-    rate_limit_assist_signals(request)
+    rate_limit_assist_feedback(request)
     agent, workspace = _assist_agent_or_503(db)
     question = _question_or_404(db, workspace.id, body.question_id)
+    _check_brief_matches(question, body)
     reason = (body.reason or "").strip() or None
     set_rating(db, question.id, body.rating, reason)
     if body.rating != "up":
@@ -191,9 +193,10 @@ def rating(body: AssistRatingRequest, request: Request, db: Session = Depends(ge
 
 @router.post("/reasks", status_code=204, dependencies=[Depends(require_assist_key)])
 def reask(body: AssistReaskRequest, request: Request, db: Session = Depends(get_db)) -> Response:
-    rate_limit_assist_signals(request)
+    rate_limit_assist_feedback(request)
     agent, workspace = _assist_agent_or_503(db)
     question = _question_or_404(db, workspace.id, body.question_id)
+    _check_brief_matches(question, body)
     mark_reasked(db, question.id)
     _flag_conversation(db, agent, question, body)
     return Response(status_code=204)
@@ -212,6 +215,12 @@ def _question_or_404(db: Session, workspace_id: str, question_id: str) -> Assist
     if question is None or question.workspace_id != workspace_id:
         raise HTTPException(status_code=404, detail=QUESTION_NOT_FOUND)
     return question
+
+
+def _check_brief_matches(question: AssistQuestion, body) -> None:
+    """422 (nothing written) when the brief is for a different patent than the stored question."""
+    if body.brief.patent_number.strip().upper() != question.patent_number.strip().upper():
+        raise HTTPException(status_code=422, detail=BRIEF_MISMATCH)
 
 
 def _flag_conversation(db: Session, agent: Agent, question: AssistQuestion, body) -> None:

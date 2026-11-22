@@ -7,7 +7,8 @@ from backend.api import assist as assist_api
 from backend.api import limits
 from backend.api.limits import MAX_ASSISTANT_MESSAGE_CHARS, MAX_REQUEST_CHARS
 from backend.db.agents import create_agent, current_prompt_version
-from backend.db.assist import add_question, save_flagged_run, upsert_page_view
+from backend.db import assist as assist_db
+from backend.db.assist import SessionConflict, add_question, save_flagged_run, upsert_page_view
 from backend.db.models import AssistPageView, AssistQuestion, Run
 from backend.db.workspaces import create_workspace
 from scripts import setup_assist
@@ -280,11 +281,11 @@ def test_session_belonging_to_another_workspace_is_never_taken_over(client, db_s
     assert view_row(db_session).dwell_ms == 100
 
 
-# ---- page-view limiters -----------------------------------------------------
+# ---- limiters ---------------------------------------------------------------
 
 
-def test_per_ip_signal_limit_is_429_and_stores_nothing(client, db_session, assist_agent):
-    for _ in range(limits.assist_signals_limiter.max_calls):
+def test_per_ip_heartbeat_limit_is_429_and_stores_nothing(client, db_session, assist_agent):
+    for _ in range(limits.assist_heartbeat_ip_limiter.max_calls):
         assert post_view(client).status_code == 204
     r = post_view(client, view_body(session_id="another-session-1"))
     assert r.status_code == 429
@@ -293,7 +294,7 @@ def test_per_ip_signal_limit_is_429_and_stores_nothing(client, db_session, assis
 
 
 def test_per_session_heartbeat_limit_is_429_and_stores_nothing(client, db_session, assist_agent, monkeypatch):
-    monkeypatch.setattr(limits.assist_signals_limiter, "max_calls", 10_000)
+    monkeypatch.setattr(limits.assist_heartbeat_ip_limiter, "max_calls", 10_000)
     for i in range(limits.ASSIST_HEARTBEATS_PER_SESSION_PER_HOUR):
         assert post_view(client, view_body(dwell_ms=i)).status_code == 204
     r = post_view(client, view_body(dwell_ms=86_000_000))
@@ -303,25 +304,56 @@ def test_per_session_heartbeat_limit_is_429_and_stores_nothing(client, db_sessio
     assert post_view(client, view_body(session_id="a-fresh-session-1")).status_code == 204
 
 
-def test_limiters_are_registered_for_reset(client, assist_agent):
-    for _ in range(limits.assist_signals_limiter.max_calls):
-        post_view(client)
-    assert post_view(client).status_code == 429
+def test_limiter_budgets():
+    assert limits.assist_heartbeat_ip_limiter.max_calls == 300
+    assert limits.assist_heartbeat_ip_limiter.window_seconds == 60
+    assert limits.assist_heartbeat_limiter.max_calls == 600
+    assert limits.assist_heartbeat_limiter.window_seconds == 3600
+    assert limits.assist_feedback_limiter.max_calls == 30
+    assert limits.assist_feedback_limiter.window_seconds == 60
+
+
+@pytest.mark.parametrize(
+    "name", ["assist_heartbeat_ip_limiter", "assist_heartbeat_limiter", "assist_feedback_limiter"]
+)
+def test_each_signal_limiter_is_reset_by_reset_limiters(name):
+    limiter = getattr(limits, name)
+    assert limiter.check("some-key")
+    assert limiter._calls
     limits.reset_limiters()
+    assert limiter._calls == {}
+
+
+def test_heartbeat_flood_never_blocks_a_rating(client, db_session, assist_agent):
+    q = make_question(db_session, assist_agent)
+    for _ in range(limits.assist_heartbeat_ip_limiter.max_calls):
+        assert post_view(client).status_code == 204
+    assert post_view(client).status_code == 429
+    assert post_rating(client, rating(q.id, "down")).status_code == 204
+    assert post_reask(client, signal(q.id)).status_code == 204
+
+
+def test_feedback_limiter_is_429_after_30_and_does_not_block_heartbeats(client, db_session, assist_agent):
+    q = make_question(db_session, assist_agent)
+    for _ in range(30):
+        assert post_rating(client, rating(q.id, "up")).status_code == 204
+    assert post_rating(client, rating(q.id, "down")).status_code == 429
+    assert post_reask(client, signal(q.id)).status_code == 429
     assert post_view(client).status_code == 204
-    assert limits.assist_signals_limiter.max_calls == 120
-    assert limits.ASSIST_HEARTBEATS_PER_SESSION_PER_HOUR == 240
+    assert question_row(db_session, q.id).rating == "up"
+    assert runs(db_session) == []
 
 
-def test_llm_limiter_is_not_touched_by_signals(client, assist_agent):
-    for _ in range(5):
-        post_view(client)
+def test_llm_limiter_is_not_touched_by_signals(client, db_session, assist_agent):
+    q = make_question(db_session, assist_agent)
+    post_view(client)
+    post_rating(client, rating(q.id, "up"))
     assert limits.llm_limiter._calls == {}
     assert limits.global_llm_limiter._calls == {}
 
 
 def test_limited_ip_creates_no_session_keys(client, assist_agent, monkeypatch):
-    monkeypatch.setattr(limits.assist_signals_limiter, "max_calls", 1)
+    monkeypatch.setattr(limits.assist_heartbeat_ip_limiter, "max_calls", 1)
     assert post_view(client).status_code == 204
     assert post_view(client, view_body(session_id="denied-session-1")).status_code == 429
     assert "denied-session-1" not in limits.assist_heartbeat_limiter._calls
@@ -340,7 +372,59 @@ def test_upsert_page_view_merges_with_max_and_computes_bounce(db_session, assist
     assert row.sections == {"claims": 2000, "family": 3000}
     assert row.bounce is False  # family reached 3000
     assert row.started_at == started
-    assert row.assist_version == 2
+    assert row.assist_version == 1  # the first version seen stays
+
+
+def test_upsert_page_view_update_path_never_lowers_a_value(db_session, assist_agent):
+    ws = assist_agent.workspace_id
+    upsert_page_view(db_session, ws, "s-seq-0001", "US1000000", 9000, {"claims": 4000}, None, 1, "live")
+    upsert_page_view(db_session, ws, "s-seq-0001", "US1000000", 100, {"claims": 5}, None, 1, "live")
+    row = upsert_page_view(db_session, ws, "s-seq-0001", "US1000000", 9500, {"claims": 3}, None, 1, "live")
+    assert (row.dwell_ms, row.sections) == (9500, {"claims": 4000})
+
+
+def test_upsert_first_insert_race_merges_instead_of_failing(db_session, assist_agent, monkeypatch):
+    """Both writers saw no row; the loser hits the primary key, retries and merges (never lowers, no 500)."""
+    ws = assist_agent.workspace_id
+    upsert_page_view(db_session, ws, "s-race-001", "US1000000", 9000, {"claims": 4000}, None, 1, "live")
+    db_session.expunge_all()  # this writer's session has not seen the row the other writer just committed
+    real = assist_db._load_view
+    calls = []
+
+    def first_read_misses(db, session_id):
+        calls.append(session_id)
+        return None if len(calls) == 1 else real(db, session_id)
+
+    monkeypatch.setattr(assist_db, "_load_view", first_read_misses)
+    row = upsert_page_view(db_session, ws, "s-race-001", "US1000000", 100, {"claims": 10, "family": 50}, None, 2, "live")
+    assert len(calls) == 2
+    assert (row.dwell_ms, row.sections) == (9000, {"claims": 4000, "family": 50})
+    assert row.assist_version == 1
+    assert db_session.query(AssistPageView).count() == 1
+
+
+def test_upsert_reads_the_row_under_a_lock(db_session, assist_agent, monkeypatch):
+    from sqlalchemy.dialects import postgresql
+
+    captured = []
+    real_scalar = db_session.scalar
+
+    def spy(stmt, *a, **kw):
+        captured.append(stmt)
+        return real_scalar(stmt, *a, **kw)
+
+    monkeypatch.setattr(db_session, "scalar", spy)
+    upsert_page_view(db_session, assist_agent.workspace_id, "s-lock-001", "US1000000", 1, {}, None, 1, "live")
+    assert "FOR UPDATE" in str(captured[0].compile(dialect=postgresql.dialect()))
+
+
+def test_upsert_pins_the_first_patent_number(db_session, assist_agent):
+    ws = assist_agent.workspace_id
+    upsert_page_view(db_session, ws, "s-pin-0001", "US1000000B2", 100, {}, None, 1, "live")
+    with pytest.raises(SessionConflict):
+        upsert_page_view(db_session, ws, "s-pin-0001", "US2000000B2", 999, {"claims": 999}, None, 1, "live")
+    row = upsert_page_view(db_session, ws, "s-pin-0001", " us1000000b2 ", 200, {}, None, 1, "live")
+    assert row.dwell_ms == 200 and row.patent_number == "US1000000B2"
 
 
 # ---- ratings ----------------------------------------------------------------
@@ -521,7 +605,7 @@ def test_rating_responses_never_contain_the_key_or_data(client, db_session, assi
 
 def test_ratings_are_per_ip_limited_and_a_429_writes_nothing(client, db_session, assist_agent, monkeypatch):
     q = make_question(db_session, assist_agent)
-    monkeypatch.setattr(limits.assist_signals_limiter, "max_calls", 1)
+    monkeypatch.setattr(limits.assist_feedback_limiter, "max_calls", 1)
     assert post_rating(client, rating(q.id, "up")).status_code == 204
     assert post_rating(client, rating(q.id, "down")).status_code == 429
     assert question_row(db_session, q.id).rating == "up"
@@ -581,3 +665,105 @@ def test_reask_conversation_must_not_be_empty(client, db_session, assist_agent):
 
 def test_default_run_cap_is_1000():
     assert assist_api.MAX_ASSIST_RUNS == 1000
+
+
+# ---- session pinning and version -------------------------------------------
+
+
+def test_heartbeat_for_a_different_patent_is_409_and_changes_nothing(client, db_session, assist_agent):
+    post_view(client, view_body(dwell_ms=5000, sections={"claims": 2000}))
+    before = view_row(db_session)
+    snapshot = (before.patent_number, before.dwell_ms, dict(before.sections), before.updated_at, before.bounce)
+    r = post_view(client, view_body(patent_number="US20160266243A1", dwell_ms=80_000, sections={"family": 9000}))
+    assert r.status_code == 409
+    assert KEY not in r.text and "US2016" not in r.text
+    after = view_row(db_session)
+    assert (after.patent_number, after.dwell_ms, dict(after.sections), after.updated_at, after.bounce) == snapshot
+
+
+def test_same_patent_in_another_case_is_accepted(client, db_session, assist_agent):
+    post_view(client, view_body(patent_number="US10000000B2"))
+    r = post_view(client, view_body(patent_number="us10000000b2", dwell_ms=7000))
+    assert r.status_code == 204
+    row = view_row(db_session)
+    assert row.dwell_ms == 7000 and row.patent_number == "US10000000B2"
+
+
+def test_assist_version_is_the_first_one_seen(client, db_session, assist_agent):
+    from backend.db.agents import new_prompt_version
+
+    post_view(client)
+    first = view_row(db_session).assist_version
+    new_prompt_version(db_session, assist_agent, "A newer prompt")
+    db_session.commit()
+    db_session.expire_all()
+    assert current_prompt_version(assist_agent).number != first
+    post_view(client, view_body(dwell_ms=9000))
+    row = view_row(db_session)
+    assert row.dwell_ms == 9000
+    assert row.assist_version == first
+
+
+def test_an_unexpected_lookup_or_key_error_is_not_turned_into_a_409(assist_agent, db_session, monkeypatch):
+    from fastapi.testclient import TestClient
+
+    from backend.db.session import get_db
+    from backend.main import app
+
+    def override_get_db():
+        yield db_session
+
+    app.dependency_overrides[get_db] = override_get_db
+    try:
+        lenient = TestClient(app, raise_server_exceptions=False)
+        for error in (KeyError("a bug"), IndexError("a bug"), LookupError("a bug")):
+            def boom(*a, _error=error, **kw):
+                raise _error
+
+            monkeypatch.setattr(assist_api, "upsert_page_view", boom)
+            assert lenient.post("/assist/page-views", json=view_body(), headers=HEADERS).status_code == 500
+    finally:
+        app.dependency_overrides.pop(get_db, None)
+
+
+# ---- brief / question match -------------------------------------------------
+
+
+def test_rating_with_a_brief_for_another_patent_is_422_and_writes_nothing(client, db_session, assist_agent):
+    q = make_question(db_session, assist_agent)
+    r = post_rating(client, rating(q.id, "down", brief=make_brief("US20160266243A1")))
+    assert r.status_code == 422
+    assert "US2016" not in r.text and KEY not in r.text
+    assert question_row(db_session, q.id).rating is None
+    assert runs(db_session) == []
+
+
+def test_reask_with_a_brief_for_another_patent_is_422_and_writes_nothing(client, db_session, assist_agent):
+    q = make_question(db_session, assist_agent)
+    r = post_reask(client, signal(q.id, brief=make_brief("US20160266243A1")))
+    assert r.status_code == 422
+    assert question_row(db_session, q.id).reasked is False
+    assert runs(db_session) == []
+
+
+def test_a_matching_brief_in_another_case_still_works(client, db_session, assist_agent):
+    q = make_question(db_session, assist_agent)
+    assert post_rating(client, rating(q.id, "down", brief=make_brief("us10000000b2"))).status_code == 204
+    assert post_reask(client, signal(q.id, brief=make_brief(" US10000000B2 "))).status_code == 204
+
+
+def test_non_us_question_rated_with_its_own_brief_works(client, db_session, assist_agent):
+    q = add_question(
+        db_session, assist_agent.workspace_id, STORED_SESSION, "EP1234567B1", "t", "other", None, "a", True, "live", 1
+    )
+    assert post_rating(client, rating(q.id, "down", brief=make_brief("EP1234567B1"))).status_code == 204
+    assert post_rating(client, rating(q.id, "down", brief=make_brief())).status_code == 422
+
+
+# ---- non-ASCII keys ----------------------------------------------------------
+
+
+@pytest.mark.parametrize("path,make", ENDPOINTS)
+@pytest.mark.parametrize("key", [b"\xff\xfe\x80", "k\u00e9y".encode("latin-1")])
+def test_non_ascii_key_header_is_401_not_a_crash(client, assist_agent, path, make, key):
+    assert client.post(path, json=make(), headers={"X-Assist-Key": key}).status_code == 401

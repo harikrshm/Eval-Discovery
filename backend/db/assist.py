@@ -43,6 +43,19 @@ def is_bounce(dwell_ms: int, sections: dict) -> bool:
     )
 
 
+class SessionConflict(LookupError):
+    """A heartbeat that cannot join its session: the id belongs to another workspace or another patent."""
+
+
+def _same_patent(a: str, b: str) -> bool:
+    return a.strip().upper() == b.strip().upper()
+
+
+def _load_view(db: Session, session_id: str) -> AssistPageView | None:
+    """The session's page view, read with a row lock (a no-op on SQLite) so a merge cannot lose a concurrent one."""
+    return db.scalar(select(AssistPageView).where(AssistPageView.session_id == session_id).with_for_update())
+
+
 def upsert_page_view(
     db: Session,
     workspace_id: str,
@@ -60,10 +73,15 @@ def upsert_page_view(
     A heartbeat only ever raises what is stored: `dwell_ms` and each section's `visible_ms` become the
     larger of the stored and incoming value, and a section missing from the incoming call keeps its
     stored value. `bounce=None` derives it from the merged values (see `is_bounce`); a bool is stored as given.
+    The row is read under a lock, so concurrent heartbeats cannot lower a stored value.
+
+    A session id never moves between workspaces, and one session is one patent: the patent number stored
+    on first sight is pinned (compared after strip + upper). Either mismatch raises `SessionConflict` and
+    changes nothing. `assist_version` is set on insert only, so it stays the version first seen.
     """
     for attempt in (1, 2):
         try:
-            view = db.get(AssistPageView, session_id)
+            view = _load_view(db, session_id)
             now = utcnow()
             if view is None:
                 view = AssistPageView(
@@ -81,8 +99,9 @@ def upsert_page_view(
                 db.add(view)
             else:
                 if view.workspace_id != workspace_id:
-                    raise LookupError(session_id)  # a session id never moves between workspaces
-                view.patent_number = patent_number
+                    raise SessionConflict(session_id)
+                if not _same_patent(view.patent_number, patent_number):
+                    raise SessionConflict(session_id)
                 view.updated_at = now
                 merged_dwell = max(view.dwell_ms or 0, dwell_ms)
                 merged = dict(view.sections or {})
@@ -92,7 +111,6 @@ def upsert_page_view(
                 view.sections = merged  # a new dict, so the JSON column registers the change
                 view.bounce = is_bounce(merged_dwell, merged) if bounce is None else bounce
                 view.source = source
-                view.assist_version = assist_version
             db.commit()
             return view
         except IntegrityError:

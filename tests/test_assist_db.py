@@ -118,7 +118,7 @@ def test_upsert_page_view_updates_by_session_id(db_session):
     )
     assert db_session.query(AssistPageView).count() == 1
     row = db_session.get(AssistPageView, "s1")
-    assert (row.dwell_ms, row.bounce, row.assist_version) == (9000, True, 2)
+    assert (row.dwell_ms, row.bounce, row.assist_version) == (9000, True, 1)  # version: first seen
     assert row.sections == {"claims": 4000, "abstract": 100}
     assert row.started_at == started
     assert row.updated_at > started and second is row
