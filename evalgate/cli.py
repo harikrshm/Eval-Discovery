@@ -194,18 +194,39 @@ _FORMATTERS = {"text": format_text, "json": format_json, "markdown": format_mark
 
 
 def _emit(fmt: str, result, threshold: float, code: int, env: Mapping[str, str]) -> None:
-    print(_FORMATTERS[fmt](result, threshold, code))
+    """Write the step summary, then print. Each is best effort and neither can change the exit code."""
     summary_path = env.get("GITHUB_STEP_SUMMARY")
     if summary_path:
         try:
             with open(summary_path, "a", encoding="utf-8") as handle:
                 handle.write(format_markdown(result, threshold, code) + "\n")
-        except OSError:
+        except Exception:
             _err("Could not write to GITHUB_STEP_SUMMARY.")
+    try:
+        print(_FORMATTERS[fmt](result, threshold, code))
+        sys.stdout.flush()
+    except Exception:
+        _err("Could not write the result to stdout.")
 
 
 def _err(message: str) -> None:
-    print(message, file=sys.stderr)
+    try:
+        print(message, file=sys.stderr)
+    except Exception:  # a broken or unencodable stderr must not change the exit code
+        pass
+
+
+def _lenient_streams() -> None:
+    """Make stdout and stderr replace what the console cannot encode instead of raising.
+
+    A Windows console or a pipe on cp1252 cannot encode model text such as arrows or curly quotes.
+    Streams that cannot be reconfigured (some capture objects) are left as they are.
+    """
+    for stream in (sys.stdout, sys.stderr):
+        try:
+            stream.reconfigure(errors="replace")
+        except Exception:
+            pass
 
 
 def _valid_key(env: Mapping[str, str]) -> str | None:
@@ -289,6 +310,7 @@ def _run(args: argparse.Namespace, env: Mapping[str, str]) -> int:
 
 def main(argv: list[str] | None = None, env: Mapping[str, str] | None = None) -> int:
     env = os.environ if env is None else env
+    _lenient_streams()
     try:
         args = build_parser().parse_args(argv)
     except SystemExit as exc:  # argparse: 0 for --help, 2 for a usage error

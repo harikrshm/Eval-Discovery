@@ -1,5 +1,6 @@
 """The evalgate command line: exit codes, output formats and the never-leak-the-key rule. No network."""
 
+import io
 import json
 import os
 import subprocess
@@ -489,3 +490,61 @@ def test_python_dash_m_does_not_read_a_working_directory_env(files, tmp_path):
     result = _subprocess(["--suite", str(files[0]), "--prompt", str(files[1])], cwd=work, env_extra=env, module=True)
     assert result.returncode == 3
     assert "gsk_from_dotenv_file" not in result.stdout + result.stderr
+
+
+# --- consoles that cannot encode model text (cp1252 strict) must not turn a pass into exit 3 ---
+
+FANCY = "Agent said \u2192 \u2265 \u2019 and \u201cquotes\u201d \u2713"
+
+
+def _cp1252_stdout():
+    return io.TextIOWrapper(io.BytesIO(), encoding="cp1252", errors="strict", newline="")
+
+
+@pytest.mark.parametrize("fmt", ["text", "json", "markdown"])
+def test_unencodable_model_text_keeps_the_true_exit_code(files, tmp_path, monkeypatch, fmt):
+    summary = tmp_path / "summary.md"
+    stdout = _cp1252_stdout()
+    monkeypatch.setattr(sys, "stdout", stdout)
+    code, _, _ = run_cli(
+        *files,
+        "--format", fmt,
+        env={"GROQ_API_KEY": KEY, "GITHUB_STEP_SUMMARY": str(summary)},
+        judge_results=[JudgeResult("pass", FANCY)] * 2,
+    )
+    assert code == 0
+    assert FANCY in summary.read_text(encoding="utf-8")
+    stdout.flush()
+    assert b"PASSED" in stdout.buffer.getvalue() or b"pass_rate" in stdout.buffer.getvalue()
+
+
+def test_a_dead_stdout_cannot_lose_the_summary_or_change_the_exit_code(files, tmp_path, monkeypatch):
+    class Dead:
+        def write(self, _):
+            raise OSError("closed")
+
+        def flush(self):
+            raise OSError("closed")
+
+    summary = tmp_path / "summary.md"
+    monkeypatch.setattr(sys, "stdout", Dead())
+    code, _, _ = run_cli(*files, env={"GROQ_API_KEY": KEY, "GITHUB_STEP_SUMMARY": str(summary)})
+    assert code == 0
+    assert "| PASS |" in summary.read_text(encoding="utf-8")
+
+
+def test_the_summary_is_written_before_stdout_is_printed(files, tmp_path, monkeypatch):
+    summary = tmp_path / "summary.md"
+    seen = []
+
+    class Spy:
+        def write(self, text):
+            seen.append(summary.exists() and summary.read_text(encoding="utf-8"))
+            return len(text)
+
+        def flush(self):
+            pass
+
+    monkeypatch.setattr(sys, "stdout", Spy())
+    run_cli(*files, env={"GROQ_API_KEY": KEY, "GITHUB_STEP_SUMMARY": str(summary)})
+    assert seen and all(seen)
