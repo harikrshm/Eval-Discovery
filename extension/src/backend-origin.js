@@ -4,13 +4,13 @@
 export const DEFAULT_BACKEND_ORIGIN = 'http://127.0.0.1:8000'
 
 /**
- * "https://assist.example.com" -> "https://assist.example.com/*" (a host permission pattern).
- * Unset or blank falls back to the default. Anything that is not a plain http(s) origin with a
- * concrete host throws, so a bad value fails the build instead of widening the permission.
+ * "https://assist.example.com/" -> "https://assist.example.com" (the validated origin the service
+ * worker calls). Unset or blank falls back to the default. Anything that is not a plain http(s)
+ * origin with a concrete host throws, so a bad value fails the build instead of widening the permission.
  */
-export function backendHostPermission(raw) {
+export function backendOrigin(raw) {
   const text = raw === undefined || raw === null ? '' : String(raw).trim()
-  if (!text) return `${DEFAULT_BACKEND_ORIGIN}/*`
+  if (!text) return DEFAULT_BACKEND_ORIGIN
   if (text.includes('*')) throw new Error(`VITE_BACKEND_ORIGIN must not contain wildcards: ${text}`)
   let url
   try {
@@ -26,5 +26,10 @@ export function backendHostPermission(raw) {
   if (url.pathname !== '/' || url.search || url.hash) {
     throw new Error(`VITE_BACKEND_ORIGIN must be an origin only (scheme, host, optional port), got ${text}`)
   }
-  return `${url.origin}/*`
+  return url.origin
+}
+
+/** "https://assist.example.com" -> "https://assist.example.com/*" (a host permission pattern). */
+export function backendHostPermission(raw) {
+  return `${backendOrigin(raw)}/*`
 }

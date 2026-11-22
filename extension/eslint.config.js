@@ -3,7 +3,7 @@ import globals from 'globals'
 import { defineConfig, globalIgnores } from 'eslint/config'
 
 export default defineConfig([
-  globalIgnores(['dist', 'fixtures', 'node_modules']),
+  globalIgnores(['dist', 'dist-keycheck', 'fixtures', 'node_modules']),
   {
     files: ['**/*.js'],
     extends: [js.configs.recommended],

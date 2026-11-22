@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { DEFAULT_BACKEND_ORIGIN, backendHostPermission } from './backend-origin.js'
+import { DEFAULT_BACKEND_ORIGIN, backendHostPermission, backendOrigin } from './backend-origin.js'
 
 describe('backendHostPermission', () => {
   it.each([undefined, null, '', '   '])('falls back to the default for %j', (v) => {
@@ -33,5 +33,17 @@ describe('backendHostPermission', () => {
     'not a url',
   ])('rejects %j', (input) => {
     expect(() => backendHostPermission(input)).toThrow()
+  })
+})
+
+describe('backendOrigin', () => {
+  it('returns the validated origin without a path or wildcard', () => {
+    expect(backendOrigin(undefined)).toBe(DEFAULT_BACKEND_ORIGIN)
+    expect(backendOrigin(' https://Assist.Example.com:8443/ ')).toBe('https://assist.example.com:8443')
+  })
+  it('rejects what the host permission rejects', () => {
+    expect(() => backendOrigin('javascript:alert(1)')).toThrow()
+    expect(() => backendOrigin('https://*.example.com')).toThrow()
+    expect(() => backendOrigin('https://example.com/api')).toThrow()
   })
 })

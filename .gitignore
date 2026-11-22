@@ -36,4 +36,5 @@ dev.db
 # Patent Assist extension
 extension/fixtures/raw/
 extension/dist/
+extension/dist-keycheck/
 extension/node_modules/
