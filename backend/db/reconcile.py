@@ -27,6 +27,7 @@ VERIFICATION_TIMEOUT_MINUTES = 30
 _MALFORMED_REASON = "Verification could not be completed."
 _TIMEOUT_REASON = "Verification timed out."
 _DISCARDED_REASON = "A criterion changed during verification."
+_PARENT_CHANGED_REASON = "The prompt changed during verification."
 _TEST_GONE = "That test no longer exists."
 _JOB_FAILED_FALLBACK = "The test failed."
 
@@ -158,8 +159,12 @@ def _evaluate(db: Session, version: PromptVersion, workspace_id: str, now: datet
     return _Resolution(False, reason, table)
 
 
-def _apply(db: Session, version: PromptVersion, resolution: _Resolution) -> None:
+def _apply(db: Session, version: PromptVersion, resolution: _Resolution) -> _Resolution:
+    """Store the resolution and return the one actually applied (a promotion can turn into a failure)."""
     agent = version.agent
+    if resolution.promote and version.parent_id != agent.current_prompt_version_id:
+        # The candidate was written against another prompt than the live one: never replace it.
+        resolution = _Resolution(False, _PARENT_CHANGED_REASON, resolution.table)
     if resolution.promote:
         previous = db.get(PromptVersion, agent.current_prompt_version_id)
         if previous is not None and previous.id != version.id and previous.status == "promoted":
@@ -186,6 +191,7 @@ def _apply(db: Session, version: PromptVersion, resolution: _Resolution) -> None
     }
     db.flush()
     db.expire(agent, ["prompt_versions"])
+    return resolution
 
 
 def _resolve(db: Session, version: PromptVersion, now: datetime) -> bool:
@@ -203,7 +209,7 @@ def _resolve(db: Session, version: PromptVersion, now: datetime) -> bool:
         db.rollback()
         return False
     strength = version.verification.get("strength") if isinstance(version.verification, dict) else None
-    _apply(db, version, resolution)
+    resolution = _apply(db, version, resolution)
     # Commits the resolution together with the report job.
     queue.enqueue(db, workspace_id, "change_report", {"prompt_version_id": version_id})
     if resolution.promote:

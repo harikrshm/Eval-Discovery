@@ -15,6 +15,7 @@ from backend.db.agents import (
 )
 from backend.db.candidates import (
     CandidateOpen,
+    ParentChanged,
     VersionLimitReached,
     approve_candidate,
     compute_required,
@@ -26,7 +27,7 @@ from backend.db.candidates import (
     restore_version,
     verifying_version,
 )
-from backend.db.models import Criterion, EvalResult, EvalTest, PromptVersion, utcnow
+from backend.db.models import Agent, Criterion, EvalResult, EvalTest, PromptVersion, utcnow
 from backend.db.workspaces import create_workspace
 
 WHY = {"criterion_name": "c", "failing_test_id": "t", "failing_turn_index": 1}
@@ -207,6 +208,44 @@ def test_create_proposed_version_shape_and_numbering(db_session):
     assert agent.current_prompt_version_id == first_id  # chat keeps the current version
 
 
+def test_create_proposed_version_with_the_expected_parent_succeeds(db_session):
+    _, agent = _agent(db_session)
+    _, fix = _failing_fix(db_session, agent)
+    current = agent.current_prompt_version_id
+    version = create_proposed_version(db_session, agent, "t", fix.id, WHY, expected_parent_id=current)
+    assert version.parent_id == current
+
+
+def test_create_proposed_version_refuses_when_the_current_version_moved_on(db_session):
+    """Simulated race: a rival commit changed the current version after the caller read it."""
+    _, agent = _agent(db_session)
+    _, fix = _failing_fix(db_session, agent)
+    old_current = agent.current_prompt_version_id
+    newer = PromptVersion(agent_id=agent.id, text="newer", origin="manual", status="promoted", number=2)
+    db_session.add(newer)
+    db_session.flush()
+    db_session.execute(
+        update(Agent)
+        .where(Agent.id == agent.id)
+        .values(current_prompt_version_id=newer.id)
+        .execution_options(synchronize_session=False)
+    )
+    assert agent.current_prompt_version_id == old_current  # stale in memory
+    with pytest.raises(ParentChanged):
+        create_proposed_version(db_session, agent, "t", fix.id, WHY, expected_parent_id=old_current)
+    assert prompt_version_row_count(db_session, agent) == 2  # nothing stored
+
+
+def test_create_proposed_version_without_an_expected_parent_uses_the_current_one(db_session):
+    _, agent = _agent(db_session)
+    _, fix = _failing_fix(db_session, agent)
+    newer = PromptVersion(agent_id=agent.id, text="newer", origin="manual", status="promoted", number=2)
+    db_session.add(newer)
+    db_session.flush()
+    agent.current_prompt_version_id = newer.id
+    assert create_proposed_version(db_session, agent, "t", fix.id, WHY).parent_id == newer.id
+
+
 def test_create_proposed_version_numbers_after_rejected_rows(db_session):
     _, agent = _agent(db_session)
     _, fix = _failing_fix(db_session, agent)
@@ -278,10 +317,37 @@ def test_compute_required_fix_only_is_weaker(db_session):
     assert compute_required(db_session, agent, fix) == [RequiredTest(fix.id, "fix", "fail")]
 
 
-def test_compute_required_defaults_before_to_fail_without_a_failing_result(db_session):
+def test_compute_required_before_is_none_without_a_stored_result_on_the_current_version(db_session):
     _, agent = _agent(db_session)
     fix = _test(db_session, _criterion(db_session, agent))
-    assert compute_required(db_session, agent, fix) == [RequiredTest(fix.id, "fix", "fail")]
+    assert compute_required(db_session, agent, fix) == [RequiredTest(fix.id, "fix", None)]
+    _result(db_session, fix, "older-version", kind="baseline", verdict="fail")  # a baseline of another version
+    assert compute_required(db_session, agent, fix) == [RequiredTest(fix.id, "fix", None)]
+
+
+def test_compute_required_heldout_that_already_passes_is_not_credited_with_a_change(db_session):
+    """After a manual edit and Run all, the held-out test passes on the current version: before is pass."""
+    _, agent = _agent(db_session)
+    current = agent.current_prompt_version_id
+    crit, fix = _failing_fix(db_session, agent)
+    held = _test(db_session, crit, "heldout")
+    _result(db_session, held, "older-version", kind="baseline", verdict="fail")
+    _result(db_session, held, "older-version", verdict="fail")
+    _result(db_session, held, current, verdict="pass")
+    required = compute_required(db_session, agent, fix)
+    assert required == [RequiredTest(fix.id, "fix", "fail"), RequiredTest(held.id, "heldout", "pass")]
+
+
+def test_compute_required_before_prefers_the_current_replay_over_the_baseline(db_session):
+    _, agent = _agent(db_session)
+    current = agent.current_prompt_version_id
+    crit, fix = _failing_fix(db_session, agent)  # baseline fail on the current version
+    _result(db_session, fix, current, verdict="fail")
+    held = _test(db_session, crit, "heldout")
+    _result(db_session, held, current, kind="baseline", verdict="fail")
+    _result(db_session, held, current, verdict="pass", stale=True)  # stale replays are ignored
+    required = compute_required(db_session, agent, fix)
+    assert required == [RequiredTest(fix.id, "fix", "fail"), RequiredTest(held.id, "heldout", "fail")]
 
 
 def test_compute_required_with_heldout_is_full(db_session):
@@ -517,6 +583,29 @@ def test_restore_version_rejects_other_statuses(db_session, status):
         restore_version(db_session, agent, version)
     assert agent.current_prompt_version_id == current
     assert prompt_version_row_count(db_session, agent) == 2
+
+
+def test_restore_version_refuses_a_suggestion_that_was_never_approved(db_session):
+    _, agent = _agent(db_session)
+    _, fix = _failing_fix(db_session, agent)
+    proposal = _propose(db_session, agent, fix)
+    new_prompt_version(db_session, agent, "manual edit")  # supersedes the proposal
+    assert proposal.status == "superseded" and proposal.verification is None
+    current = agent.current_prompt_version_id
+    with pytest.raises(ValueError):
+        restore_version(db_session, agent, proposal)
+    assert agent.current_prompt_version_id == current
+    assert prompt_version_row_count(db_session, agent) == 3
+
+
+def test_restore_version_allows_a_suggestion_that_was_verified(db_session):
+    _, agent = _agent(db_session)
+    _, fix = _failing_fix(db_session, agent)
+    suggestion = _propose(db_session, agent, fix)
+    approve_candidate(db_session, agent, suggestion)
+    suggestion.status = "failed_verification"
+    restored = restore_version(db_session, agent, suggestion)
+    assert restored.status == "promoted" and restored.text == suggestion.text
 
 
 def test_restore_version_refuses_a_version_of_another_agent(db_session):

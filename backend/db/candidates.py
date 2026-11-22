@@ -31,6 +31,10 @@ class VersionLimitReached(Exception):
     """The agent is at its version cap (counted versions or total rows)."""
 
 
+class ParentChanged(Exception):
+    """The agent's current version is no longer the one a proposal was written against."""
+
+
 def get_owned_version(db: Session, workspace: Workspace, version_id: str) -> PromptVersion:
     """Return the version if its agent belongs to the workspace; LookupError otherwise."""
     version = db.get(PromptVersion, version_id)
@@ -82,13 +86,22 @@ def _next_number(db: Session, agent: Agent) -> int:
 
 
 def create_proposed_version(
-    db: Session, agent: Agent, text: str, source_test_id: str, why: dict
+    db: Session,
+    agent: Agent,
+    text: str,
+    source_test_id: str,
+    why: dict,
+    expected_parent_id: str | None = None,
 ) -> PromptVersion:
     """Store a suggested prompt as the agent's `proposed` version; the current version is unchanged.
 
+    `expected_parent_id` is the current version the text was written against: when the agent's
+    current version (reloaded under the lock) is another one, nothing is stored (ParentChanged).
     Raises CandidateOpen when a candidate is already open, VersionLimitReached at either cap.
     """
     lock_agent(db, agent)
+    if expected_parent_id is not None and expected_parent_id != agent.current_prompt_version_id:
+        raise ParentChanged(agent.id)
     if open_candidate(db, agent) is not None:
         raise CandidateOpen(agent.id)
     if (
@@ -115,15 +128,22 @@ def create_proposed_version(
 def compute_required(db: Session, agent: Agent, fix_test: EvalTest) -> list[RequiredTest]:
     """The tests a candidate must pass: fix, the criterion's held-out test, then regressions.
 
-    `before` is the failing verdict for the fix and held-out tests ("fail" when no failing result is
-    recorded) and "pass" for regressions, which are every other test whose current non-stale replay
-    on the agent's current version passed (failing, stale, never-run and not_applicable are left out).
+    `before` for the fix and held-out tests is read from stored results, never assumed: the verdict
+    of the test's current non-stale replay on the agent's current version, else the verdict of its
+    newest baseline when that was taken on the current version, else None (not run). Regressions are
+    every other test whose current non-stale replay on the current version passed (failing, stale,
+    never-run and not_applicable are left out), with `before` "pass".
     """
     current_id = agent.current_prompt_version_id
 
-    def before(test: EvalTest) -> str:
-        failing = failing_result_for(db, test, current_id)
-        return failing.verdict if failing is not None else "fail"
+    def before(test: EvalTest) -> str | None:
+        replay = current_replay(db, test, current_id)
+        if replay is not None:
+            return replay.verdict
+        baseline = latest_baseline(db, test)
+        if baseline is not None and baseline.prompt_version_id == current_id:
+            return baseline.verdict
+        return None
 
     required = [RequiredTest(fix_test.id, "fix", before(fix_test))]
     heldout = db.scalars(
@@ -187,11 +207,15 @@ def restore_version(db: Session, agent: Agent, version: PromptVersion) -> Prompt
 
     The previous current version and any `proposed` candidate become `superseded`. Allowed from
     `promoted`, `superseded` and `failed_verification` (ValueError otherwise); refused with
-    CandidateOpen while a candidate is being verified.
+    CandidateOpen while a candidate is being verified. A suggested version that was never approved
+    (no verification record, e.g. a proposal a manual edit superseded) is refused too: its text
+    was never verified, so restoring it would put unverified model text live.
     """
     _lock_and_reload(db, agent, version)
     if version.status not in RESTORABLE_STATUSES:
         raise ValueError(f"A {version.status!r} version cannot be restored.")
+    if version.origin == "suggested" and version.verification is None:
+        raise ValueError("A suggestion that was never approved cannot be restored.")
     if verifying_version(db, agent) is not None:
         raise CandidateOpen(agent.id)
     number = _next_number(db, agent)

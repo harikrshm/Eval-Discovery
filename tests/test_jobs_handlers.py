@@ -8,8 +8,8 @@ from backend.core.judge import JudgeCheck, JudgeFailed, JudgeResult
 from backend.core.heldout import GenerateFailed
 from backend.core.replay import ReplayFailed
 from backend.core.report import ReportFailed, ReportNarrative
-from backend.core.suggest import SuggestedFix, SuggestFailed
-from backend.db.candidates import VersionLimitReached
+from backend.core.suggest import SuggestedFix, SuggestFailed, SuggestTooLong
+from backend.db.candidates import ParentChanged, VersionLimitReached
 from backend.db.models import (
     Agent,
     Criterion,
@@ -1120,6 +1120,70 @@ def test_suggest_fix_version_limit_maps_to_a_fixed_message(db_session, monkeypat
 
     assert str(err.value) == "Prompt version limit reached for this agent."
     assert _events(db_session, "fix_suggested") == []
+
+
+def test_suggest_fix_passes_the_version_it_read_as_the_expected_parent(db_session, monkeypatch):
+    ws, agent, pv, crit, test = _failing(db_session)
+    _patch_suggest(monkeypatch)
+    real = handlers.create_proposed_version
+    spy = MagicMock(side_effect=real)
+    monkeypatch.setattr(handlers, "create_proposed_version", spy)
+
+    handle_suggest_fix(db_session, _job(db_session, ws, "suggest_fix", {"test_id": test.id}))
+
+    assert spy.call_args.kwargs["expected_parent_id"] == pv.id
+
+
+def test_suggest_fix_parent_changed_maps_to_a_fixed_message(db_session, monkeypatch):
+    ws, agent, pv, crit, test = _failing(db_session)
+    _patch_suggest(monkeypatch)
+    monkeypatch.setattr(handlers, "create_proposed_version", MagicMock(side_effect=ParentChanged("a")))
+
+    with pytest.raises(JobFailed) as err:
+        handle_suggest_fix(db_session, _job(db_session, ws, "suggest_fix", {"test_id": test.id}))
+
+    assert str(err.value) == "This test isn't failing on the current prompt."
+    assert _events(db_session, "fix_suggested") == []
+
+
+def test_suggest_fix_stores_nothing_when_the_prompt_moves_after_the_unlocked_check(db_session, monkeypatch):
+    """The race the unlocked check cannot see: the version changes right after it passed."""
+    ws, agent, pv, crit, test = _failing(db_session)
+    agent_id = agent.id
+    _patch_suggest(monkeypatch)
+    real_check = handlers._current_version_id
+
+    def check_then_rival_commits(db, agent_row):
+        answer = real_check(db, agent_row)  # still the old version: the check passes
+        other = _other_session(db_session)
+        try:
+            new = PromptVersion(agent_id=agent_id, text="edited", origin="manual", status="promoted", number=2)
+            other.add(new)
+            other.flush()
+            other.get(Agent, agent_id).current_prompt_version_id = new.id
+            other.commit()
+        finally:
+            other.close()
+        return answer
+
+    monkeypatch.setattr(handlers, "_current_version_id", check_then_rival_commits)
+
+    with pytest.raises(JobFailed) as err:
+        handle_suggest_fix(db_session, _job(db_session, ws, "suggest_fix", {"test_id": test.id}))
+
+    assert str(err.value) == "This test isn't failing on the current prompt."
+    assert _proposed(db_session) == []
+
+
+def test_suggest_fix_too_long_has_its_own_fixed_message(db_session, monkeypatch):
+    ws, agent, pv, crit, test = _failing(db_session)
+    _patch_suggest(monkeypatch, exc=SuggestTooLong("suggested prompt is too long"))
+
+    with pytest.raises(JobFailed) as err:
+        handle_suggest_fix(db_session, _job(db_session, ws, "suggest_fix", {"test_id": test.id}))
+
+    assert str(err.value) == "The suggested prompt was too long. Try again."
+    assert _proposed(db_session) == []
 
 
 def test_suggest_fix_rejects_foreign_and_missing_tests(db_session, monkeypatch):

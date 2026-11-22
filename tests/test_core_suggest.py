@@ -11,7 +11,7 @@ from backend.core.prompts import (
     _neutralize,
     build_suggest_messages,
 )
-from backend.core.suggest import SuggestedFix, SuggestFailed, suggest_fix
+from backend.core.suggest import SuggestedFix, SuggestFailed, SuggestTooLong, suggest_fix
 from backend.groq_client import MODEL_JUDGE
 
 CONFIG = AgentConfig(
@@ -136,6 +136,18 @@ def _without(key):
 def test_unusable_output_raises_suggest_failed(raw):
     with pytest.raises(SuggestFailed):
         _suggest(raw)
+
+
+def test_a_prompt_over_the_limit_raises_the_too_long_subclass():
+    with pytest.raises(SuggestTooLong):
+        _suggest(_reply(prompt_text="x" * (MAX_PROMPT_CHARS + 1)))
+    assert issubclass(SuggestTooLong, SuggestFailed)
+
+
+def test_other_unusable_output_is_not_reported_as_too_long():
+    with pytest.raises(SuggestFailed) as err:
+        _suggest("Sorry, I cannot do that.")
+    assert not isinstance(err.value, SuggestTooLong)
 
 
 def test_prompt_at_exactly_the_limit_is_accepted():

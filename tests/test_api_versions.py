@@ -374,6 +374,26 @@ def test_approve_loses_a_race_with_a_manual_edit_that_supersedes_the_proposal(
     assert _jobs(db_session) == []
 
 
+STALE_FIX = "That fix is based on an older prompt. Suggest a new fix."
+
+
+def test_approve_is_409_when_the_candidate_is_based_on_an_older_prompt(client, auth_headers, db_session):
+    """Simulated: the prompt moved on (a rival commit) while the proposal stayed `proposed`."""
+    p = _proposal(client, auth_headers, db_session)
+    newer = _add_version(db_session, p["agent_id"], 3, "promoted", origin="manual", parent_id=p["current"])
+    db_session.execute(
+        update(Agent).where(Agent.id == p["agent_id"]).values(current_prompt_version_id=newer.id)
+    )
+    db_session.commit()
+
+    r = _approve(client, auth_headers, p["candidate"].id)
+
+    assert r.status_code == 409
+    assert r.json()["detail"] == STALE_FIX
+    assert _reload(db_session, p["candidate"]).status == "proposed"
+    assert _jobs(db_session) == []
+
+
 def test_approve_after_a_manual_edit_supersedes_the_proposal_is_409(client, auth_headers, db_session):
     p = _proposal(client, auth_headers, db_session)
     r = client.put(f"/agents/{p['agent_id']}/prompt", json={"text": "Edited by hand."}, headers=auth_headers)
@@ -583,8 +603,25 @@ def test_restore_is_409_for_unrestorable_statuses(client, auth_headers, db_sessi
 @pytest.mark.parametrize("status", ["superseded", "failed_verification"])
 def test_restore_allows_superseded_and_failed_versions(client, auth_headers, db_session, status):
     agent_id = _agent(client, auth_headers)
-    version = _add_version(db_session, agent_id, 2, status)
+    version = _add_version(db_session, agent_id, 2, status, verification={"strength": "weaker", "required": []})
     assert client.post(f"/prompt-versions/{version.id}/restore", headers=auth_headers).status_code == 200
+
+
+def test_restore_is_409_for_a_suggestion_that_was_never_approved(client, auth_headers, db_session):
+    """A proposal that a manual edit superseded was never verified: it must not go live."""
+    p = _proposal(client, auth_headers, db_session)
+    edit = client.put(f"/agents/{p['agent_id']}/prompt", json={"text": "Edited."}, headers=auth_headers)
+    assert edit.status_code == 200
+    assert _reload(db_session, p["candidate"]).status == "superseded"
+    count = db_session.query(PromptVersion).filter_by(agent_id=p["agent_id"]).count()
+
+    r = client.post(f"/prompt-versions/{p['candidate'].id}/restore", headers=auth_headers)
+
+    assert r.status_code == 409
+    assert r.json()["detail"] == NOT_RESTORABLE
+    assert db_session.query(PromptVersion).filter_by(agent_id=p["agent_id"]).count() == count
+    assert db_session.get(Agent, p["agent_id"]).current_prompt_version_id != p["candidate"].id
+    assert _events(db_session, "version_restored") == []
 
 
 def _fill_versions(db_session, agent_id, count, status, start=2):
@@ -617,7 +654,7 @@ def test_restore_is_429_at_the_hard_row_cap(client, auth_headers, db_session):
 
 def test_restore_just_below_the_caps_succeeds(client, auth_headers, db_session):
     agent_id = _agent(client, auth_headers)
-    old = _add_version(db_session, agent_id, 2, "superseded")
+    old = _add_version(db_session, agent_id, 2, "superseded", origin="manual")
     _fill_versions(db_session, agent_id, 57, "rejected", start=3)  # 59 rows
     assert client.post(f"/prompt-versions/{old.id}/restore", headers=auth_headers).status_code == 200
 

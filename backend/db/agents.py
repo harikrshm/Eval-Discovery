@@ -85,7 +85,9 @@ def lock_agent(db: Session, agent: Agent) -> None:
 
     Serializes concurrent prompt edits: the second one waits, then sees the first one's version.
     """
-    db.execute(locked_agent_statement(agent.id).execution_options(populate_existing=True))
+    # The row must be fetched for populate_existing to refresh the agent: an unconsumed ORM result
+    # loads nothing, which would leave a stale current_prompt_version_id after waiting for the lock.
+    db.execute(locked_agent_statement(agent.id).execution_options(populate_existing=True)).scalar_one_or_none()
     db.expire(agent, ["prompt_versions"])
 
 

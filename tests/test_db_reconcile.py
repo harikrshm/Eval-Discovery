@@ -257,6 +257,23 @@ def test_regression_fail(db_session):
     _assert_failed(db_session, version, agent, previous_id, "A previously passing test now fails.")
 
 
+def test_all_pass_but_the_parent_changed_fails_instead_of_replacing_the_newer_prompt(db_session):
+    """The candidate was written against v1; the live prompt is now v3, so it must not replace it."""
+    _, agent, version, _ = _setup_full(db_session)
+    newer = PromptVersion(agent_id=agent.id, text="newer", origin="manual", status="promoted", number=3)
+    db_session.add(newer)
+    db_session.flush()
+    db_session.get(PromptVersion, agent.current_prompt_version_id).status = "superseded"
+    agent.current_prompt_version_id = newer.id
+    db_session.commit()
+
+    assert reconcile_verifying(db_session) == [version.id]
+
+    _assert_failed(db_session, version, agent, newer.id, "The prompt changed during verification.")
+    rows = version.change_report["outcome"]["table"]
+    assert [r["after"] for r in rows] == ["pass", "pass", "pass"]  # the table is built as for any failure
+
+
 def test_proposed_sibling_untouched_on_failure(db_session):
     _, agent, version, _ = _setup_full(db_session, fix_verdict="fail")
     sibling = PromptVersion(agent_id=agent.id, text="s", origin="suggested", status="proposed", number=3)

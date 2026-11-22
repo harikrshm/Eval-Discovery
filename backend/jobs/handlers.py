@@ -19,10 +19,11 @@ from backend.core.judge import JudgeFailed, JudgeResult, judge, sanity_check
 from backend.core.promotion import quote_turn
 from backend.core.replay import ReplayFailed, replay, user_messages
 from backend.core.report import ReportFailed, write_report
-from backend.core.suggest import SuggestFailed, suggest_fix
+from backend.core.suggest import SuggestFailed, SuggestTooLong, suggest_fix
 from backend.core.testsuite import pick_test_runs
 from backend.db.candidates import (
     CandidateOpen,
+    ParentChanged,
     VersionLimitReached,
     create_proposed_version,
     failing_result_for,
@@ -50,6 +51,7 @@ _NOT_FAILING = "This test isn't failing on the current prompt."
 _CANDIDATE_OPEN = "A fix is already proposed or being verified."
 _VERSION_LIMIT = "Prompt version limit reached for this agent."
 _SUGGEST_FAILED = "Couldn't write a fix. Try again."
+_SUGGEST_TOO_LONG = "The suggested prompt was too long. Try again."
 _CRITERION_CHANGED = "That criterion changed while the fix was written. Try again."
 _HELDOUT_PRECONDITION = "This criterion needs a fix test and no held-out test."
 
@@ -304,9 +306,11 @@ def handle_suggest_fix(db: Session, job: Job) -> dict:
     db.commit()
     try:
         fix = suggest_fix(config, spec, rationale, transcript)
+    except SuggestTooLong as exc:
+        logger.warning("suggest_fix too long for job %s: %s", job.id, exc)
+        raise JobFailed(_SUGGEST_TOO_LONG) from exc
     except SuggestFailed as exc:
-        # The core module gives no structured reason (its message can carry provider text), so the
-        # message is always the generic one; the too-long case is not told apart.
+        # The exception message can carry provider text, so the job message is always a fixed one.
         logger.warning("suggest_fix failure for job %s: %s", job.id, exc)
         raise JobFailed(_SUGGEST_FAILED) from exc
 
@@ -329,13 +333,16 @@ def handle_suggest_fix(db: Session, job: Job) -> dict:
         "risk": fix.risk[:MAX_WHY_FIELD_CHARS],
     }
     try:
-        version = create_proposed_version(db, agent, fix.prompt_text, test.id, why)
+        version = create_proposed_version(db, agent, fix.prompt_text, test.id, why, expected_parent_id=current_id)
     except CandidateOpen as exc:
         db.rollback()
         raise JobFailed(_CANDIDATE_OPEN) from exc
     except VersionLimitReached as exc:
         db.rollback()
         raise JobFailed(_VERSION_LIMIT) from exc
+    except ParentChanged as exc:  # the prompt moved on after the unlocked check above
+        db.rollback()
+        raise JobFailed(_NOT_FAILING) from exc
     db.commit()
 
     summary = {"version_id": version.id, "number": version.number}

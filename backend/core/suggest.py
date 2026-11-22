@@ -30,6 +30,10 @@ class SuggestFailed(RuntimeError):
     """Raised when the suggester call or its output is unusable."""
 
 
+class SuggestTooLong(SuggestFailed):
+    """The suggested prompt exceeds the prompt length cap."""
+
+
 def _numbered_transcript(config: AgentConfig, transcript: list[dict]) -> str:
     lines = []
     for i, msg in enumerate(transcript):
@@ -51,7 +55,7 @@ def _parse(raw: str, config: AgentConfig, turn_count: int) -> SuggestedFix:
         raise SuggestFailed("suggester output is missing a prompt")
     prompt = prompt.strip()
     if len(prompt) > MAX_PROMPT_CHARS:
-        raise SuggestFailed("suggested prompt is too long")
+        raise SuggestTooLong("suggested prompt is too long")
     if prompt == config.system_prompt.strip():
         raise SuggestFailed("suggested prompt is identical to the current prompt")
 

@@ -42,6 +42,7 @@ NOT_APPROVABLE = "This fix can't be approved in its current state."
 NOT_REJECTABLE = "This fix can't be rejected in its current state."
 NOT_RESTORABLE = "This version can't be restored."
 FIX_MISMATCH = "That fix no longer matches its test."
+STALE_FIX = "That fix is based on an older prompt. Suggest a new fix."
 
 
 def version_out(version: PromptVersion, current_id: str | None) -> VersionOut:
@@ -133,6 +134,8 @@ def approve(
     db.refresh(version)  # the status as committed by whoever held the lock before us
     if version.status != "proposed":
         raise HTTPException(status_code=409, detail=NOT_APPROVABLE)
+    if version.parent_id != agent.current_prompt_version_id:  # lock_agent reloaded the agent
+        raise HTTPException(status_code=409, detail=STALE_FIX)
     if verifying_version(db, agent) is not None:
         raise HTTPException(status_code=409, detail=FIX_VERIFYING)
     fix_test = db.get(EvalTest, version.source_test_id) if version.source_test_id else None
