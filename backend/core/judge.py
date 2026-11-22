@@ -48,8 +48,10 @@ def _parse(raw: str) -> JudgeResult:
     return JudgeResult(verdict.strip().lower(), rationale.strip())
 
 
-def _judge_text(config: AgentConfig, criterion: CriterionSpec, transcripts_text: str) -> JudgeResult:
-    system, messages = build_judge_messages(config, criterion, transcripts_text)
+def _judge_text(
+    config: AgentConfig, criterion: CriterionSpec, transcripts_text: str, evidence: str | None = None
+) -> JudgeResult:
+    system, messages = build_judge_messages(config, criterion, transcripts_text, evidence)
     try:
         raw = groq_chat(system, messages, model=MODEL_JUDGE, temperature=0)
     except Exception as exc:
@@ -57,10 +59,15 @@ def _judge_text(config: AgentConfig, criterion: CriterionSpec, transcripts_text:
     return _parse(raw)
 
 
-def judge(config: AgentConfig, criterion: CriterionSpec, transcript: list[dict]) -> JudgeResult:
-    """Grade one transcript ({role, content} turns) against the criterion."""
+def judge(
+    config: AgentConfig, criterion: CriterionSpec, transcript: list[dict], *, evidence: str | None = None
+) -> JudgeResult:
+    """Grade one transcript ({role, content} turns) against the criterion.
+
+    ``evidence`` is the page the agent could see (assistant tests); it is shown to the judge in the user message.
+    """
     text = format_transcripts([transcript], config.name, config.user_role_label)
-    return _judge_text(config, criterion, text)
+    return _judge_text(config, criterion, text, evidence)
 
 
 def sanity_check(config: AgentConfig, criterion: CriterionSpec) -> JudgeCheck:

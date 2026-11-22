@@ -7,6 +7,8 @@ from dataclasses import dataclass
 
 MAX_PROMPT_CHARS = 4000
 MAX_AGENTS_PER_WORKSPACE = 5
+MAX_ASSISTANT_MESSAGE_CHARS = 16000  # model replies, which the user cannot shorten
+CHAT_MAX_TOKENS = 3000  # keeps replies (~4 chars/token) under the assistant message cap
 
 
 @dataclass(frozen=True)

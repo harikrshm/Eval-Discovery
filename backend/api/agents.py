@@ -23,7 +23,13 @@ from backend.api.schemas import (
     sanitize_label,
 )
 from backend.core.analyze import analyze_agent
-from backend.core.config import MAX_AGENTS_PER_WORKSPACE, PRESETS, AgentAnalysis, AgentConfig
+from backend.core.config import (  # noqa: F401  (CHAT_MAX_TOKENS is re-exported)
+    CHAT_MAX_TOKENS,
+    MAX_AGENTS_PER_WORKSPACE,
+    PRESETS,
+    AgentAnalysis,
+    AgentConfig,
+)
 from backend.db.agents import (
     AgentLimitReached,
     agent_count,
@@ -44,7 +50,6 @@ router = APIRouter(tags=["agents"])
 
 ANALYSIS_FAILED = "Couldn't analyze that prompt. Try again."
 CHAT_FAILED = "The agent didn't respond. Try again."
-CHAT_MAX_TOKENS = 3000  # keeps replies (~4 chars/token) under the assistant message cap
 AGENT_LIMIT = "Agent limit reached for this workspace."
 
 

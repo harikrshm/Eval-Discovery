@@ -5,6 +5,7 @@ leaves no partial rows. Handlers raise `JobFailed` with a fixed, user-safe messa
 errors (which may carry request details) are logged, never copied into the message.
 """
 
+import copy
 import difflib
 import logging
 from collections.abc import Callable
@@ -13,11 +14,13 @@ from sqlalchemy import delete, select
 from sqlalchemy.exc import InvalidRequestError
 from sqlalchemy.orm import Session
 
+from backend.core.assist.answer import judge_brief_text
+from backend.core.assist.brief import Brief
 from backend.core.config import AgentConfig, CriterionSpec
 from backend.core.heldout import MAX_SCENARIO_MESSAGES, GenerateFailed, generate_scenario
 from backend.core.judge import JudgeFailed, JudgeResult, judge, sanity_check
 from backend.core.promotion import quote_turn
-from backend.core.replay import ReplayFailed, replay, user_messages
+from backend.core.replay import ReplayFailed, replay, replay_assist, user_messages
 from backend.core.report import ReportFailed, write_report
 from backend.core.suggest import SuggestFailed, SuggestTooLong, suggest_fix
 from backend.core.testsuite import pick_test_runs
@@ -55,6 +58,7 @@ _SUGGEST_FAILED = "Couldn't write a fix. Try again."
 _SUGGEST_TOO_LONG = "The suggested prompt was too long. Try again."
 _CRITERION_CHANGED = "That criterion changed while the fix was written. Try again."
 _HELDOUT_PRECONDITION = "This criterion needs a fix test and no held-out test."
+_BAD_SNAPSHOT = "That test's saved page is not valid."
 
 _ALREADY_BUILT = {
     "judged": 0,
@@ -84,6 +88,34 @@ def _spec(criterion: Criterion) -> CriterionSpec:
         good_example=criterion.good_example,
         bad_example=criterion.bad_example,
     )
+
+
+def _snapshot_brief(snapshot: object) -> Brief | None:
+    """The brief of an assistant test's snapshot, or None for a test without one (a general agent's test).
+
+    A snapshot that does not validate fails the job with a fixed message (never the validation detail).
+    """
+    if snapshot is None:
+        return None
+    try:
+        return Brief.model_validate(snapshot)
+    except ValueError as exc:
+        raise JobFailed(_BAD_SNAPSHOT) from exc
+
+
+def _replay_and_judge(
+    config: AgentConfig, judge_config: AgentConfig, spec: CriterionSpec, messages: list[str], brief: Brief | None
+) -> tuple[list[dict], JudgeResult]:
+    """Replay the scripted messages and judge the transcript.
+
+    With a brief (assistant tests) the replay goes through the same pipeline the chat route uses and the
+    judge also sees the page; without one it is the plain replay and judge, unchanged.
+    """
+    if brief is None:
+        transcript = replay(config, messages)
+        return transcript, judge(judge_config, spec, transcript)
+    transcript = replay_assist(config.system_prompt, brief, messages)
+    return transcript, judge(judge_config, spec, transcript, evidence=judge_brief_text(brief))
 
 
 def _payload_id(job: Job, key: str, missing_message: str) -> str:
@@ -180,6 +212,8 @@ def handle_build_tests(db: Session, job: Job) -> dict:
             source_run_id=run.id,
             role=role,
             scripted_user_messages=user_messages(run.messages),
+            # Assistant tests carry the brief the answer was given against, so a replay rebuilds its context.
+            brief_snapshot=copy.deepcopy(run.brief_snapshot) if agent.kind == "assist" else None,
         )
         db.add(test)
         db.flush()
@@ -227,6 +261,7 @@ def handle_replay(db: Session, job: Job) -> dict:
         return {"skipped": True}
     if not test.scripted_user_messages:
         raise JobFailed("That test has no messages to replay.")
+    brief = _snapshot_brief(test.brief_snapshot)
 
     config = AgentConfig(agent.name, version.text, agent.user_role_label)
     # The judge never sees the agent's prompt: give it a config without one.
@@ -243,8 +278,7 @@ def handle_replay(db: Session, job: Job) -> dict:
     # a replay a person started fails at once, and they can press Replay again.
     failure = RetryableJobFailure if system else JobFailed
     try:
-        transcript = replay(config, messages)
-        verdict = judge(judge_config, spec, transcript)
+        transcript, verdict = _replay_and_judge(config, judge_config, spec, messages, brief)
     except ReplayFailed as exc:
         logger.warning("replay failure for job %s: %s", job.id, exc)
         raise failure(_AGENT_UNAVAILABLE) from exc
@@ -416,6 +450,8 @@ def handle_generate_heldout(db: Session, job: Job) -> dict:
     if current is None:
         raise JobFailed(_VERSION_GONE)
 
+    brief = _snapshot_brief(fix_test.brief_snapshot)
+    snapshot = copy.deepcopy(fix_test.brief_snapshot)
     config = AgentConfig(agent.name, current.text, agent.user_role_label)
     # The judge never sees the agent's prompt: give it a config without one.
     judge_config = AgentConfig(agent.name, "", agent.user_role_label)
@@ -436,8 +472,7 @@ def handle_generate_heldout(db: Session, job: Job) -> dict:
                 logger.warning("generate_heldout generation failure for job %s: %s", job.id, exc)
                 continue
             scenario = scenario[:MAX_SCENARIO_MESSAGES]
-            transcript = replay(config, scenario)
-            verdict = judge(judge_config, spec, transcript)
+            transcript, verdict = _replay_and_judge(config, judge_config, spec, scenario, brief)
             if verdict.verdict == "fail":
                 kept = (scenario, transcript, verdict)
                 break
@@ -464,6 +499,7 @@ def handle_generate_heldout(db: Session, job: Job) -> dict:
         role="heldout",
         origin="generated",
         scripted_user_messages=scenario,
+        brief_snapshot=snapshot,  # the same page as the fix test of this criterion
     )
     db.add(test)
     db.flush()

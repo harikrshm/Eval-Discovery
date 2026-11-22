@@ -16,9 +16,7 @@ import os
 from fastapi import APIRouter, Depends, Header, HTTPException, Request, Response
 from sqlalchemy.orm import Session
 
-from backend.api.agents import CHAT_MAX_TOKENS
 from backend.api.limits import (
-    MAX_ASSISTANT_MESSAGE_CHARS,
     rate_limit_assist_feedback,
     rate_limit_assist_heartbeat,
     rate_limit_assist_session,
@@ -33,11 +31,12 @@ from backend.api.schemas import (
     CitationCheckOut,
 )
 from backend.core.assist import ASSIST_MODEL
-from backend.core.assist.assemble import NOT_US_ANSWER, assemble
+from backend.core.assist.answer import CITATION_NOTE, build_answer_request, finalize_answer  # noqa: F401  (CITATION_NOTE is re-exported)
+from backend.core.assist.assemble import NOT_US_ANSWER
 from backend.core.assist.brief import is_us_patent
-from backend.core.assist.citations import CitationCheck, check_citations
-from backend.core.assist.intent import Intent, classify_intent, primary_section
-from backend.core.assist.lawpack import NOT_LEGAL_ADVICE, excerpts_for_question
+from backend.core.assist.citations import CitationCheck
+from backend.core.assist.intent import Intent, primary_section
+from backend.core.config import CHAT_MAX_TOKENS
 from backend.db.agents import current_prompt_version
 from backend.db.assist import (
     SessionConflict,
@@ -63,13 +62,11 @@ ASSIST_KEY_HEADER = "X-Assist-Key"
 NOT_CONFIGURED = "Assist is not configured."
 ASSIST_UNAVAILABLE = "The assistant is not available right now."
 CHAT_FAILED = "The assistant could not answer right now. Please try again."
-CITATION_NOTE = "Some citations in this answer could not be verified against the page."
 FLAGGED_SOURCE = "assist"
 MAX_ASSIST_RUNS = 1000  # flagged conversations kept per workspace; past it new sessions are not saved
 QUESTION_NOT_FOUND = "Question not found."
 SESSION_CONFLICT = "This session cannot be updated."
 BRIEF_MISMATCH = "The brief does not match the question."
-_REPLY_BUDGET = MAX_ASSISTANT_MESSAGE_CHARS - len(NOT_LEGAL_ADVICE) - len(CITATION_NOTE) - 4
 
 
 def require_assist_key(x_assist_key: str | None = Header(default=None)) -> None:
@@ -119,30 +116,19 @@ def chat(body: AssistChatRequest, request: Request, db: Session = Depends(get_db
         )
         return _response(row.id, NOT_US_ANSWER, Intent.other, version.number, CitationCheck(ok=True))
 
-    intent = classify_intent(question)
-    # Law text comes only from the fixed pack, chosen by the question's keywords and the intent.
-    excerpts = excerpts_for_question(intent, question)
     history = [turn.model_dump() for turn in body.history]
-    system, messages = assemble(
-        brief, history, question, law_excerpts=excerpts, system_prompt=version.text
-    )
+    req = build_answer_request(brief, history, question, version.text)
+    intent = req.intent
     try:
         with request_retries(2):
-            reply = groq_chat(system, messages, model=ASSIST_MODEL, max_tokens=CHAT_MAX_TOKENS)
+            reply = groq_chat(req.system, req.messages, model=ASSIST_MODEL, max_tokens=CHAT_MAX_TOKENS)
         if not reply.strip():
             raise ValueError("empty model reply")
     except Exception:
         logger.warning("Assist chat failed", exc_info=True)
         raise HTTPException(status_code=502, detail=CHAT_FAILED) from None
 
-    # Replies come back as history turns later, so the FINAL answer must fit the message cap: leave
-    # room for the two suffixes (and their separators) that may be appended below.
-    answer = reply[:_REPLY_BUDGET]
-    if intent is Intent.legal_opinion_request and NOT_LEGAL_ADVICE not in answer:
-        answer = f"{answer}\n{NOT_LEGAL_ADVICE}"
-    check = check_citations(answer, brief, [law_id for law_id, _ in excerpts])
-    if not check.ok:
-        answer = f"{answer}\n\n{CITATION_NOTE}"
+    answer, check = finalize_answer(reply, intent, brief, req.provided_law_ids)
 
     row = add_question(
         db, workspace.id, body.session_id, brief.patent_number, question, intent.value,

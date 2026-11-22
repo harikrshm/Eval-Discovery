@@ -11,6 +11,7 @@ from sqlalchemy.orm import Session
 
 from backend.core.config import (  # noqa: F401  (single source; re-exported)
     MAX_AGENTS_PER_WORKSPACE,
+    MAX_ASSISTANT_MESSAGE_CHARS,
     MAX_PROMPT_CHARS,
 )
 from backend.db.agents import (
@@ -24,7 +25,6 @@ from backend.db.models import Agent
 MAX_RUNS_PER_WORKSPACE = 50
 MAX_MESSAGES_PER_REQUEST = 40
 MAX_MESSAGE_CHARS = 2000  # user-authored messages
-MAX_ASSISTANT_MESSAGE_CHARS = 16000  # model replies, which the user cannot shorten
 MAX_REQUEST_CHARS = 120000  # sum over all messages in one request
 MAX_CRITERIA_PER_AGENT = 30
 MAX_PATTERN_RUNS = 10
