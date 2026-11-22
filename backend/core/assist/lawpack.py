@@ -119,6 +119,59 @@ def excerpts_for(intent: Intent) -> list[tuple[str, str]]:
     return [(i, f"{pack[i].title} ({pack[i].source}): {pack[i].text}") for i in INTENT_PROVISIONS[intent]]
 
 
+def _num(n: str) -> str:
+    return rf"(?<![0-9]){n}(?![0-9])"
+
+
+def _sub(n: str, letter: str) -> str:
+    return rf"(?<![0-9]){n}\s{{0,2}}\(?{letter}\)?(?![a-z0-9])"
+
+
+# Fixed (pattern, provision ids) pairs in priority order: the ids are constants, so the
+# question can pick WHICH provisions are shown but never what they say. Every gap is bounded.
+_QUESTION_RULES: tuple[tuple[re.Pattern, tuple[str, ...]], ...] = tuple(
+    (re.compile(pattern, re.IGNORECASE), ids)
+    for pattern, ids in (
+        (rf"{_sub('112', 'b')}|indefinite", ("usc-112b", "mpep-2173")),
+        (rf"\bmeans for\b|{_sub('112', 'f')}|\bmeans[- ]plus[- ]function", ("usc-112f",)),
+        (rf"infring|{_num('271')}|induc|contributory", ("usc-271",)),
+        (r"comprising|consisting", ("mpep-2111-03",)),
+        (r"\bterm\b|expir|\b20 years\b|maintenance", ("usc-154",)),
+        (rf"obvious|{_num('103')}", ("usc-103", "mpep-2141")),
+        (rf"novel|{_num('102')}|anticipat|prior art", ("usc-102",)),
+        (rf"{_num('101')}|patent eligible|abstract idea", ("usc-101",)),
+        (rf"written description|enablement|{_sub('112', 'a')}", ("usc-112a",)),
+    )
+)
+
+
+def _check_question_rules() -> None:
+    pack = _cached_pack()
+    for _, ids in _QUESTION_RULES:
+        missing = [i for i in ids if i not in pack]
+        if missing:
+            raise ValueError(f"question rules: unknown provision ids {missing}")
+
+
+_check_question_rules()
+
+
+def excerpts_for_question(intent: Intent, question: str) -> list[tuple[str, str]]:
+    """Like `excerpts_for`, but provisions the question names come first.
+
+    Keyword hits add their provisions first (in rule order), then the intent's defaults, with
+    duplicates removed and at most MAX_EXCERPTS_PER_INTENT kept. Ids are fixed constants only.
+    """
+    pack = _cached_pack()
+    ids: list[str] = []
+    for pattern, rule_ids in _QUESTION_RULES:
+        if pattern.search(question):
+            ids.extend(rule_ids)
+    ids.extend(INTENT_PROVISIONS[intent])
+    ids = list(dict.fromkeys(ids))[:MAX_EXCERPTS_PER_INTENT]
+    return [(i, f"{pack[i].title} ({pack[i].source}): {pack[i].text}") for i in ids]
+
+
 @lru_cache(maxsize=1)
 def load_system_prompt() -> str:
     return _PROMPT_FILE.read_text(encoding="utf-8").strip()

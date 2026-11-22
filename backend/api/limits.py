@@ -114,10 +114,14 @@ llm_limiter = RateLimiter(30, 60)
 global_llm_limiter = make_global_limiter()
 workspace_limiter = RateLimiter(WORKSPACE_CREATES_PER_MINUTE, 60)
 
+ASSIST_QUESTIONS_PER_SESSION_PER_HOUR = 30
+_SESSION_TOO_MANY = "Too many questions in this session. Try again later."
+assist_session_limiter = RateLimiter(ASSIST_QUESTIONS_PER_SESSION_PER_HOUR, 3600)
+
 
 def reset_limiters() -> None:
     """Forget every limiter's recorded calls (used by tests)."""
-    for limiter in (llm_limiter, global_llm_limiter, workspace_limiter):
+    for limiter in (llm_limiter, global_llm_limiter, workspace_limiter, assist_session_limiter):
         limiter.reset()
 
 
@@ -152,6 +156,12 @@ def rate_limit_workspace_create(request: Request) -> None:
     """Raise 429 when one client creates workspaces too fast."""
     if not workspace_limiter.check(client_key(request)):
         raise HTTPException(status_code=429, detail=_TOO_MANY)
+
+
+def rate_limit_assist_session(session_id: str) -> None:
+    """Raise 429 when one assist session asks more than its hourly question budget."""
+    if not assist_session_limiter.check(session_id):
+        raise HTTPException(status_code=429, detail=_SESSION_TOO_MANY)
 
 
 def check_version_caps(db: Session, agent: Agent) -> None:

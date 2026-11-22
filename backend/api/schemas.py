@@ -1,5 +1,6 @@
 """Request/response models for the workspace-scoped API."""
 
+import re
 from datetime import datetime
 from typing import Literal
 
@@ -12,6 +13,7 @@ from backend.api.limits import (
     MAX_PROMPT_CHARS,
     MAX_REQUEST_CHARS,
 )
+from backend.core.assist.brief import Brief
 
 MAX_NAME_CHARS = 60
 MAX_ROLE_LABEL_CHARS = 40
@@ -385,3 +387,53 @@ class SuiteExportOut(BaseModel):
     agent: ExportAgentOut
     prompt: ExportPromptOut
     criteria: list[ExportCriterionOut]
+
+
+# ---- Patent Assist -------------------------------------------------------------
+
+ASSIST_MAX_TURN_CHARS = 2000
+ASSIST_MAX_HISTORY_TURNS = 20
+_SESSION_ID_RE = re.compile(r"[A-Za-z0-9-]{8,64}", re.ASCII)
+
+
+class AssistTurn(_Strict):
+    role: Literal["user", "assistant"]
+    content: str = Field(max_length=ASSIST_MAX_TURN_CHARS)
+
+
+class AssistChatRequest(_Strict):
+    """What the extension sends. The brief is untrusted page text, validated by its own caps."""
+
+    session_id: str
+    brief: Brief
+    history: list[AssistTurn] = Field(default_factory=list, max_length=ASSIST_MAX_HISTORY_TURNS)
+    question: str = Field(max_length=ASSIST_MAX_TURN_CHARS)
+
+    @field_validator("session_id")
+    @classmethod
+    def _session_id_shape(cls, value: str) -> str:
+        if _SESSION_ID_RE.fullmatch(value) is None:
+            raise ValueError("must be 8-64 characters: letters, digits and hyphens")
+        return value
+
+    @field_validator("question")
+    @classmethod
+    def _question_not_blank(cls, value: str) -> str:
+        value = value.strip()
+        if not value:
+            raise ValueError("must not be blank")
+        return value
+
+
+class CitationCheckOut(BaseModel):
+    ok: bool
+    unverified_claims: list[int]
+    unverified_law: list[str]
+
+
+class AssistChatResponse(BaseModel):
+    answer: str
+    question_id: str
+    intent: str
+    assist_version: int
+    citation_check: CitationCheckOut
