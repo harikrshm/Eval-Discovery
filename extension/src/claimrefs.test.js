@@ -19,9 +19,8 @@ describe('shared claim-reference cases', () => {
   })
   it.each(CASES.map((c, i) => [i, c.number, c.text.slice(0, 40), c.expected]))(
     'case %i (claim %i: %s) -> %j',
-    (i, number, _label, expected) => {
+    (i, _number, _label, expected) => {
       expect(parseClaimRefs(CASES[i].number, CASES[i].text)).toEqual(expected)
-      expect(number).toBe(CASES[i].number)
     },
   )
   it('a six-digit number is a number', () => {

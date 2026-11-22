@@ -4,8 +4,12 @@ The brief is UNTRUSTED input from a browser extension: every cap below is
 enforced by validation and over-cap input is rejected with an error that names
 the field. Nothing is ever silently truncated.
 
-Claim-reference rules (the JavaScript extractor ports exactly these rules and
-is tested against the same cases):
+Claim-reference rules (the JavaScript extractor in extension/src/claimrefs.js ports these
+rules and is tested against the same cases in tests/fixtures/claim_ref_cases.json; the two
+implementations agree on every shared case and differ only where regular-expression engines
+differ: U+FEFF counts as whitespace in JavaScript only, U+001C-U+001F and U+0085 count as
+whitespace in Python only, and U+017F (long s) and U+212A (Kelvin sign) match
+case-insensitively inside "claims" in Python only):
 
 1. A reference is the word "claim" or "claims" (case-insensitive, whole word)
    followed by whitespace and a reference list.

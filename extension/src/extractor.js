@@ -27,7 +27,7 @@ export const CAPS = {
   listItems: 300,
   short: 500,
   abstract: 20000,
-  total: 540000, // backend cap is 600000 serialized characters (it counts null defaults); keep headroom
+  total: 540000, // backend cap 600000 (measured with null defaults) minus a 60000 safety margin
 }
 
 const SKIP_TAGS = new Set(['SCRIPT', 'STYLE', 'TEMPLATE', 'SVG', 'NOSCRIPT', 'IRON-ICON', 'OVERLAY-TOOLTIP'])
@@ -173,6 +173,9 @@ function readPeople(doc) {
   return { inventors: uniq(inventors), assignees: uniq(assignees) }
 }
 
+/** The date-cell classes seen on real pages; any other class is not an event kind. */
+const TIMELINE_KINDS = ['priority', 'filed', 'publication', 'granted', 'legal-status', 'reassignment', 'litigation']
+
 /** Timeline events: [{kind, date, text, result}] from application-timeline. */
 function readTimeline(doc) {
   const tl = first(doc, 'application-timeline')
@@ -182,7 +185,8 @@ function readTimeline(doc) {
     const dateEl = [...ev.children].find((c) => c.hasAttribute('date'))
     const titleEl = first(ev, '.title')
     if (!dateEl || !titleEl) continue
-    const kind = [...dateEl.classList].find((c) => c !== 'style-scope' && c !== 'x-scope') || ''
+    const kind = TIMELINE_KINDS.find((k) => dateEl.classList.contains(k))
+    if (!kind) continue // unknown kinds are ignored, never mislabelled
     const titleText = first(titleEl, '.title-text')
     events.push({
       kind,
@@ -196,10 +200,22 @@ function readTimeline(doc) {
 
 const ISO_DATE = /^[0-9]{4}-[0-9]{2}-[0-9]{2}$/
 
+/**
+ * Earliest priority date of the "Priority Applications" table (Application | Priority date |
+ * Filing date | Title). The timeline's "Priority to ..." event carries the application's FILING
+ * date, which is not the priority date of a continuation. Unset when the table is absent.
+ */
+function readPriorityDate(doc) {
+  const dates = rowsOf(tableAfter(doc, 'applicationPriorityApps'))
+    .map((row) => clean(cells(row)[1]?.textContent))
+    .filter((d) => ISO_DATE.test(d))
+    .sort()
+  return dates[0] || ''
+}
+
 function readDates(doc, events, number) {
   const dates = {}
   const pick = (kind, pred) => events.find((e) => e.kind === kind && ISO_DATE.test(e.date) && (!pred || pred(e)))
-  const priority = pick('priority')
   const filed = pick('filed')
   const pubs = events.filter((e) => e.kind === 'publication' && ISO_DATE.test(e.date))
   const ownPub = pubs.find((e) => e.result && e.result.split('/')[1] === number) || pubs[0]
@@ -213,7 +229,7 @@ function readDates(doc, events, number) {
   const set = (key, value) => {
     if (value) dates[key] = value
   }
-  set('priority', priority?.date)
+  set('priority', readPriorityDate(doc))
   set('filing', filed?.date || meta('dateSubmitted'))
   set('publication', ownPub?.date || meta(''))
   set('grant', granted?.date || meta('issue'))
@@ -282,9 +298,16 @@ function chunkParagraphs(paragraphs, limit) {
   return chunks
 }
 
+const TRUNCATION_HEADING = '[description truncated]'
+
+function truncationMarker(omitted) {
+  return { heading: TRUNCATION_HEADING, text: `${omitted} further sections omitted to fit the size limit` }
+}
+
+/** { sections, omitted }: sections beyond the section cap are counted, not silently lost. */
 function readDescription(doc) {
   const pt = patentText(doc, 'description')
-  if (!pt) return []
+  if (!pt) return { sections: [], omitted: 0 }
   const sections = []
   let current = { heading: null, paragraphs: [] }
   const flush = () => {
@@ -309,21 +332,29 @@ function readDescription(doc) {
       out.push(section)
     })
   }
-  return out.slice(0, CAPS.descriptionSections)
+  // Leave room for the marker when sections are left out.
+  if (out.length <= CAPS.descriptionSections) return { sections: out, omitted: 0 }
+  const keep = CAPS.descriptionSections - 1
+  return { sections: out.slice(0, keep), omitted: out.length - keep }
 }
 
 function readClaims(doc) {
   const pt = patentText(doc, 'claims')
   const raw = []
   const seen = new Set()
-  for (const el of all(pt, '[num]')) {
-    if (!el.classList.contains('claim')) continue
-    const number = parseInt(el.getAttribute('num'), 10)
-    if (!Number.isInteger(number) || number < 1 || seen.has(number)) continue
+  let last = 0
+  // Leaf ".claim" elements: Google wraps each claim in another div.claim / li.claim.
+  for (const el of all(pt, '.claim')) {
+    if (el.querySelector('.claim')) continue
+    const attr = el.getAttribute('num')
+    let number = attr === null || attr.trim() === '' ? NaN : parseInt(attr, 10)
+    // No usable num attribute: count on from the previous claim.
+    if (Number.isNaN(number)) number = last + 1
+    if (!Number.isSafeInteger(number) || number < 1 || seen.has(number)) continue
     seen.add(number)
-    let text = textOf(el)
-    // The page prefixes the claim's own number ("1. A device ..."); EP pages do not.
-    text = text.replace(new RegExp(`^${number}\\s*[.)]\\s*`), '')
+    last = Math.max(last, number)
+    // The page prefixes the claim's own number ("1. A device ...", "00007. ..."); EP pages do not.
+    const text = textOf(el).replace(new RegExp(`^0*${number}\\s*[.)]\\s*`), '')
     raw.push({ number, text: cut(text, CAPS.claimChars) })
     if (raw.length >= CAPS.claims) break
   }
@@ -432,14 +463,90 @@ function readFamily(doc) {
 
 // ---- assembly -------------------------------------------------------------
 
-/** Trim the least valuable parts until the serialized brief fits the backend cap. */
-function fitTotal(brief) {
-  const size = () => JSON.stringify(brief).length
-  while (size() > CAPS.total && brief.description.length) brief.description.pop()
-  while (size() > CAPS.total && brief.citations.cited_by.length) brief.citations.cited_by.length = Math.floor(brief.citations.cited_by.length / 2)
-  while (size() > CAPS.total && brief.citations.patent.length) brief.citations.patent.length = Math.floor(brief.citations.patent.length / 2)
-  while (size() > CAPS.total && brief.claims.length > 1) brief.claims.pop()
-  return brief
+/** The size the backend measures: model_dump_json() writes every optional field, as null when unset. */
+export function backendSize(brief) {
+  const row = (item, keys) => Object.fromEntries(keys.map((k) => [k, item[k] ?? null]))
+  const full = {
+    patent_number: brief.patent_number,
+    title: brief.title ?? null,
+    abstract: brief.abstract ?? null,
+    status: brief.status ?? null,
+    expiry: brief.expiry ?? null,
+    dates: brief.dates ?? {},
+    inventors: brief.inventors ?? [],
+    assignees: brief.assignees ?? [],
+    classifications: (brief.classifications ?? []).map((c) => row(c, ['code', 'title', 'path'])),
+    landscapes: brief.landscapes ?? [],
+    claims: brief.claims ?? [],
+    description: (brief.description ?? []).map((d) => row(d, ['heading', 'text'])),
+    citations: {
+      patent: (brief.citations?.patent ?? []).map((c) => row(c, ['number', 'date', 'assignee', 'title'])),
+      cited_by: (brief.citations?.cited_by ?? []).map((c) => row(c, ['number', 'date', 'assignee', 'title'])),
+    },
+    family: (brief.family ?? []).map((f) => row(f, ['number', 'country', 'title', 'priority_date', 'status'])),
+    legal_events: (brief.legal_events ?? []).map((e) => row(e, ['date', 'text'])),
+    completeness: brief.completeness ?? {},
+  }
+  return JSON.stringify(full).length
+}
+
+/** A brief that is always valid: number, title if any, a few capped claims, completeness. */
+function minimalBrief(brief) {
+  const out = {
+    patent_number: brief.patent_number,
+    inventors: [],
+    assignees: [],
+    dates: {},
+    classifications: [],
+    landscapes: [],
+    claims: brief.claims.slice(0, 5).map((c) => ({ ...c, text: cut(c.text, 2000) })),
+    description: [],
+    citations: { patent: [], cited_by: [] },
+    family: [],
+    legal_events: [],
+    completeness: Object.fromEntries(COMPLETENESS_KEYS.map((k) => [k, false])),
+  }
+  if (brief.title) out.title = brief.title
+  out.completeness.claims = out.claims.length > 0
+  return out
+}
+
+/**
+ * Shrink the brief until the size the backend measures fits `budget` (the backend cap minus a
+ * safety margin). Order: citation rows, description sections from the end (counted in a marker
+ * section), classification paths, legal events, family, classifications, claims, then the people
+ * and landscape lists; if even that is not enough, a minimal brief.
+ */
+export function fitBrief(brief, omitted = 0, budget = CAPS.total) {
+  const sections = brief.description
+  const allClaims = brief.claims.slice()
+  let dropped = omitted
+  const render = () => {
+    brief.description = dropped > 0 ? [...sections, truncationMarker(dropped)] : [...sections]
+  }
+  const over = () => {
+    render()
+    return backendSize(brief) > budget
+  }
+  const shrink = (list) => {
+    while (list.length && over()) list.length = Math.floor(list.length / 2)
+  }
+  shrink(brief.citations.patent)
+  shrink(brief.citations.cited_by)
+  while (sections.length && over()) {
+    sections.pop()
+    dropped += 1
+  }
+  if (over()) for (const c of brief.classifications) c.path = []
+  shrink(brief.legal_events)
+  shrink(brief.family)
+  shrink(brief.classifications)
+  while (brief.claims.length > 1 && over()) brief.claims.pop()
+  shrink(brief.inventors)
+  shrink(brief.assignees)
+  shrink(brief.landscapes)
+  if (over()) return { brief: minimalBrief({ ...brief, claims: allClaims }), omitted: 0 }
+  return { brief, omitted: dropped }
 }
 
 /**
@@ -458,7 +565,7 @@ export function extractBrief(doc, url) {
   const classifications = safe(() => readClassifications(doc), [])
   const landscapes = safe(() => readLandscapes(doc), [])
   const claims = safe(() => readClaims(doc), [])
-  const description = safe(() => readDescription(doc), [])
+  const { sections, omitted } = safe(() => readDescription(doc), { sections: [], omitted: 0 })
   const citations = {
     patent: safe(() => readCitations(doc, 'patentCitations'), []),
     cited_by: safe(() => readCitations(doc, 'citedBy'), []),
@@ -466,7 +573,7 @@ export function extractBrief(doc, url) {
   const family = safe(() => readFamily(doc), [])
   const legalEvents = safe(() => readLegalEvents(doc, events), [])
 
-  const brief = {
+  const draft = {
     patent_number: cut(number, 64),
     inventors: people.inventors.slice(0, CAPS.listItems).map((s) => cut(s, CAPS.short)),
     assignees: people.assignees.slice(0, CAPS.listItems).map((s) => cut(s, CAPS.short)),
@@ -474,30 +581,32 @@ export function extractBrief(doc, url) {
     classifications,
     landscapes,
     claims,
-    description,
+    description: sections,
     citations,
     family,
     legal_events: legalEvents,
   }
   const t = short(title)
-  if (t) brief.title = t
-  if (abstract) brief.abstract = abstract
+  if (t) draft.title = t
+  if (abstract) draft.abstract = abstract
   const st = short(status)
-  if (st) brief.status = st
+  if (st) draft.status = st
   const ex = short(expiry)
-  if (ex) brief.expiry = ex
+  if (ex) draft.expiry = ex
 
+  const { brief, omitted: dropped } = fitBrief(draft, omitted)
+  // Completeness describes what is in the final brief. A truncated description is reported as
+  // not complete; the marker section at the end of `description` says how much is missing.
   brief.completeness = {
-    bibliographic: Boolean(t && (brief.inventors.length || brief.assignees.length || Object.keys(dates).length)),
-    abstract: Boolean(abstract),
-    claims: claims.length > 0,
-    description: description.length > 0,
-    classifications: classifications.length > 0,
-    landscapes: landscapes.length > 0,
-    citations: citations.patent.length > 0 || citations.cited_by.length > 0,
-    family: family.length > 0,
-    legal_events: legalEvents.length > 0,
+    bibliographic: Boolean(brief.title && (brief.inventors.length || brief.assignees.length || Object.keys(brief.dates).length)),
+    abstract: Boolean(brief.abstract),
+    claims: brief.claims.length > 0,
+    description: brief.description.length > 0 && dropped === 0,
+    classifications: brief.classifications.length > 0,
+    landscapes: brief.landscapes.length > 0,
+    citations: brief.citations.patent.length > 0 || brief.citations.cited_by.length > 0,
+    family: brief.family.length > 0,
+    legal_events: brief.legal_events.length > 0,
   }
-  for (const k of COMPLETENESS_KEYS) brief.completeness[k] = Boolean(brief.completeness[k])
-  return fitTotal(brief)
+  return brief
 }

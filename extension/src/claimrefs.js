@@ -2,8 +2,10 @@
 // (parse_claim_refs / iter_claim_ref_ranges / build_claim_tree). Both
 // implementations are tested against tests/fixtures/claim_ref_cases.json.
 //
-// Known, accepted divergence: Python's IGNORECASE is Unicode-aware (so the long
-// s or the Kelvin sign would match inside "claims"); JavaScript's is not.
+// Known, accepted divergences (none is in the shared cases): Python's IGNORECASE is
+// Unicode-aware, so U+017F (long s) and U+212A (Kelvin sign) match inside "claims" there
+// and not in JavaScript; \s matches U+FEFF in JavaScript only and U+001C-U+001F and
+// U+0085 in Python only.
 
 const MAX_NUMBER_DIGITS = 6
 

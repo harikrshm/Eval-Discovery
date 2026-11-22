@@ -88,7 +88,7 @@ describe('US grant US12401720B1 (recent)', () => {
     expect(b.assignees).toEqual(['Smart Speaker LLC'])
     expect(b.status).toBe('Active')
     expect(b.expiry).toBe('2033-01-03')
-    expect(b.dates).toEqual({ priority: '2025-05-08', filing: '2025-05-08', publication: '2025-08-26', grant: '2025-08-26' })
+    expect(b.dates).toEqual({ priority: '2012-01-09', filing: '2025-05-08', publication: '2025-08-26', grant: '2025-08-26' })
     expect(b.abstract.startsWith('A system and method in a building or vehicle for an actuator operation in response to a sensor')).toBe(true)
   })
   it('reads independent and dependent claims with depends_on', () => {
@@ -140,7 +140,7 @@ describe('US grant US6756997B1 (older)', () => {
     expect(b.assignees).toEqual(['Gemstar Development LLC'])
     expect(b.status).toBe('Expired - Lifetime')
     expect(b.expiry).toBe('2019-09-05')
-    expect(b.dates).toEqual({ priority: '2000-06-14', filing: '2000-06-14', publication: '2004-06-29', grant: '2004-06-29' })
+    expect(b.dates).toEqual({ priority: '1996-12-19', filing: '2000-06-14', publication: '2004-06-29', grant: '2004-06-29' })
     expect(b.abstract).toContain('“EPG”') // curly quotes survive
   })
   it('reads two independent claims and their dependents', () => {
@@ -175,7 +175,7 @@ describe('US application US20250119367A1', () => {
     expect(b.inventors).toHaveLength(5)
     expect(b.status).toBe('Pending')
     expect(b.expiry).toBeUndefined()
-    expect(b.dates).toEqual({ priority: '2024-12-16', filing: '2024-12-16', publication: '2025-04-10' })
+    expect(b.dates).toEqual({ priority: '2015-06-05', filing: '2024-12-16', publication: '2025-04-10' })
     expect(b.legal_events.some((e) => /^Application granted/.test(e.text))).toBe(false)
   })
   it('reads two independent claims', () => {
@@ -218,6 +218,7 @@ describe('missing sections', () => {
       d.querySelectorAll('h1').forEach((e) => e.remove())
       d.querySelectorAll('dl.important-people').forEach((e) => e.remove())
       d.querySelectorAll('application-timeline').forEach((e) => e.remove())
+      d.querySelectorAll('h3').forEach((h) => h.id === 'applicationPriorityApps' && h.nextElementSibling.remove()) // priority date source
       d.querySelectorAll('meta').forEach((e) => e.remove())
     },
   }
@@ -235,7 +236,8 @@ describe('missing sections', () => {
   it('grant date falls back to the "Application granted" legal event', () => {
     const { doc } = load('us12401720b1.html')
     doc.querySelectorAll('meta[name="DC.date"]').forEach((m) => m.remove())
-    doc.querySelectorAll('application-timeline .granted').forEach((e) => e.classList.remove('granted'))
+    // the grant event is no longer a labelled .granted cell, only a legal-status row with that text
+    doc.querySelectorAll('application-timeline .granted').forEach((e) => { e.classList.remove('granted'); e.classList.add('legal-status') })
     const b = extractBrief(doc, 'https://patents.google.com/patent/US12401720B1/en')
     expect(b.dates.grant).toBe('2025-08-26')
   })
