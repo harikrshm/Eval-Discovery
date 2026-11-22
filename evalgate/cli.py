@@ -119,7 +119,10 @@ def _clean(text: object) -> str:
 
 def _cell(text: object) -> str:
     """A markdown table cell that cannot break out of its row."""
-    return _clean(text).replace("\\", "\\\\").replace("|", "\\|").replace("<", "&lt;").replace(">", "&gt;")
+    cleaned = _clean(text).replace("\\", "\\\\")
+    for char in "|[]`":
+        cleaned = cleaned.replace(char, "\\" + char)
+    return cleaned.replace("<", "&lt;").replace(">", "&gt;")
 
 
 def _counts(result) -> dict[str, int]:
@@ -199,7 +202,7 @@ def _emit(fmt: str, result, threshold: float, code: int, env: Mapping[str, str])
     if summary_path:
         try:
             with open(summary_path, "a", encoding="utf-8") as handle:
-                handle.write(format_markdown(result, threshold, code) + "\n")
+                handle.write("\n" + format_markdown(result, threshold, code) + "\n")
         except Exception:
             _err("Could not write to GITHUB_STEP_SUMMARY.")
     try:

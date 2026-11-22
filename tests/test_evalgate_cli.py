@@ -548,3 +548,27 @@ def test_the_summary_is_written_before_stdout_is_printed(files, tmp_path, monkey
     monkeypatch.setattr(sys, "stdout", Spy())
     run_cli(*files, env={"GROQ_API_KEY": KEY, "GITHUB_STEP_SUMMARY": str(summary)})
     assert seen and all(seen)
+
+
+def test_markdown_cells_escape_links_and_code_spans(tmp_path, capsys):
+    suite = write_suite(tmp_path, _doc([_test("t1")], criterion_name="[click](http://x) `code`"))
+    prompt = tmp_path / "p.txt"
+    prompt.write_text("prompt", encoding="utf-8")
+    code, _, _ = run_cli(suite, prompt, "--format", "markdown")
+    out = capsys.readouterr().out
+    assert code == 0
+    assert "\[click\]" in out
+    assert "\`code\`" in out
+    assert "[click]" not in out.replace("\[click\]", "")
+    assert "`code`" not in out.replace("\`code\`", "")
+
+
+def test_step_summary_starts_on_a_fresh_line(files, tmp_path):
+    summary = tmp_path / "summary.md"
+    summary.write_text("EXISTING WITHOUT NEWLINE", encoding="utf-8")
+    code, _, _ = run_cli(*files, env={"GROQ_API_KEY": KEY, "GITHUB_STEP_SUMMARY": str(summary)})
+    content = summary.read_text(encoding="utf-8")
+    assert code == 0
+    assert content.startswith("EXISTING WITHOUT NEWLINE\n")
+    assert "EXISTING WITHOUT NEWLINE# Eval gate" not in content
+    assert "\n# Eval gate" in content
