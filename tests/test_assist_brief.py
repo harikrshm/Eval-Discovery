@@ -3,14 +3,17 @@ import pytest
 from backend.core.assist import ASSIST_MODEL
 from backend.core.assist.brief import (
     MAX_BRIEF_JSON_CHARS,
+    MAX_ABSTRACT_CHARS,
     MAX_CLAIM_CHARS,
     MAX_CLAIMS,
     MAX_DESCRIPTION_SECTIONS,
     MAX_LIST_ITEMS,
     MAX_SECTION_CHARS,
+    MAX_SHORT_CHARS,
     Brief,
     build_claim_tree,
     is_us_patent,
+    parse_claim_refs,
 )
 from backend.groq_client import MODEL_CHAT
 
@@ -269,3 +272,124 @@ def test_is_us_patent_true(n):
 @pytest.mark.parametrize("n", ["EP1234567A1", "WO2020123456A1", "CN123456A", "", "US", "USABC", "10000000"])
 def test_is_us_patent_false(n):
     assert is_us_patent(n) is False
+
+
+# ---- shared claim-reference cases (the JS port reuses this table) ---------
+
+FW3 = chr(0xFF13)  # fullwidth digit three
+EN, EM = chr(0x2013), chr(0x2014)
+
+# (own claim number, claim text, expected depends_on)
+REF_CASES = [
+    (9, "The method of claim 1.5 wherein x.", [1]),
+    (9, "The method as claimed in any preceding claim.", []),
+    (9, "The method of claimed 1.", []),
+    (9, "unclaim 1", []),
+    (9, "reclaim 2", []),
+    (9, "The method of claims 1 - 3.", [1, 2, 3]),
+    (9, "The method of claims 1 to 3.", [1, 2, 3]),
+    (9, "The method of claims 1 through 3.", [1, 2, 3]),
+    (9, "The method of claims 1" + EN + "3.", [1, 2, 3]),
+    (9, "The method of claims 1" + EM + "3.", [1, 2, 3]),
+    (9, "The method of claims 3-1.", []),
+    (9, "The method of claims 1, and 2.", [1, 2]),
+    (9, "The method of claims 1, or 2.", [1, 2]),
+    (9, "The method of claims 1-3 and 5.", [1, 2, 3, 5]),
+    (9, "The method of any of claims 1, 3, wherein 5 widgets.", [1, 3]),
+    (9, "The method of CLAIM 2.", [2]),
+    (9, "The method of claim " + "9" * 5000 + ".", []),
+    (9, "The method of claim " + "1" * 8000 + ".", []),
+    (9, "The method of claim 1234567.", []),
+    (9, "The method of claim 123456.", []),  # 6 digits is a number, but not lower than 9
+    (9, "The method of claim 1-1234567.", [1]),
+    (9, "The method of claim " + FW3 + ".", []),
+    (9, "The method of claim 1-" + FW3 + ".", [1]),
+    (9, "éclaim 1.", [1]),
+]
+
+
+@pytest.mark.parametrize("number,text,expected", REF_CASES)
+def test_claim_ref_cases(number, text, expected):
+    assert parse_claim_refs(number, text) == expected
+
+
+def test_six_digit_number_is_a_number():
+    assert parse_claim_refs(1_000_000, "of claim 123456") == [123456]
+
+
+def test_fullwidth_digit_in_claim_reference_gives_no_reference():
+    t = tree((1, "A."), (2, "B."), (3, "C."), (4, "The method of claim " + FW3 + "."))
+    assert t[4].depends_on == [] and t[4].independent is True
+
+
+def test_long_digit_run_does_not_raise():
+    t = tree((1, "A."), (2, "The method of claim " + "9" * 5000 + "."))
+    assert t[2].depends_on == []
+
+
+# ---- ASCII-only US numbers -------------------------------------------------
+
+
+def test_fullwidth_digits_rejected_in_us_number():
+    fw = "".join(chr(0xFF10 + int(d)) for d in "123456")
+    assert is_us_patent("US" + fw) is False
+    assert is_us_patent("US10000000B2" + chr(0xFF11)) is False
+
+
+@pytest.mark.parametrize("n", ["US 10,000,000 B2", "US10,000,000", "US 7629993"])
+def test_non_compact_forms_rejected(n):
+    assert is_us_patent(n) is False
+
+
+# ---- per-field caps --------------------------------------------------------
+
+
+def _set(data, path, value):
+    cur = data
+    for key in path[:-1]:
+        cur = cur[key]
+    cur[path[-1]] = value
+
+
+FIELD_CAPS = [
+    (["title"], "title", MAX_SHORT_CHARS),
+    (["status"], "status", MAX_SHORT_CHARS),
+    (["expiry"], "expiry", MAX_SHORT_CHARS),
+    (["abstract"], "abstract", MAX_ABSTRACT_CHARS),
+    (["inventors", 0], "inventors", MAX_SHORT_CHARS),
+    (["assignees", 0], "assignees", MAX_SHORT_CHARS),
+    (["landscapes", 0], "landscapes", MAX_SHORT_CHARS),
+    (["dates", "grant"], "dates", MAX_SHORT_CHARS),
+    (["classifications", 0, "code"], "classifications", MAX_SHORT_CHARS),
+    (["classifications", 0, "title"], "classifications", MAX_SHORT_CHARS),
+    (["classifications", 0, "path", 0], "classifications", MAX_SHORT_CHARS),
+    (["citations", "patent", 0, "title"], "citations", MAX_SHORT_CHARS),
+    (["family", 0, "status"], "family", MAX_SHORT_CHARS),
+    (["legal_events", 0, "text"], "legal_events", MAX_SHORT_CHARS),
+    (["description", 0, "heading"], "description", MAX_SHORT_CHARS),
+]
+
+
+@pytest.mark.parametrize("path,field,cap", FIELD_CAPS)
+def test_field_cap_boundary(path, field, cap):
+    data = full_brief()
+    _set(data, path, "x" * cap)
+    Brief.model_validate(data)  # at the cap: accepted, untouched
+    _set(data, path, "x" * (cap + 1))
+    with pytest.raises(ValueError, match=field):
+        Brief.model_validate(data)
+
+
+def test_completeness_key_over_cap_rejected():
+    data = full_brief()
+    data["completeness"] = {"k" * MAX_SHORT_CHARS: True}
+    Brief.model_validate(data)
+    data["completeness"] = {"k" * (MAX_SHORT_CHARS + 1): True}
+    with pytest.raises(ValueError, match="completeness"):
+        Brief.model_validate(data)
+
+
+def test_short_field_not_truncated():
+    data = full_brief()
+    data["title"] = "t" * MAX_SHORT_CHARS
+    assert Brief.model_validate(data).title == "t" * MAX_SHORT_CHARS
