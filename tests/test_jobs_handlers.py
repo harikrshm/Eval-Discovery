@@ -696,6 +696,8 @@ def test_replay_sanity_check_failure_keeps_the_verdict_and_stores_no_judge_check
 def test_replay_failure_is_retryable_only_for_system_jobs(db_session, monkeypatch, system, exc, message):
     ws, agent, pv = _agent(db_session)
     test = _test(db_session, _criterion(db_session, agent))
+    pv.status = "approved_verifying"  # a system replay only runs for a version still being verified
+    db_session.commit()
     if isinstance(exc, ReplayFailed):
         monkeypatch.setattr(handlers, "replay", MagicMock(side_effect=exc))
     else:
@@ -711,6 +713,96 @@ def test_replay_failure_is_retryable_only_for_system_jobs(db_session, monkeypatc
     assert str(err.value) == message
     assert isinstance(err.value, RetryableJobFailure) is system
     assert db_session.scalars(select(EvalResult)).first() is None
+
+
+def _verifying_version(db, agent, status="approved_verifying"):
+    version = PromptVersion(agent_id=agent.id, text="candidate", origin="suggested", status=status, number=2)
+    db.add(version)
+    db.commit()
+    return version
+
+
+@pytest.mark.parametrize("status", ["failed_verification", "promoted", "superseded"])
+def test_system_replay_for_a_resolved_version_is_skipped_without_model_calls(db_session, monkeypatch, status):
+    ws, agent, pv = _agent(db_session)
+    test = _test(db_session, _criterion(db_session, agent))
+    version = _verifying_version(db_session, agent, status)
+    replay_mock = _patch_replay(monkeypatch)
+    judge_mock = _verdicts(monkeypatch, ["pass"])
+    job = _job(db_session, ws, "replay", {"test_id": test.id, "prompt_version_id": version.id, "system": True})
+
+    assert handle_replay(db_session, job) == {"skipped": True}
+
+    replay_mock.assert_not_called()
+    judge_mock.assert_not_called()
+    assert db_session.scalars(select(EvalResult)).first() is None
+    assert _events(db_session, "replay_passed") == []
+
+
+def test_system_replay_for_a_verifying_version_still_runs(db_session, monkeypatch):
+    ws, agent, pv = _agent(db_session)
+    test = _test(db_session, _criterion(db_session, agent))
+    version = _verifying_version(db_session, agent)
+    _patch_replay(monkeypatch)
+    _verdicts(monkeypatch, ["pass"])
+    job = _job(db_session, ws, "replay", {"test_id": test.id, "prompt_version_id": version.id, "system": True})
+
+    result = handle_replay(db_session, job)
+
+    assert result["verdict"] == "pass"
+    assert db_session.scalars(select(EvalResult)).one().prompt_version_id == version.id
+
+
+def test_user_replay_for_a_resolved_version_still_runs(db_session, monkeypatch):
+    ws, agent, pv = _agent(db_session)
+    test = _test(db_session, _criterion(db_session, agent))
+    version = _verifying_version(db_session, agent, "failed_verification")
+    replay_mock = _patch_replay(monkeypatch)
+    _verdicts(monkeypatch, ["pass"])
+    job = _job(db_session, ws, "replay", {"test_id": test.id, "prompt_version_id": version.id})
+
+    result = handle_replay(db_session, job)
+
+    assert result["verdict"] == "pass"
+    replay_mock.assert_called_once()
+    assert db_session.scalars(select(EvalResult)).one().prompt_version_id == version.id
+
+
+def _resolve_elsewhere_during_judge(db_session, monkeypatch, version_id):
+    def judge_while_resolved(*args, **kwargs):
+        with sessionmaker(bind=db_session.get_bind())() as other:
+            other.get(PromptVersion, version_id).status = "failed_verification"
+            other.commit()
+        return JudgeResult("pass", "because")
+
+    monkeypatch.setattr(handlers, "judge", judge_while_resolved)
+
+
+def test_system_replay_resolved_during_the_model_calls_stores_nothing(db_session, monkeypatch):
+    ws, agent, pv = _agent(db_session)
+    test = _test(db_session, _criterion(db_session, agent))
+    version = _verifying_version(db_session, agent)
+    _patch_replay(monkeypatch)
+    _resolve_elsewhere_during_judge(db_session, monkeypatch, version.id)
+    job = _job(db_session, ws, "replay", {"test_id": test.id, "prompt_version_id": version.id, "system": True})
+
+    assert handle_replay(db_session, job) == {"skipped": True}
+
+    db_session.expire_all()
+    assert db_session.scalars(select(EvalResult)).first() is None
+    assert _events(db_session, "replay_passed") == []
+
+
+def test_user_replay_resolved_during_the_model_calls_still_stores_its_result(db_session, monkeypatch):
+    ws, agent, pv = _agent(db_session)
+    test = _test(db_session, _criterion(db_session, agent))
+    version = _verifying_version(db_session, agent)
+    _patch_replay(monkeypatch)
+    _resolve_elsewhere_during_judge(db_session, monkeypatch, version.id)
+    job = _job(db_session, ws, "replay", {"test_id": test.id, "prompt_version_id": version.id})
+
+    assert handle_replay(db_session, job)["verdict"] == "pass"
+    assert db_session.scalars(select(EvalResult)).one().verdict == "pass"
 
 
 def test_retryable_job_failure_is_a_job_failed():

@@ -220,6 +220,10 @@ def handle_replay(db: Session, job: Job) -> dict:
     version = db.get(PromptVersion, version_id)
     if version is None or version.agent_id != agent.id:
         raise JobFailed(_VERSION_GONE)
+    # A verification replay (queued by Approve) is pointless once its version is resolved: no model calls.
+    system = job.payload.get("system") is True
+    if system and version.status != "approved_verifying":
+        return {"skipped": True}
     if not test.scripted_user_messages:
         raise JobFailed("That test has no messages to replay.")
 
@@ -236,7 +240,7 @@ def handle_replay(db: Session, job: Job) -> dict:
     db.commit()
     # A verification replay (queued by Approve) is retried by the worker on a transient failure;
     # a replay a person started fails at once, and they can press Replay again.
-    failure = RetryableJobFailure if job.payload.get("system") is True else JobFailed
+    failure = RetryableJobFailure if system else JobFailed
     try:
         transcript = replay(config, messages)
         verdict = judge(judge_config, spec, transcript)
@@ -254,6 +258,10 @@ def handle_replay(db: Session, job: Job) -> dict:
             logger.warning("replay sanity check failure for job %s: %s", job.id, exc)
 
     _still_exists(db, test, _TEST_GONE)
+    if system:  # resolved while the model calls ran: a late job must not write for a resolved version
+        _still_exists(db, version, _VERSION_GONE)
+        if version.status != "approved_verifying":
+            return {"skipped": True}
     if _revision_changed(db, criterion, revision):  # edited while running: the verdict is obsolete
         return {"discarded": True}
     if check is not None:

@@ -339,6 +339,63 @@ def test_system_replay_that_fails_once_is_retried_and_ends_done_after_two_claims
     assert db_session.get(PromptVersion, candidate_id).status == "promoted"  # reconcile ran in the same pass
 
 
+def test_requeued_system_replay_for_a_resolved_version_is_skipped_and_completed_as_done(db_session, monkeypatch):
+    ws, agent, test, candidate = _verifying(db_session)
+    job = enqueue(
+        db_session, ws.id, "replay", {"test_id": test.id, "prompt_version_id": candidate.id, "system": True}
+    )
+    candidate_id = candidate.id
+    candidate.status = "failed_verification"  # resolved while the job sat in the queue (or was requeued)
+    db_session.commit()
+    _real_replay(monkeypatch, [TRANSCRIPT])
+
+    assert run_one(db_session, now=APPROVED_AT + timedelta(minutes=1)) is True
+
+    db_session.expire_all()
+    done = db_session.get(Job, job.id)
+    assert done.status == "done" and done.result == {"skipped": True} and done.error is None
+    assert done.locked_at is None
+    handlers.replay.assert_not_called()
+    handlers.judge.assert_not_called()
+    assert db_session.scalars(select(EvalResult)).first() is None
+    assert db_session.get(PromptVersion, candidate_id).status == "failed_verification"
+
+
+def test_early_failure_cancels_the_queued_replay_so_the_worker_never_runs_it(db_session, monkeypatch):
+    ws, agent, test, candidate = _verifying(db_session)
+    other = EvalTest(criterion_id=test.criterion_id, role="regression", scripted_user_messages=["yo"])
+    db_session.add(other)
+    db_session.flush()
+    candidate.verification = {
+        **candidate.verification,
+        "required": candidate.verification["required"]
+        + [{"test_id": other.id, "role": "regression", "before": "pass"}],
+    }
+    db_session.commit()
+    first = enqueue(
+        db_session, ws.id, "replay", {"test_id": test.id, "prompt_version_id": candidate.id, "system": True}
+    )
+    second = enqueue(
+        db_session, ws.id, "replay", {"test_id": other.id, "prompt_version_id": candidate.id, "system": True}
+    )
+    candidate_id = candidate.id
+    _real_replay(monkeypatch, [TRANSCRIPT, TRANSCRIPT])
+    monkeypatch.setattr(handlers, "judge", MagicMock(return_value=JudgeResult("fail", "rude")))
+
+    assert run_one(db_session, now=APPROVED_AT + timedelta(minutes=1)) is True  # the fix replay fails
+
+    db_session.expire_all()
+    assert db_session.get(Job, first.id).status == "done"
+    cancelled = db_session.get(Job, second.id)
+    assert cancelled.status == "failed" and cancelled.error == "Cancelled: verification already failed."
+    assert db_session.get(PromptVersion, candidate_id).status == "failed_verification"
+    assert handlers.replay.call_count == 1
+    monkeypatch.setattr(handlers, "write_report", MagicMock(side_effect=handlers.ReportFailed("off")))
+    assert run_one(db_session, now=APPROVED_AT + timedelta(minutes=1)) is True  # only the change_report job
+    assert run_one(db_session, now=APPROVED_AT + timedelta(minutes=1)) is False  # no replay left to run
+    assert handlers.replay.call_count == 1
+
+
 def test_user_replay_that_fails_is_not_retried(db_session, monkeypatch):
     ws, agent, test, candidate = _verifying(db_session)
     job = _replay_job(db_session, ws, test, candidate)  # no "system" key: a person started it
