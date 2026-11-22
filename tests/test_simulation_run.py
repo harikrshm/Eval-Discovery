@@ -266,7 +266,9 @@ def test_report_has_required_sections_and_honesty_text(crafted):
     for heading in ("## Results", "## Path counts", "## Trials that did not converge", "## Limitations"):
         assert heading in text
     assert "simulated" in text.lower()
-    assert "N = 4" in text
+    assert "N requested = 4 per scenario and arm" in text
+    assert "the N column is the number of trials on file" in text
+    assert "Incomplete data" not in text  # a complete directory has no warning
     assert groq_client.MODEL_CHAT in text and groq_client.MODEL_JUDGE in text
     assert "2026-11-22" in text
     assert DISCLAIMER in text
@@ -368,3 +370,78 @@ def test_end_to_end_mock_run_then_report(tmp_path):
     assert text.startswith(BANNER)
     assert "| support-refund | baseline | 2 |" in text
     assert "| booking-confirm | flywheel | 2 |" in text
+
+
+# --- incomplete data and mode checks -----------------------------------------------------------
+
+
+def _incomplete(text: str) -> str:
+    assert "## Incomplete data" in text
+    return text.split("## Incomplete data")[1].split("\n## ")[0]
+
+
+def test_unbalanced_directory_shows_incomplete_section_and_placeholder_row(crafted):
+    for n in (1, 2, 3, 4):  # delete the whole flywheel arm
+        (crafted / "real" / f"support-refund-flywheel-{n}.json").unlink()
+    text = report.build_report(crafted, "real")
+    assert "| support-refund | flywheel | 0 | 0 | no trials on file |" in text
+    section = _incomplete(text)
+    assert "support-refund, flywheel: 0 of 4 trials on file" in section and "missing trial(s) 1, 2, 3, 4" in section
+    assert text.index("## Incomplete data") < text.index("## Results")
+
+
+def test_one_deleted_trial_file_is_reported_not_hidden(crafted):
+    (crafted / "real" / "support-refund-flywheel-3.json").unlink()
+    text = report.build_report(crafted, "real")
+    assert "support-refund, flywheel: 3 of 4 trials on file; missing trial(s) 3." in _incomplete(text)
+    assert "| support-refund | flywheel | 3 |" in text
+    assert "support-refund, baseline" not in _incomplete(text)
+
+
+def test_scenario_in_meta_with_no_files_is_shown_as_missing(tmp_path):
+    meta = {
+        "mode": "real",
+        "date": "2026-11-22T10:00:00+00:00",
+        "trials": 1,
+        "scenarios": ["support-refund", "booking-confirm"],
+        "models": {"chat": "a", "judge": "b"},
+        "max_previews": 12,
+        "git_commit": None,
+        "pacing_tpm_limit": 7000,
+    }
+    _write(tmp_path, "real", [_trial(trial=1), _trial(arm="flywheel", trial=1, path="loop")], meta=meta)
+    text = report.build_report(tmp_path, "real")
+    assert "| booking-confirm | baseline | 0 | 0 | no trials on file |" in text
+    assert "| booking-confirm | flywheel | 0 | 0 | no trials on file |" in text
+    section = _incomplete(text)
+    assert "booking-confirm, baseline: 0 of 1" in section and "booking-confirm, flywheel: 0 of 1" in section
+
+
+def test_fewer_trials_than_requested_is_reported(tmp_path):
+    results = [_trial(arm=a, trial=n, path="loop" if a == "flywheel" else None) for a in ("baseline", "flywheel") for n in (1, 2)]
+    _write(tmp_path, "real", results)  # run-meta says 4 trials
+    section = _incomplete(report.build_report(tmp_path, "real"))
+    assert "2 of 4 trials on file; missing trial(s) 3, 4" in section
+
+
+def test_mode_mismatch_between_meta_and_request_exits_2(tmp_path, capsys):
+    root = tmp_path / "root"
+    _write(root, "mock", [_trial(trial=1)], meta={"mode": "mock", "date": "2026-11-22", "trials": 1, "max_previews": 12})
+    (root / "real").mkdir()
+    for f in (root / "mock").iterdir():
+        (root / "real" / f.name).write_bytes(f.read_bytes())  # mock results copied under real/
+    out = tmp_path / "o.md"
+    assert report.main(["--results", str(root), "--mode", "real", "--output", str(out)]) == 2
+    assert "mode" in capsys.readouterr().err.lower()
+    assert not out.exists()
+
+
+def test_real_report_without_meta_exits_2_but_mock_still_renders(tmp_path, capsys):
+    _write(tmp_path, "real", [_trial(trial=1)])
+    (tmp_path / "real" / "run-meta.json").unlink()
+    assert report.main(["--results", str(tmp_path), "--mode", "real", "--output", str(tmp_path / "o.md")]) == 2
+    assert "run-meta.json" in capsys.readouterr().err
+    _write(tmp_path, "mock", [_trial(trial=1)])
+    (tmp_path / "mock" / "run-meta.json").unlink()
+    text = report.build_report(tmp_path, "mock")
+    assert text.startswith(BANNER) and "not recorded" in text

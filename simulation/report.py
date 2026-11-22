@@ -44,13 +44,19 @@ def median(values: list[float]) -> float:
     return float(ordered[mid]) if n % 2 else (ordered[mid - 1] + ordered[mid]) / 2
 
 
-def _load(folder: Path) -> tuple[list[TrialResult], dict]:
+def _load(folder: Path, mode: str) -> tuple[list[TrialResult], dict]:
     if not folder.is_dir():
         raise FileNotFoundError(f"no results directory at {folder}")
     meta: dict = {}
     meta_path = folder / "run-meta.json"
     if meta_path.exists():
         meta = json.loads(meta_path.read_text(encoding="utf-8"))
+        if not isinstance(meta, dict):
+            raise ValueError("run-meta.json is not a JSON object")
+        if meta.get("mode") and meta["mode"] != mode:
+            raise ValueError(f"run-meta.json says mode {meta['mode']!r} but the report was asked for mode {mode!r}")
+    elif mode == "real":
+        raise ValueError("run-meta.json is missing, so a real-mode report cannot state its models and date honestly")
     trials = [
         TrialResult.from_dict(json.loads(p.read_text(encoding="utf-8")))
         for p in sorted(folder.glob("*.json"))
@@ -77,11 +83,49 @@ def _models(meta: dict) -> str:
 
 
 def _scenario_order(trials: list[TrialResult], meta: dict) -> list[str]:
-    seen = list(meta.get("scenarios") or [])
+    seen = [str(x) for x in (meta.get("scenarios") or [])]
     for t in trials:
         if t.scenario not in seen:
             seen.append(t.scenario)
-    return [s for s in seen if any(t.scenario == s for t in trials)]
+    return seen  # includes scenarios with no files, so they show as missing rather than vanish
+
+
+def _expected_trials(trials: list[TrialResult], meta: dict) -> list[int]:
+    requested = meta.get("trials")
+    count = requested if isinstance(requested, int) and not isinstance(requested, bool) else max(t.trial for t in trials)
+    return list(range(1, count + 1))
+
+
+def _incomplete_section(trials: list[TrialResult], scenarios: list[str], meta: dict) -> list[str]:
+    """Empty when every scenario and arm has exactly the requested trials; otherwise a visible warning."""
+    expected = _expected_trials(trials, meta)
+    rows = []
+    counts = set()
+    for scenario in scenarios:
+        for arm in ARM_ORDER:
+            on_file = {t.trial for t in trials if t.scenario == scenario and t.arm == arm}
+            counts.add(len(on_file))
+            missing = [n for n in expected if n not in on_file]
+            if missing:
+                rows.append(
+                    f"- {scenario}, {arm}: {len(on_file)} of {len(expected)} trials on file; "
+                    f"missing trial(s) {', '.join(str(n) for n in missing)}."
+                )
+    if not rows and len(counts) <= 1:
+        return []
+    lines = [
+        "## Incomplete data",
+        "",
+        "**This run is incomplete or unbalanced: do not read the table as a full comparison.** "
+        "A run that was stopped, or had trials that crashed, leaves trials missing. "
+        "Each count below is trials on file against trials requested.",
+        "",
+        *rows,
+    ]
+    if not rows:
+        lines.append(f"- The number of trials on file differs between arms or scenarios ({sorted(counts)}).")
+    lines.append("")
+    return lines
 
 
 def _results_table(trials: list[TrialResult], scenarios: list[str], cap: int) -> list[str]:
@@ -93,6 +137,7 @@ def _results_table(trials: list[TrialResult], scenarios: list[str], cap: int) ->
         for arm in ARM_ORDER:
             group = [t for t in trials if t.scenario == scenario and t.arm == arm]
             if not group:
+                lines.append(f"| {scenario} | {arm} | 0 | 0 | no trials on file | - | - | - | - | - | - |")
                 continue
             values = [_effective_previews(t, cap) for t in group]
             calls = sum(sum(t.model_calls.values()) for t in group)
@@ -148,7 +193,7 @@ def _non_converged_section(trials: list[TrialResult]) -> list[str]:
 
 
 def build_report(results_dir, mode: str) -> str:
-    trials, meta = _load(Path(results_dir) / mode)
+    trials, meta = _load(Path(results_dir) / mode, mode)
     cap = int(meta.get("max_previews") or MAX_PREVIEWS)
     scenarios = _scenario_order(trials, meta)
     n = meta.get("trials", "not recorded")
@@ -161,12 +206,13 @@ def build_report(results_dir, mode: str) -> str:
     lines += [
         "# Simulation results",
         "",
-        f"Simulated results, N = {n} trials per scenario and arm (the N column gives the trials actually on file). "
+        f"Simulated results. N requested = {n} per scenario and arm; the N column is the number of trials on file. "
         f"Models: {_models(meta)}. Date: {date}."
         + (f" Commit: {commit}." if commit else ""),
         "",
         DISCLAIMER,
         "",
+        *_incomplete_section(trials, scenarios, meta),
         "## Results",
         "",
         f"Preview runs until the first judged pass, simulated, lower is better. Trials that never passed are counted at the cap of {cap}.",
