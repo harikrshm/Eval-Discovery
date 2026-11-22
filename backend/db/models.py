@@ -54,6 +54,8 @@ class Agent(Base):
     current_prompt_version_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
     last_checked_at_run: Mapped[int] = mapped_column(Integer, default=0)
     pattern_summary: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # Assist agents only: ids of the runs the stored pattern_summary was found in (NULL = none recorded).
+    pattern_run_ids: Mapped[list | None] = mapped_column(JSON, nullable=True)
     # "general" for every agent made through the app; "assist" for the Patent Assist agent.
     kind: Mapped[str] = mapped_column(String(16), default="general", server_default="general")
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)

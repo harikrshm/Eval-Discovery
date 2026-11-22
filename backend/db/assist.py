@@ -1,6 +1,7 @@
 """Persistence helpers for the Patent Assist agent: its lookup, the signal rows and flagged runs."""
 
 import os
+from collections.abc import Sequence
 from datetime import datetime
 
 from sqlalchemy import func, select
@@ -8,7 +9,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from backend.core.assist.brief import Brief
-from backend.core.assist.evidence import evidence_summary
+from backend.core.assist.evidence import MAX_EVIDENCE_CHARS, cut_on_line, evidence_summary
 from backend.db.models import Agent, AssistPageView, AssistQuestion, Run, Workspace, utcnow
 
 ASSIST_AGENT_ENV = "ASSIST_AGENT_ID"
@@ -241,8 +242,10 @@ def has_run_for_session(db: Session, agent: Agent, session_id: str) -> bool:
 # ---- flywheel evidence ---------------------------------------------------------
 
 EVIDENCE_SOURCES = ("assist", "imported")  # run sources that carry assistant evidence (never "manual")
-MAX_EVIDENCE_QUESTIONS = 3
-MAX_RUN_EVIDENCE_CHARS = 3000
+MAX_EVIDENCE_QUESTIONS = 2  # question blocks per run, newest first
+MAX_RUN_EVIDENCE_CHARS = MAX_EVIDENCE_CHARS  # evidence text per run
+MAX_EVIDENCE_RUNS = 10  # runs with evidence in one call
+_BLOCK_SEPARATOR = "\n---\n"
 
 
 def _is_flagged(question: AssistQuestion) -> bool:
@@ -252,9 +255,10 @@ def _is_flagged(question: AssistQuestion) -> bool:
 def run_evidence(db: Session, run: Run) -> str:
     """The evidence text for a flagged run: one `evidence_summary` block per question of its session.
 
-    Questions come from `assist_question` by (workspace, session_id), flagged ones first and then the
-    most recent, at most MAX_EVIDENCE_QUESTIONS in time order. "" for a run without a session or
-    without stored questions.
+    Questions come from `assist_question` by (workspace, session_id): the newest flagged ones first,
+    then the newest others, at most MAX_EVIDENCE_QUESTIONS blocks, listed newest first. The text is at
+    most MAX_RUN_EVIDENCE_CHARS characters and is cut on a line boundary. "" for a run without a session
+    or without stored questions.
     """
     if not run.session_id:
         return ""
@@ -265,17 +269,13 @@ def run_evidence(db: Session, run: Run) -> str:
         db.scalars(
             select(AssistQuestion)
             .where(AssistQuestion.workspace_id == workspace_id, AssistQuestion.session_id == run.session_id)
-            .order_by(AssistQuestion.created_at, AssistQuestion.id)
+            .order_by(AssistQuestion.created_at.desc(), AssistQuestion.id.desc())
         )
     )
-    if not questions:
-        return ""
     flagged = [q for q in questions if _is_flagged(q)]
     rest = [q for q in questions if not _is_flagged(q)]
-    chosen = flagged[-MAX_EVIDENCE_QUESTIONS:]
-    if len(chosen) < MAX_EVIDENCE_QUESTIONS:
-        chosen = chosen + rest[len(chosen) - MAX_EVIDENCE_QUESTIONS:]
-    chosen.sort(key=lambda q: (q.created_at, q.id))
+    chosen = (flagged + rest)[:MAX_EVIDENCE_QUESTIONS]
+    chosen.sort(key=lambda q: (q.created_at, q.id), reverse=True)
     snapshot = run.brief_snapshot or {}
     blocks = [
         evidence_summary(
@@ -293,25 +293,49 @@ def run_evidence(db: Session, run: Run) -> str:
         )
         for q in chosen
     ]
-    return "\n---\n".join(blocks)[:MAX_RUN_EVIDENCE_CHARS]
+    return cut_on_line(_BLOCK_SEPARATOR.join(blocks), MAX_RUN_EVIDENCE_CHARS)
 
 
-def evidence_for_runs(db: Session, runs: list[Run]) -> list[str]:
-    """One evidence text per assistant-sourced run (source assist/imported), skipping runs with none."""
-    texts = (run_evidence(db, run) for run in runs if run.source in EVIDENCE_SOURCES)
-    return [text for text in texts if text]
+def evidence_for_runs(db: Session, runs: Sequence[Run | None]) -> list[str]:
+    """Evidence texts labelled with their run number, "Run <i>:\n<text>", for the runs that have any.
+
+    ``i`` is the 1-based index in ``runs``, the same index the transcripts of the pattern check use,
+    so a manual run (or a run with no question rows) leaves a gap instead of shifting the numbering.
+    A None entry (a run that no longer exists) and runs not sourced from the assistant are skipped.
+    At most MAX_EVIDENCE_RUNS entries are returned (the newest).
+    """
+    out = []
+    for index, run in enumerate(runs, 1):
+        if run is None or run.source not in EVIDENCE_SOURCES:
+            continue
+        text = run_evidence(db, run)
+        if text:
+            out.append(f"Run {index}:\n{text}")
+    return out[-MAX_EVIDENCE_RUNS:]
 
 
-def checked_flagged_runs(db: Session, agent: Agent, limit: int) -> list[Run]:
-    """The newest `limit` assistant-sourced runs at or before the agent's last pattern-checked position, oldest first."""
-    newest_first = db.scalars(
-        select(Run)
+def pattern_run_evidence(db: Session, agent: Agent) -> list[str]:
+    """Evidence of exactly the runs the stored pattern was found in (`agent.pattern_run_ids`).
+
+    Only this agent's assistant-sourced runs are loaded; none recorded (NULL or empty) means no evidence."""
+    ids = [i for i in (agent.pattern_run_ids or []) if isinstance(i, str)]
+    if not ids:
+        return []
+    rows = db.scalars(
+        select(Run).where(Run.id.in_(ids), Run.agent_id == agent.id, Run.source.in_(EVIDENCE_SOURCES))
+    )
+    by_id = {run.id: run for run in rows}
+    return evidence_for_runs(db, [by_id.get(i) for i in ids])
+
+
+def unchecked_flagged_count(db: Session, agent: Agent) -> int:
+    """Assistant-sourced runs saved since the last pattern check (manual runs do not count)."""
+    return db.scalar(
+        select(func.count())
+        .select_from(Run)
         .where(
             Run.agent_id == agent.id,
-            Run.position <= agent.last_checked_at_run,
+            Run.position > agent.last_checked_at_run,
             Run.source.in_(EVIDENCE_SOURCES),
         )
-        .order_by(Run.position.desc())
-        .limit(limit)
-    ).all()
-    return list(reversed(newest_first))
+    )

@@ -114,7 +114,7 @@ def test_upgrade_from_0002_backfills_and_keeps_rows(pg_engine, pg_url):
         assert [tuple(r) for r in rows] == [("p1", 1, None, None, None), ("p2", 2, None, None, None)]
         assert conn.execute(text("SELECT kind FROM agent WHERE id = 'a'")).scalar_one() == "general"
         assert conn.execute(text("SELECT source FROM run WHERE id = 'r'")).scalar_one() == "manual"
-        assert conn.execute(text("SELECT version_num FROM alembic_version")).scalar_one() == "0004"
+        assert conn.execute(text("SELECT version_num FROM alembic_version")).scalar_one() == "0005"
     assert _counts(pg_engine)["prompt_version"] == 2
 
 
@@ -267,3 +267,37 @@ def test_downgrade_to_0003_then_upgrade_again(pg_engine, pg_url):
         assert compare_metadata(MigrationContext.configure(conn), Base.metadata) == []
     assert "uq_run_agent_session" in _uniques(pg_engine, "run")
     assert _counts(pg_engine)["run"] == 1
+
+
+def test_upgrade_from_0004_adds_a_null_pattern_run_ids_and_keeps_rows(pg_engine, pg_url):
+    _fresh(pg_engine, pg_url, "0004")
+    _insert_rows(pg_engine)
+    assert "pattern_run_ids" not in _columns(pg_engine, "agent")
+    before = _counts(pg_engine)
+
+    pgutil.alembic_upgrade(pg_url, "head")
+
+    assert "pattern_run_ids" in _columns(pg_engine, "agent")
+    with pg_engine.connect() as conn:
+        assert conn.execute(text("SELECT pattern_run_ids FROM agent WHERE id = 'a'")).scalar_one() is None
+        assert compare_metadata(MigrationContext.configure(conn), Base.metadata) == []
+    assert _counts(pg_engine) == before
+
+
+def test_downgrade_to_0004_then_upgrade_again(pg_engine, pg_url):
+    _fresh(pg_engine, pg_url, "0004")
+    _insert_rows(pg_engine)
+    pgutil.alembic_upgrade(pg_url, "head")
+    with pg_engine.begin() as conn:
+        conn.execute(text("UPDATE agent SET pattern_run_ids = '[\"r\"]' WHERE id = 'a'"))
+
+    pgutil.alembic_downgrade(pg_url, "0004")
+
+    assert "pattern_run_ids" not in _columns(pg_engine, "agent")
+    assert _counts(pg_engine)["agent"] == 1
+
+    pgutil.alembic_upgrade(pg_url, "head")
+
+    with pg_engine.connect() as conn:
+        assert conn.execute(text("SELECT pattern_run_ids FROM agent WHERE id = 'a'")).scalar_one() is None
+        assert compare_metadata(MigrationContext.configure(conn), Base.metadata) == []

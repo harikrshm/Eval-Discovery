@@ -378,7 +378,7 @@ def handle_suggest_fix(db: Session, job: Job) -> dict:
         "expected_effect": fix.expected_effect[:MAX_WHY_FIELD_CHARS],
         "risk": fix.risk[:MAX_WHY_FIELD_CHARS],
     }
-    if fix.law_pack_gap:
+    if fix.law_pack_gap and agent.kind == "assist":
         why["law_pack_gap"] = fix.law_pack_gap[:MAX_WHY_FIELD_CHARS]
     try:
         version = create_proposed_version(db, agent, fix.prompt_text, test.id, why, expected_parent_id=current_id)

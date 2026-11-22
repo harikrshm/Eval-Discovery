@@ -6,26 +6,34 @@ reported as missing, the citation-check result and the signal reasons. It never 
 the question or the answer: the pattern, rubric and suggester stages get the conversation itself from
 the transcript and only need these facts to tell a retrieval or law-pack problem from a wording problem.
 
-Everything that comes from the request (intent, section focus, completeness keys) is reduced to a
-short, plain-character token first, so no angle bracket or free text can pass through.
+Everything that comes from the request (intent, section focus, completeness keys) is checked against a
+fixed allowlist of names; anything else is written as "other", so no free text can pass through.
 """
 
-import re
-
 from backend.core.assist.assemble import CONTEXT_POLICY
-from backend.core.assist.intent import Intent
+from backend.core.assist.intent import SECTION_NAMES, Intent
 
 MAX_EVIDENCE_CHARS = 1500
 
-_TOKEN_CHARS = 40
 _MAX_MISSING_NAMES = 20
 _RATINGS = ("up", "down", "no_answer")
-_UNSAFE = re.compile(r"[^A-Za-z0-9 _.-]")
+_OTHER = "other"
+# Brief section names the summary may print: the tracker's seven plus every name a context slice uses.
+KNOWN_SECTIONS = frozenset(SECTION_NAMES) | {name for plan in CONTEXT_POLICY.values() for name in plan.sections}
 
 
-def _token(value: object) -> str:
-    """A short plain-character version of request data (letters, digits, space, underscore, dot, dash)."""
-    return " ".join(_UNSAFE.sub(" ", str(value)).split())[:_TOKEN_CHARS]
+def cut_on_line(text: str, limit: int) -> str:
+    """``text`` unchanged when it fits; otherwise cut at the last line break within ``limit``."""
+    if len(text) <= limit:
+        return text
+    head = text[:limit]
+    newline = head.rfind("\n")
+    return head[:newline].rstrip() if newline > 0 else head
+
+
+def _known(name: object) -> str:
+    """The section name when it is a known one, else "other"."""
+    return name if isinstance(name, str) and name in KNOWN_SECTIONS else _OTHER
 
 
 def _intent(meta_intent: object) -> Intent:
@@ -39,7 +47,7 @@ def _missing(completeness: object) -> tuple[list[str], int] | None:
     """(sorted missing section names, number of sections reported) or None when nothing was reported."""
     if not isinstance(completeness, dict) or not completeness:
         return None
-    names = sorted({_token(k) for k, ok in completeness.items() if not ok} - {""})
+    names = sorted({_known(k) for k, ok in completeness.items() if not ok})
     return names, len(completeness)
 
 
@@ -56,7 +64,7 @@ def evidence_summary(run_messages: list[dict], brief_snapshot: dict | None, meta
     missing = _missing(completeness)
 
     focus = meta.get("section_focus")
-    focus_text = (_token(focus) if focus else "") or "none"
+    focus_text = _known(focus) if focus else "none"
 
     lines = [
         f"Intent: {intent.value}",
@@ -99,4 +107,4 @@ def evidence_summary(run_messages: list[dict], brief_snapshot: dict | None, meta
     if isinstance(version, int) and not isinstance(version, bool):
         lines.append(f"Assistant prompt version: {version}")
     lines.append(f"Turns in the saved conversation: {len(run_messages or [])}")
-    return "\n".join(lines)[:MAX_EVIDENCE_CHARS]
+    return cut_on_line("\n".join(lines), MAX_EVIDENCE_CHARS)

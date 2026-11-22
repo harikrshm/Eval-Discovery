@@ -306,3 +306,50 @@ def test_downgrade_to_0003_then_upgrade_again(tmp_path, monkeypatch):
             assert compare_metadata(MigrationContext.configure(conn), Base.metadata) == []
     finally:
         engine.dispose()
+
+
+def test_upgrade_0005_adds_a_null_pattern_run_ids_to_0004_rows(tmp_path, monkeypatch):
+    from sqlalchemy import text
+
+    url = f"sqlite:///{tmp_path / 'p.db'}"
+    monkeypatch.setenv("DATABASE_URL", url)
+    cfg = Config(str(ROOT / "alembic.ini"))
+    command.upgrade(cfg, "0004")
+    engine = create_engine(url)
+    try:
+        _insert_0003_rows(engine)
+        assert "pattern_run_ids" not in {c["name"] for c in inspect(engine).get_columns("agent")}
+        command.upgrade(cfg, "head")
+        assert "pattern_run_ids" in {c["name"] for c in inspect(engine).get_columns("agent")}
+        with engine.connect() as conn:
+            assert conn.execute(text("SELECT pattern_run_ids FROM agent WHERE id = 'a'")).scalar() is None
+            assert conn.execute(text("SELECT count(*) FROM run")).scalar() == 2
+            assert compare_metadata(MigrationContext.configure(conn), Base.metadata) == []
+    finally:
+        engine.dispose()
+
+
+def test_downgrade_to_0004_then_upgrade_again(tmp_path, monkeypatch):
+    from sqlalchemy import text
+
+    url = f"sqlite:///{tmp_path / 'q.db'}"
+    monkeypatch.setenv("DATABASE_URL", url)
+    cfg = Config(str(ROOT / "alembic.ini"))
+    command.upgrade(cfg, "0004")
+    engine = create_engine(url)
+    try:
+        _insert_0003_rows(engine)
+        command.upgrade(cfg, "head")
+        with engine.begin() as conn:
+            conn.execute(text("UPDATE agent SET pattern_run_ids = '[\"r1\"]' WHERE id = 'a'"))
+        command.downgrade(cfg, "0004")
+        assert "pattern_run_ids" not in {c["name"] for c in inspect(engine).get_columns("agent")}
+        with engine.connect() as conn:
+            assert conn.execute(text("SELECT count(*) FROM agent")).scalar() == 1
+            assert conn.execute(text("SELECT count(*) FROM run")).scalar() == 2
+        command.upgrade(cfg, "head")
+        with engine.connect() as conn:
+            assert conn.execute(text("SELECT pattern_run_ids FROM agent WHERE id = 'a'")).scalar() is None
+            assert compare_metadata(MigrationContext.configure(conn), Base.metadata) == []
+    finally:
+        engine.dispose()

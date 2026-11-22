@@ -12,8 +12,8 @@ from backend.api.limits import MAX_PATTERN_RUNS, MAX_RUNS_PER_WORKSPACE, rate_li
 from backend.api.schemas import PatternCheckOut, RunCreate, RunOut, RunSaved
 from backend.core.config import AgentConfig
 from backend.core.pattern import PatternCheckFailed, TranscriptTooShort, detect_pattern, keyword_prefilter
-from backend.db.assist import evidence_for_runs
 from backend.db.agents import current_behaviors, current_prompt, get_owned_agent
+from backend.db.assist import evidence_for_runs, unchecked_flagged_count
 from backend.db.events import try_log_event
 from backend.db.models import Agent, Run, Workspace
 from backend.db.session import get_db
@@ -91,13 +91,13 @@ def save_run(
 
     check_due = False
     unchecked = position - agent.last_checked_at_run
-    if unchecked >= CHECK_DUE_MIN_NEW_RUNS:
-        if agent.kind == "assist":
-            # Flagged assistant conversations are signals already; the trigger-term filter does not apply.
-            check_due = True
-        else:
-            window = _delta_runs(db, agent)
-            check_due = keyword_prefilter(current_behaviors(agent), _transcripts(window))
+    if agent.kind == "assist":
+        # Flagged assistant conversations are signals already: no trigger-term filter, and manual runs
+        # do not count towards the threshold.
+        check_due = unchecked_flagged_count(db, agent) >= CHECK_DUE_MIN_NEW_RUNS
+    elif unchecked >= CHECK_DUE_MIN_NEW_RUNS:
+        window = _delta_runs(db, agent)
+        check_due = keyword_prefilter(current_behaviors(agent), _transcripts(window))
         if not check_due and unchecked > MAX_PATTERN_RUNS:
             # Older runs can never be analysed (only the newest MAX_PATTERN_RUNS are sent), so skip
             # past them; otherwise the unchecked backlog would only ever grow.
@@ -146,6 +146,8 @@ def check_pattern(
     agent.last_checked_at_run = runs[-1].position
     if result.found:
         agent.pattern_summary = result.pattern_summary
+        if agent.kind == "assist":
+            agent.pattern_run_ids = [run.id for run in runs]  # the runs discovery takes its evidence from
     db.commit()
     if result.found:
         try_log_event(db, workspace.id, "loop_detected", {})
