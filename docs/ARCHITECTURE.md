@@ -557,7 +557,7 @@ Every flywheel trial records its `path`: `loop` (the first judged pass came afte
 
 **Limitations (stated on the results page too).**
 
-- The baseline rewriter is shown the full goal criterion; the flywheel never sees it. This favours the baseline.
+- The baseline's rewriter is shown the full goal criterion; the flywheel's app-driven fix (check-pattern, discover, suggest, approve) never is, though its fallback rewrites are, like the baseline's (and the customer-message builder sees the goal in both arms). This favours the baseline.
 - Both judge calls, the reference judge and the app's own, use `MODEL_JUDGE`, so they share model bias. In mock mode independence is structural only: the reference judge is a separate code path, but the fake answers both judge calls with the same rule (does the transcript contain the scenario's violation text).
 - The flywheel gets one attempt at the app flow and then falls back to manual rewrites, so a fallback trial starts roughly two previews behind the baseline.
 - A flywheel trial that passes its first preview with no fix is "converged with no fix needed", not a win for the loop.
@@ -766,7 +766,7 @@ A minimal product event log records `agent_created`, `run_saved`, `loop_detected
 | Runs sent to pattern detection | the most recent 10 unchecked |
 | LLM-backed calls | 30 per minute per client, plus a process-wide budget of 600 per minute (`LLM_GLOBAL_PER_MINUTE`). The replay, run-all, build-tests, suggest-fix and generate-heldout enqueue routes spend one of these per accepted request (a dedupe hit that returns an existing job does not). Approve, reject and restore do not |
 | Groq client | 45 s timeout per call. 5 retries in a job handler (the SDK backs off between them); the request routes that call the model (chat, create agent, discover, check-pattern) run inside `request_retries(2)`, so they retry at most 2 times (Phase 4) |
-| Token pacing | Optional, off unless `GROQ_TPM_LIMIT` is a positive integer: a sliding 60 s window per model records `usage.total_tokens` (a characters/4 estimate when the reply carries none); before a call, if the window plus an estimate would pass the limit the call waits for the oldest record to leave the window, at most 20 s, then proceeds (Phase 4) |
+| Token pacing | Optional, off unless `GROQ_TPM_LIMIT` is a positive integer: a sliding 60 s window per model records `usage.total_tokens` (when the reply carries none, an estimate of the prompt's characters divided by 4 plus the call's `max_tokens`, or 1000 if it sets none); before a call, if the window plus an estimate would pass the limit the call waits for the oldest record to leave the window, at most 20 s, then proceeds (Phase 4) |
 | Workspace creation | 20 per minute per client |
 
 The LLM calls a background job makes are NOT counted by the per-client or process-wide limiters above (they happen in the worker, not in a request). The jobs a person starts (replay, run-all, build, suggest fix, generate held-out) are bounded by the hourly per-workspace job cap, the global queue-depth cap and the Groq client timeout, so a single stuck call cannot hold the one worker for more than a few minutes. Approve's replays and the report job are exempt from the hourly cap: they are bounded by the 100-job queue cap and by the single worker, which runs one job at a time.
@@ -912,7 +912,7 @@ Small fixes: the stale-fix text is now "That fix is based on an older prompt. Re
 **Known limitations and weaknesses.**
 
 - The simulation's builder is a model, N is tiny, and the same model family plays builder and agent (see [3.8](#38-the-simulation-phase-4)).
-- The baseline rewriter is shown the full goal criterion and the flywheel never sees it, which favours the baseline.
+- The baseline's rewriter is shown the full goal criterion; the flywheel's app-driven fix never is, though its fallback rewrites are, like the baseline's (and the customer-message builder sees the goal in both arms). This favours the baseline.
 - Both judge calls use `MODEL_JUDGE` and so share model bias; in mock mode independence is structural only.
 - The flywheel gets one attempt at the app flow and then falls back, so a fallback trial starts roughly two previews behind the baseline; a flywheel trial that passes its first preview with no fix is reported as "converged with no fix needed".
 - The app allows 30 jobs per workspace per hour, so each simulated trial uses a fresh workspace.
@@ -1040,7 +1040,7 @@ python -m evalgate --suite eval-suite.json --prompt prompts/agent.md      # the 
 python -m simulation.run                                                  # mock mode, offline (numbers meaningless)
 python -m simulation.run --mode real --trials 3 --resume                  # real Groq (spends quota)
 python -m simulation.report --results simulation/results --mode real      # writes docs/simulation-results.md
-python scripts/metrics.py --database-url postgresql://...                 # events metrics
+python scripts/metrics.py --database-url postgresql+psycopg://...         # events metrics (does not normalise URLs like the app)
 ```
 
 ### Deployment
