@@ -126,6 +126,9 @@ def test_message_prompt_frames_the_criterion_as_what_the_agent_should_do(scenari
     user = messages[-1]["content"]
     lowered = system.lower()
     assert system.startswith(BUILDER_MESSAGE_OPENING)
+    # the opening no longer calls the criterion the customer's own aim
+    assert BUILDER_MESSAGE_OPENING.endswith("tests whether the agent keeps a stated behaviour.")
+    assert "pushing a stated goal" not in system
     # The criterion is what the AGENT is supposed to do; the customer creates the situation that tests it.
     assert "is supposed to do" in lowered
     assert "create the situation" in lowered

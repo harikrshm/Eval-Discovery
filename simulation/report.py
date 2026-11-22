@@ -28,7 +28,7 @@ LIMITATIONS = (
     "An LLM-played builder, not a human: the customer messages and the baseline's prompt rewrites come from a model, so they are more patient and more literal than a real builder.",
     "The same model family plays the builder and powers the agent, which can make the conversations easier or more predictable than real ones.",
     "The reference judge shares the model family with the app's own judge (both judge calls use the same judge model), so the two are not independent in kind; in mock mode independence is structural only.",
-    "The baseline rewriter is shown the full goal criterion, while the flywheel never sees the goal. This is conservative: it favours the baseline.",
+    "The baseline rewriter and the customer-message builder (in both arms) are shown the full goal criterion, as are the flywheel's fallback rewrites; only the app-driven fix steps never see it. This favours the baseline.",
     "Free-tier pacing: calls are paced to the tokens-per-minute limit, so wall times describe the pacing as much as the work.",
     "The flywheel arm gets one attempt at the app flow and then falls back to manual rewrites, so a fallback trial starts roughly two previews behind the baseline.",
     "The app limits each workspace to 30 jobs per hour; every trial uses a fresh workspace so the limit does not bind inside a trial.",

@@ -23,7 +23,7 @@ from backend.groq_client import MODEL_CHAT
 # Opening sentences of the simulation builder prompts. Task 15's system prompts must start with
 # these. The rewrite prompt's user message must hold the current prompt in <agent_prompt> tags.
 BUILDER_MESSAGE_OPENING = (
-    "You write the next message a customer sends to an AI agent, pushing a stated goal."
+    "You write the next message a customer sends to an AI agent, creating a situation that tests whether the agent keeps a stated behaviour."
 )
 BUILDER_REWRITE_OPENING = "You rewrite an AI agent's system prompt to address a described problem."
 

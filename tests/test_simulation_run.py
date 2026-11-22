@@ -283,6 +283,14 @@ def test_report_has_required_sections_and_honesty_text(crafted):
         "30 jobs per hour",
     ):
         assert phrase.lower() in text.lower(), phrase
+    # the goal-visibility limitation is accurate: the flywheel's fallback rewrites and both arms'
+    # customer-message builder do see the goal; only the app-driven fix steps never do
+    assert "never sees the goal" not in text
+    assert (
+        "The baseline rewriter and the customer-message builder (in both arms) are shown the full goal "
+        "criterion, as are the flywheel's fallback rewrites; only the app-driven fix steps never see it. "
+        "This favours the baseline."
+    ) in text
 
 
 def test_report_medians_means_and_cap(crafted):
