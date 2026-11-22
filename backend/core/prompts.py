@@ -18,6 +18,9 @@ _DELIMITER_TAGS = (
     "prompt_diff",
     "report_data",
     "scenario_source",
+    "page_brief",
+    "law_excerpts",
+    "question",
 )
 _DELIMITER_RE = re.compile(
     r"<\s*/?\s*(?:" + "|".join(_DELIMITER_TAGS) + r")(?!\w)[^>]*>", re.IGNORECASE
