@@ -348,3 +348,40 @@ class JobAccepted(BaseModel):
 
 class RunAllOut(BaseModel):
     job_ids: list[str]
+
+
+class ExportAgentOut(BaseModel):
+    name: str
+    user_role_label: str
+
+
+class ExportPromptOut(BaseModel):
+    text: str
+    version_number: int
+
+
+class ExportTestOut(BaseModel):
+    id: str
+    role: str
+    origin: str
+    scripted_user_messages: list[str]
+    current_verdict: Literal["pass", "fail", "not_applicable"] | None
+
+
+class ExportCriterionOut(BaseModel):
+    id: str
+    name: str
+    definition: str
+    good_example: str
+    bad_example: str
+    tests: list[ExportTestOut]
+
+
+class SuiteExportOut(BaseModel):
+    """The `eval-discovery.suite` v1 document the CI gate consumes. Exactly these fields, nothing else."""
+
+    format: Literal["eval-discovery.suite"] = "eval-discovery.suite"
+    version: Literal[1] = 1
+    agent: ExportAgentOut
+    prompt: ExportPromptOut
+    criteria: list[ExportCriterionOut]
