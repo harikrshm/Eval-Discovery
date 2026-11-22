@@ -447,6 +447,8 @@ sequenceDiagram
     alt every required test has a current replay
         R->>R: decide_promotion (pure code, no LLM)
         R->>DB: promoted (agent moves to it, the old version is superseded) or failed_verification
+    else stored verdicts already decide failure, before every replay has finished
+        R->>DB: failed_verification with the reason, queued replays of that version cancelled
     else a required job failed or was discarded, data is malformed, or results are still missing 30 minutes after approval with no replay queued or running
         R->>DB: failed_verification with the reason
     end
@@ -459,7 +461,7 @@ sequenceDiagram
 
 Reconcile also covers the cases no single job can: a restart between the last replay and the reconcile (the next pass resolves it), a replay job that failed, was discarded (the criterion changed) or was lost, and malformed `verification` data ("Verification could not be completed."). With results still missing, no replay job queued or running and none failed or discarded, the candidate fails 30 minutes after approval ("Verification timed out."); a queued or running replay keeps it waiting (a stuck one ends through stale-job recovery), and with the worker disabled nothing resolves it. It is idempotent and takes the agent row lock, so overlapping passes cannot resolve a version twice.
 
-**Fail fast (Phase 4).** Reconcile no longer waits for every replay when the stored verdicts already decide the outcome. `core/promotion.early_failure(required, verdicts)` takes the verdicts present so far (a missing verdict never decides anything) and returns a failing decision when the fix or held-out verdict is not `pass`, or any regression verdict is `fail`; it never returns a promotion. A fix or held-out test whose own replay jobs failed or were discarded, with none queued or running, is decisive as well ("A test could not be run: ..." or "A criterion changed during verification."); a missing regression result never is. A failed candidate gets the same reason strings as before and a table with `after = null` for the tests that never ran, and its still-queued replay jobs (matched on the candidate version and the required test ids) are set to `failed` with the error "Cancelled: verification already failed." by an update that re-checks `status = 'queued'`, so a job a worker claims at the same moment is not overwritten. A replay that is already running is not interrupted: `handle_replay` returns `{"skipped": true}` for a `system` job whose version is no longer `approved_verifying`, checked before the model calls and again after them, and stores nothing, so a late result never lands on a resolved version.
+**Fail fast (Phase 4).** Reconcile no longer waits for every replay when the stored verdicts already decide the outcome. `core/promotion.early_failure(required, verdicts)` takes the verdicts present so far (a missing verdict never decides anything) and returns a failing decision when the fix or held-out verdict is not `pass`, or any regression verdict is `fail`; it never returns a promotion. A fix or held-out test whose own replay jobs failed or were discarded, with none queued or running, is decisive as well ("A test could not be run: ..." or "A criterion changed during verification."); a missing regression result never is. A failed candidate gets the same reason strings as before and a table with `after = null` for the tests that never ran, and its still-queued replay jobs (matched on the candidate version and the required test ids) are set to `failed` with the error "Cancelled: verification already failed." by an update that re-checks `status = 'queued'`, so a job a worker claims at the same moment is not overwritten. A replay that is already running is not interrupted: `handle_replay` returns `{"skipped": true}` for a `system` job whose version is no longer `approved_verifying`, checked before the model calls and again after them, and stores nothing, so a late result never lands on a resolved version. The cancellation is scoped by candidate version and test, so it would also cancel a queued replay that a user started for that same candidate version; that is acceptable and not reachable in normal use, because a verifying candidate is never the current version.
 
 ---
 
@@ -484,7 +486,7 @@ The export is a read-only route, `GET /agents/{id}/export` (workspace-scoped; 40
 }
 ```
 
-`current_verdict` is the verdict of the test's newest non-stale replay on the live prompt version (`pass`, `fail`, `not_applicable`), or `null` when there is none. The frontend's "Export suite for CI" button saves the response as `eval-suite.json`.
+`current_verdict` is the verdict of the test's newest non-stale replay on the live prompt version (`pass`, `fail`, `not_applicable`), or `null` when there is none. The frontend's "Export suite for CI" button saves the response as `eval-suite.json`. The export contains the live prompt text and the scripted customer messages from saved runs, so check it for personal data before committing it to a repository.
 
 `evalgate` (`python -m evalgate`, run from the repository root) reads that file and a prompt file. It imports only `backend.core` and `backend.groq_client` (a test imports it in a subprocess and asserts that neither FastAPI nor SQLAlchemy is loaded). Flow:
 
@@ -534,12 +536,14 @@ Design rules, each visible in the code: the gate never reports success when it c
 ```mermaid
 flowchart TD
     Run["simulation.run: per scenario, trial and arm<br/>(each result file saved as the trial finishes)"] --> Arm{"Arm"}
-    Arm -->|baseline| ML["Manual loop: preview, reference judge;<br/>after a fail rewrite the prompt (MODEL_JUDGE, shown the goal), preview again"]
+    Arm -->|baseline| ML["Manual loop: preview, reference judge;<br/>after a fail rewrite the prompt (MODEL_JUDGE, shown the goal), preview again,<br/>stop at the first pass or at 12 previews"]
     Arm -->|flywheel| WS["Fresh workspace in the in-process app"]
     WS --> FP["Preview through the app's chat route, then save the run"]
     FP --> FJ{"Reference judge: pass?"}
     FJ -->|Yes| Done["Trial ends: record converged, previews, path,<br/>model calls, tokens, wall time, notes"]
-    FJ -->|No| Tried{"App flow already attempted?"}
+    FJ -->|No| Cap{"12 previews used?"}
+    Cap -->|Yes| Capped["Trial ends not converged: 12 previews without a pass,<br/>path none, still recorded"]
+    Cap -->|No| Tried{"App flow already attempted?"}
     Tried -->|Yes| FB["Fall back to the manual loop (path fallback)"]
     Tried -->|No| Two{"Two runs saved?"}
     Two -->|No| FP
@@ -549,6 +553,7 @@ flowchart TD
     Prom -->|No| FB
     FB --> ML
     ML --> Done
+    ML -->|"12 previews without a pass"| Capped
 ```
 
 Every flywheel trial records its `path`: `loop` (the first judged pass came after a promoted fix), `fallback` (after a manual rewrite) or `none` (never converged; or, for a converged trial, it passed with no prompt change and no app fix, which the page reports as "converged with no fix needed"). A converged baseline trial records `fallback`, because manual rewrites are its only mechanism; the page shows path counts for the flywheel only. If the app flow raises or a step does not go to plan, the arm falls back, so a failure of the product cannot silently drop a trial.
