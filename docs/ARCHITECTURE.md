@@ -511,7 +511,9 @@ flowchart TD
 | `0` | Pass rate at or above the threshold (default 1.0) |
 | `1` | Pass rate below the threshold |
 | `2` | Usage error, or an invalid or missing suite or prompt file (checked before anything else) |
-| `3` | The gate could not run: no test selected (after skipping), `GROQ_API_KEY` missing or a placeholder, any test errored after the client's retries, no test applicable, or an unexpected exception |
+| `3` | The gate could not run: no test selected (after skipping), `GROQ_API_KEY` missing or a placeholder, any test errored after the client's retries (with `--repeat K` a test is `error` only when every run of it errored), no test applicable, or an unexpected exception |
+
+**Errors under `--repeat K`.** The error rule is per test, not per run (decision P3): a test is `error` only when every one of its runs errored. Two passes and one error counts as a pass and the gate exits 0; one pass and two errors is a `fail` (a strict majority of passes is required) and exits 1, so a provider outage that hits only some runs can be reported as a regression instead of a `3`. `runner.exit_code` also returns 3 when any outcome has verdict `error`, independent of the counters.
 
 Design rules, each visible in the code: the gate never reports success when it could not run (`runner.exit_code` returns 3 for any error, an empty run or no graded verdict); `not_applicable` is reported separately and left out of the rate; the judge is called with an empty agent prompt, so it never sees the prompt; provider exception text is never stored (each failure maps to a fixed message such as "The judge was unavailable."); the key comes only from the environment mapping and no output path formats it; a `.env` file is read only with `--load-dotenv` (the module sets `GROQ_SKIP_DOTENV` before the Groq client can be imported). The suite loader refuses anything over 60 tests, 20 messages per test, 2000 characters per message, a 4000-character prompt file or a 2,000,000-byte file, and its error messages name the field and never echo input values. Output is text, JSON or markdown on stdout, and when `GITHUB_STEP_SUMMARY` is set a markdown table is appended to it.
 

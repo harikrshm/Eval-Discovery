@@ -76,6 +76,9 @@ def _run_test(test: SuiteTest, repeat: int, agent_name: str, user_role_label: st
     verdicts = tuple(v for v, _, _ in runs)
     completed = [v for v in verdicts if v != "error"]
 
+    # Decision P3: a test is "error" only when EVERY run of it errored. With --repeat K, 2 passes and
+    # 1 error is a pass (exit 0), and 1 pass with 2 errors is a "fail" (exit 1), so an outage that hits
+    # only some runs can look like a regression instead of "could not run" (exit 3).
     if not completed:
         final = "error"
     elif verdicts.count("pass") * 2 > repeat:
@@ -135,6 +138,9 @@ def run_suite(
 
 def exit_code(result: GateResult, threshold: float) -> int:
     """3 when the gate could not run, else 0 if the pass rate meets the threshold, else 1."""
-    if result.errors > 0 or not result.outcomes or result.pass_rate is None:
+    # Check the outcomes as well as the counters, so inconsistent counters can never turn an error into a pass.
+    if result.errors > 0 or any(o.verdict == "error" for o in result.outcomes):
+        return EXIT_COULD_NOT_RUN
+    if not result.outcomes or result.pass_rate is None:
         return EXIT_COULD_NOT_RUN
     return EXIT_PASS if result.pass_rate >= threshold - 1e-9 else EXIT_BELOW_THRESHOLD

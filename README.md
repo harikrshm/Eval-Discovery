@@ -163,7 +163,7 @@ For each selected test it replays the saved user messages against the prompt fil
 | `--pause SECONDS` | Wait between tests (default 0), a manual way to stay under a rate limit |
 | `--max-tests N` | Run only the first N selected tests (a warning says how many were not run) |
 | `--format text\|json\|markdown` | Output on stdout (default `text`) |
-| `--load-dotenv` | Load a `.env` file from the working directory before the key check. Off by default: CI and tests use the environment only |
+| `--load-dotenv` | Load the first `.env` found by searching upward from the working directory before the key check. Off by default: CI and tests use the environment only |
 
 **Exit codes.**
 
@@ -172,9 +172,9 @@ For each selected test it replays the saved user messages against the prompt fil
 | `0` | The pass rate is at or above the threshold |
 | `1` | The pass rate is below the threshold |
 | `2` | Bad usage: invalid arguments, or a missing or invalid suite or prompt file |
-| `3` | The gate could not run: `GROQ_API_KEY` is not set (or is a placeholder), a test errored, no test was runnable, or no test was applicable |
+| `3` | The gate could not run: `GROQ_API_KEY` is not set (or is a placeholder), a test errored (with `--repeat K`, only when every run of it errored, see below), no test was runnable, or no test was applicable |
 
-The gate never reports success when it could not run: a missing key, a provider outage after retries, an empty selection or an unexpected exception is a `3`, which fails a CI check just like a `1`. The key is read only from the `GROQ_API_KEY` environment variable and is never printed or written. When `GITHUB_STEP_SUMMARY` is set, a markdown table is appended to it.
+The gate never reports success when it could not run: a missing key, a provider outage after retries, an empty selection or an unexpected exception is a `3`, which fails a CI check just like a `1`. With `--repeat K` the rule is per test: a test is `error` only when **every** run of it errored (an agent or judge failure after retries). Two passes and one error out of three runs is a pass (exit `0`); one pass and two errors is a `fail` (a strict majority of passes is needed), so an outage that hits only some runs can show up as exit `1`, a regression, rather than `3`. Use `--repeat 1` or a quiet provider window when that distinction matters. The key is read only from the `GROQ_API_KEY` environment variable and is never printed or written. When `GITHUB_STEP_SUMMARY` is set, a markdown table is appended to it.
 
 **It is a regression gate.** By default the gate runs only tests whose exported `current_verdict` is `pass`: behaviors that worked when you exported must not start failing. Tests that were failing or never graded are skipped and the skip count is printed (if nothing is left to run, the exit code is `3`), so a first run does not fail on a criterion you never fixed. `--all` runs every test. The pass rate is passes divided by passes plus fails; `not_applicable` results are reported separately and left out of the rate.
 

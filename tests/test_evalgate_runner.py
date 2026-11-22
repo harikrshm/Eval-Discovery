@@ -257,3 +257,24 @@ def test_runner_does_not_import_the_web_stack():
     )
     env = {**os.environ, "GROQ_SKIP_DOTENV": "1"}
     assert subprocess.run([sys.executable, "-c", code], env=env).returncode == 0
+
+
+def test_exit_code_is_3_when_an_outcome_errored_even_if_the_counters_say_otherwise():
+    inconsistent = GateResult(
+        outcomes=(
+            Outcome("t0", "c", "regression", "pass", ("pass",), "ok", None),
+            Outcome("t1", "c", "regression", "error", ("error",), "", "The judge was unavailable."),
+        ),
+        skipped=0, passes=2, fails=0, not_applicable=0, errors=0, pass_rate=1.0,
+    )
+    assert exit_code(inconsistent, 1.0) == 3
+
+
+def test_repeat_error_rule_is_per_test_every_run_must_error():
+    # 2 passes + 1 error: a pass; 1 pass + 2 errors: a fail; 3 errors: an error (decision P3)
+    two_and_one, _, _ = run(suite_tests(1), [verdict("pass"), JudgeFailed(SECRET), verdict("pass")], repeat=3)
+    assert two_and_one.outcomes[0].verdict == "pass" and exit_code(two_and_one, 1.0) == 0
+    one_and_two, _, _ = run(suite_tests(1), [verdict("pass"), JudgeFailed(SECRET), JudgeFailed(SECRET)], repeat=3)
+    assert one_and_two.outcomes[0].verdict == "fail" and exit_code(one_and_two, 1.0) == 1
+    all_errors, _, _ = run(suite_tests(1), [JudgeFailed(SECRET)] * 3, repeat=3)
+    assert all_errors.outcomes[0].verdict == "error" and exit_code(all_errors, 1.0) == 3
