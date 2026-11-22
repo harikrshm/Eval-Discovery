@@ -10,6 +10,8 @@ Backend origin used here: `http://127.0.0.1:8010` (no path). Port 8000 may alrea
 
 Run from the repo root in PowerShell. Use the same shell for S2 to S6 so `DATABASE_URL` is the same for all of them.
 
+Working directory: S1 to S6, the `.env` edits and the database check run from the repo root. S7 starts with `cd extension` and the window stays there, so the build, G2, H2 and H3 run from `extension`. Paths in the tables are written from the repo root (`extension\dist\...`) unless they say `dist\...`, which is from `extension`. After S7, use `cd ..` to return to the repo root.
+
 - **S1.** Install backend dependencies (once): `pip install -r requirements.txt`
 - **S2.** Choose a database and set `DATABASE_URL` in the shell. Do not rely on a `.env` line for it.
   - Option A, SQLite (default): leave `DATABASE_URL` unset. The app uses `sqlite:///./dev.db` in the folder it starts from.
@@ -28,10 +30,12 @@ Run from the repo root in PowerShell. Use the same shell for S2 to S6 so `DATABA
   $bytes = New-Object byte[] 48
   [System.Security.Cryptography.RandomNumberGenerator]::Create().GetBytes($bytes)
   $env:VITE_ASSIST_KEY = -join ($bytes | ForEach-Object { $chars[$_ % $chars.Length] })
-  Add-Content -Path .env -Value ("ASSIST_KEY=" + $env:VITE_ASSIST_KEY) -Encoding ascii
+  Add-Content -Path .env -Value ("`nASSIST_KEY=" + $env:VITE_ASSIST_KEY) -Encoding ascii
   ```
 
-  Use the same PowerShell window for S5 and S7, so the value is still in `$env:VITE_ASSIST_KEY`. In another window, recover it into the variable without printing it:
+  The leading `` `n `` starts a new line, in case the existing `.env` has no trailing newline; a blank line in `.env` is harmless.
+
+  Use the same PowerShell window for S5 and S7, so the value is still in `$env:VITE_ASSIST_KEY`. In another window, from the repo root, recover it into the variable without printing it:
 
   ```powershell
   $line = Get-Content .env | Where-Object { $_ -like 'ASSIST_KEY=*' } | Select-Object -Last 1
@@ -52,8 +56,8 @@ Run from the repo root in PowerShell. Use the same shell for S2 to S6 so `DATABA
   ```
 
   `npm install` is needed on a fresh clone because `extension/node_modules` is git-ignored. `VITE_BACKEND_ORIGIN` must be an origin (scheme, host, port); a path makes the build fail. `VITE_ASSIST_KEY` is compiled into `dist/background.js` and must equal the backend's `ASSIST_KEY`.
-- **S8.** Load in Chrome: open `chrome://extensions`, turn on Developer mode, click Load unpacked and choose `extension\dist`. After every rebuild, reload the Patent Assist card and reload each patent tab.
-- **S9.** Rate limit: the project has observed roughly 8000 tokens a minute on Groq's free tier; check Groq's current limits for your account. Wait about a minute between questions. On "Too many requests. Please wait a moment and try again." wait and retry. Optionally add `GROQ_TPM_LIMIT=7000` to `.env` (example value) so the backend paces its model calls, then restart S6.
+- **S8.** Load in Chrome: open `chrome://extensions`, turn on Developer mode, click Load unpacked and choose the `extension\dist` folder in the repo. After every rebuild, reload the Patent Assist card and reload each patent tab.
+- **S9.** Rate limit: the project's docs give 8000 tokens per minute as the Groq free-tier limit for `gpt-oss-120b` (`docs/ARCHITECTURE.md`, "Groq's free tier"). The assist chat uses `openai/gpt-oss-20b` (`MODEL_CHAT` in `backend/groq_client.py`), whose limit is not stated there. Neither figure was checked against Groq's current page, so check your account's limits. Wait about a minute between questions. On "Too many requests. Please wait a moment and try again." wait and retry. Optionally add `GROQ_TPM_LIMIT=7000` to `.env` (example value) so the backend paces its model calls, then restart S6.
 
 **Database check (read only; used in C, D and F).** Run it in the S2 shell, from the repo root. It only SELECTs and never prints the key or the token.
 
@@ -115,7 +119,7 @@ Test pages: US12401720B1 `https://patents.google.com/patent/US12401720B1/en` and
 | C2 | On a second answer, click "Not helpful", type `missed the point` in "What was wrong? (optional)", click "Send feedback" | "Thanks for the feedback." appears and the buttons lock. In the DB check, that question has `rating` `down` and `rating_reason` holds the text. | | |
 | C3 | On a third answer, click "Didn't answer my question" | "Thanks for the feedback." appears. In the DB check, `rating` is `no_answer`. | | |
 | C4 | Run the database check | The C2 and C3 questions each have a `run` row with `source` `assist` and their `session_id`. `up` is stored and does not by itself write a run row. | | |
-| C5 | Click the "Explain claim 1" chip and wait for the answer. Then type exactly `Explain claim 1` and send, within 90 s of that answer | Both are answered. Identical text gives the same intent, so a re-ask applies. In the DB check, the first question (the chip) has `reasked` true. | | |
+| C5 | Click the "Explain claim 1" chip and wait for the answer. Make sure no text is selected on the page (a selection adds the "Explain this passage" prefix). Then type exactly `Explain claim 1` and send, within 90 s of that answer | Both are answered. Identical text gives the same intent, so a re-ask applies. In the DB check, the first question (the chip) has `reasked` true. | | |
 | C6 | Ask a question, wait more than 90 s, then ask a same-intent question | `reasked` stays false on the first question. | | |
 
 ## D. Single-page navigation (NOT VERIFIED in real Chrome)
@@ -154,7 +158,7 @@ Heartbeats are sent by the service worker, so they appear in the worker's DevToo
 | ID | Steps | Expected result | Result | Notes |
 |---|---|---|---|---|
 | G1 | On a patent page, open DevTools, go to Sources, search across files, and paste the key value into the search box (never into a chat) | No hits. The console shows no hits either. | | |
-| G2 | In the same PowerShell window where you ran the build step (S7), run `Select-String -Path extension\dist\* -SimpleMatch -List -Pattern $env:VITE_ASSIST_KEY` | Only `extension\dist\background.js` is listed. `-List` prints file names, not the matching text. | | |
+| G2 | In the same PowerShell window where you ran the build step (S7, so the folder is `extension`), run `Select-String -Path dist\*.js -SimpleMatch -List -Pattern $env:VITE_ASSIST_KEY \| ForEach-Object { $_.Path }` | Only the path `dist\background.js` is printed. `content.js` must NOT appear. The pipe to `$_.Path` prints file paths only; never drop it, because `-List` alone also prints the matching line on Windows PowerShell 5.1, which would show the key. | | |
 | G3 | In the service worker's DevTools, search Sources for the key | The key is found in `background.js` only. This is expected: the worker is where the key lives. | | |
 
 ## H. Failure handling
