@@ -534,3 +534,46 @@ class AssistChatResponse(BaseModel):
     intent: str
     assist_version: int
     citation_check: CitationCheckOut
+
+
+class AssistConsoleStatusOut(BaseModel):
+    agent_id: str
+    agent_name: str
+    current_version_number: int | None
+    run_count: int
+    flagged_run_count: int
+    imported_run_count: int
+
+
+class AssistConsoleMetricsOut(BaseModel):
+    adoption: dict
+    version_comparison: dict
+    data_source_label: str | None
+    sources: dict
+
+
+class FlaggedQuestionOut(BaseModel):
+    """Labels and flags only: never the question or answer text."""
+
+    question_id: str
+    intent: str
+    section_focus: str | None
+    rating: str | None
+    reasked: bool
+    citation_ok: bool
+    assist_version: int
+
+
+class FlaggedRunOut(BaseModel):
+    """A flagged assistant conversation: ids and labels only, never the messages or the brief."""
+
+    run_id: str
+    position: int
+    source: str
+    session_id: str | None
+    patent_number: str | None
+    intents: list[str]
+    sections: list[str]
+    reasons: list[str]
+    created_at: datetime
+    questions: list[FlaggedQuestionOut]

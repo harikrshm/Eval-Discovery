@@ -8,6 +8,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from backend.api.agents import router as agents_router
 from backend.api.assist import router as assist_router
+from backend.api.assist_console import router as assist_console_router
 from backend.api.criteria import router as criteria_router
 from backend.api.export import router as export_router
 from backend.api.prompt_versions import router as prompt_router
@@ -76,3 +77,4 @@ app.include_router(tests_router)
 app.include_router(versions_router)
 app.include_router(export_router)
 app.include_router(assist_router)
+app.include_router(assist_console_router)
