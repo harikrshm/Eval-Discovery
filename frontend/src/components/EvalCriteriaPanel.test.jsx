@@ -93,6 +93,63 @@ afterEach(async () => {
   container.remove();
 });
 
+describe("EvalCriteriaPanel export for CI", () => {
+  function deferred() {
+    let resolve;
+    let reject;
+    const promise = new Promise((res, rej) => {
+      resolve = res;
+      reject = rej;
+    });
+    return { promise, resolve, reject };
+  }
+
+  it("offers the button beside Export all only when the export is wired, and leaves Export all alone", async () => {
+    const onExportAll = vi.fn();
+    await render({ onExportAll });
+    expect(buttonByText("Export suite for CI")).toBeUndefined();
+
+    await rerender({ onExportAll, onExportSuite: vi.fn(async () => {}) });
+    const button = buttonByText("Export suite for CI");
+    expect(button.disabled).toBe(false);
+    expect(button.parentElement.contains(buttonByText("Export all"))).toBe(true);
+
+    await act(async () => buttonByText("Export all").click());
+    expect(onExportAll).toHaveBeenCalledTimes(1);
+  });
+
+  it("is disabled while the request is in flight, so a double click makes one request", async () => {
+    const pending = deferred();
+    const onExportSuite = vi.fn(() => pending.promise);
+    await render({ onExportSuite });
+
+    await act(async () => buttonByText("Export suite for CI").click());
+    expect(buttonByText("Export suite for CI").disabled).toBe(true);
+    await act(async () => buttonByText("Export suite for CI").click());
+    expect(onExportSuite).toHaveBeenCalledTimes(1);
+
+    await act(async () => pending.resolve());
+    expect(buttonByText("Export suite for CI").disabled).toBe(false);
+    expect(container.querySelector('[role="alert"]')).toBeNull();
+  });
+
+  it("shows the server's message in an alert on failure, re-enables, and clears it on the next try", async () => {
+    const onExportSuite = vi
+      .fn()
+      .mockRejectedValueOnce(new Error("Build tests before exporting."))
+      .mockResolvedValueOnce(undefined);
+    await render({ onExportSuite });
+
+    await act(async () => buttonByText("Export suite for CI").click());
+    expect(container.querySelector('[role="alert"]').textContent).toBe("Build tests before exporting.");
+    expect(buttonByText("Export suite for CI").disabled).toBe(false);
+
+    await act(async () => buttonByText("Export suite for CI").click());
+    expect(onExportSuite).toHaveBeenCalledTimes(2);
+    expect(container.querySelector('[role="alert"]')).toBeNull();
+  });
+});
+
 describe("EvalCriteriaPanel version history", () => {
   it("shows the version history below the criteria when wired, and not otherwise", async () => {
     await render({ versionHistory: { agentId: "a1", onRestore: vi.fn() } });

@@ -19,6 +19,7 @@ vi.mock("./api", async (importOriginal) => {
     updatePrompt: vi.fn(),
     suggestFix: vi.fn(),
     generateHeldout: vi.fn(),
+    exportSuite: vi.fn(),
   };
 });
 
@@ -354,6 +355,86 @@ describe("App version history", () => {
       "A fix is being verified. Wait for it to finish."
     );
     expect(document.activeElement).toBe(buttonByText("Restore"));
+  });
+});
+
+describe("App export", () => {
+  const SUITE_DOC = { format: "eval-discovery.suite", version: 1, criteria: [{ name: "Stays on topic" }] };
+  let blobs;
+  let downloads;
+
+  beforeEach(() => {
+    blobs = [];
+    downloads = [];
+    const RealBlob = globalThis.Blob;
+    vi.stubGlobal(
+      "Blob",
+      class extends RealBlob {
+        constructor(parts, options) {
+          super(parts, options);
+          this.parts = parts;
+          this.options = options;
+        }
+      }
+    );
+    URL.createObjectURL = vi.fn((blob) => {
+      blobs.push(blob);
+      return `blob:${blobs.length}`;
+    });
+    URL.revokeObjectURL = vi.fn();
+    vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(function click() {
+      downloads.push({ href: this.href, download: this.download });
+    });
+    api.getAgentState.mockResolvedValue(agentState(AGENT_V2));
+    api.getTests.mockResolvedValue(suiteFor());
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+  });
+
+  it("downloads the pretty-printed suite as eval-suite.json through one revoked Blob URL", async () => {
+    api.exportSuite.mockResolvedValue(SUITE_DOC);
+    await renderApp();
+
+    await act(async () => buttonByText("Export suite for CI").click());
+    await settle();
+
+    expect(api.exportSuite).toHaveBeenCalledWith("a1");
+    expect(blobs).toHaveLength(1);
+    expect(blobs[0].parts).toEqual([JSON.stringify(SUITE_DOC, null, 2)]);
+    expect(blobs[0].options).toEqual({ type: "application/json" });
+    expect(downloads).toEqual([{ href: "blob:1", download: "eval-suite.json" }]);
+    expect(URL.revokeObjectURL).toHaveBeenCalledTimes(1);
+    expect(URL.revokeObjectURL).toHaveBeenCalledWith("blob:1");
+    expect(container.querySelector('[aria-label="Eval criteria"] [role="alert"]')).toBeNull();
+  });
+
+  it("shows the server's message and downloads nothing when the export fails", async () => {
+    api.exportSuite.mockRejectedValue(new Error("This agent has no tests to export."));
+    await renderApp();
+
+    await act(async () => buttonByText("Export suite for CI").click());
+    await settle();
+
+    expect(container.querySelector('[aria-label="Eval criteria"] [role="alert"]').textContent).toBe(
+      "This agent has no tests to export."
+    );
+    expect(buttonByText("Export suite for CI").disabled).toBe(false);
+    expect(blobs).toHaveLength(0);
+    expect(downloads).toHaveLength(0);
+  });
+
+  it("leaves Export all writing the criteria as eval-criteria.json", async () => {
+    await renderApp();
+
+    await act(async () => buttonByText("Export all").click());
+
+    expect(api.exportSuite).not.toHaveBeenCalled();
+    expect(blobs[0].parts).toEqual([JSON.stringify([CRITERION], null, 2)]);
+    expect(downloads).toEqual([{ href: "blob:1", download: "eval-criteria.json" }]);
+    expect(URL.revokeObjectURL).toHaveBeenCalledTimes(1);
   });
 });
 

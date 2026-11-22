@@ -2,6 +2,7 @@ import { useState, useEffect, useRef } from "react";
 import { Bot, History, ListChecks } from "lucide-react";
 import { useSession } from "./hooks/useSession";
 import { useTests } from "./hooks/useTests";
+import { exportSuite } from "./api";
 import { getAgentId } from "./lib/workspace";
 import { readiness } from "./lib/readiness";
 import { cn } from "./lib/utils";
@@ -167,18 +168,27 @@ export default function App() {
     }
   }
 
-  function handleExportAll() {
-    const blob = new Blob([JSON.stringify(evalCriteria, null, 2)], {
+  function downloadJson(data, filename) {
+    const blob = new Blob([JSON.stringify(data, null, 2)], {
       type: "application/json",
     });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;
-    a.download = "eval-criteria.json";
+    a.download = filename;
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);
     URL.revokeObjectURL(url);
+  }
+
+  function handleExportAll() {
+    downloadJson(evalCriteria, "eval-criteria.json");
+  }
+
+  // A failure rejects, so the panel can show the server's message beside the button.
+  async function handleExportSuite() {
+    downloadJson(await exportSuite(agentId), "eval-suite.json");
   }
 
   async function handleAddCriteria() {
@@ -438,6 +448,7 @@ export default function App() {
                 onAdd={handleAddCriteria}
                 saveError={criteriaSaveError}
                 onExportAll={handleExportAll}
+                onExportSuite={handleExportSuite}
                 suite={tests.suite}
                 jobs={tests.jobs}
                 testsError={tests.error}

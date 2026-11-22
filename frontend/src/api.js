@@ -148,6 +148,11 @@ export function restoreVersion(versionId) {
   return request(`/prompt-versions/${versionId}/restore`, { method: "POST" });
 }
 
+// The suite as a document for the CI gate (`eval-discovery.suite`).
+export function exportSuite(agentId) {
+  return request(`/agents/${agentId}/export`);
+}
+
 // `view` marks the page's first fetch of a report (the server counts one view per `?view=1`);
 // the polls that wait for the written explanation leave it out.
 export function getReport(versionId, { view = false } = {}) {

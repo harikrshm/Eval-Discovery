@@ -374,6 +374,31 @@ describe("fix-loop api", () => {
     }
   });
 
+  it("exports the suite with a GET and the token header, returning the document", async () => {
+    const { workspace, api } = await load();
+    workspace.setToken("tok");
+    const doc = { format: "eval-discovery.suite", criteria: [] };
+    fetchMock.mockResolvedValueOnce(jsonResponse(200, doc));
+
+    await expect(api.exportSuite("a1")).resolves.toEqual(doc);
+
+    const [url, options] = fetchMock.mock.calls[0];
+    expect(options.method).toBe("GET");
+    expect(String(url)).toMatch(/\/agents\/a1\/export$/);
+    expect(options.body).toBeUndefined();
+    expect(headerOf(fetchMock.mock.calls[0], "X-Workspace-Token")).toBe("tok");
+  });
+
+  it("keeps the server's message when the export is refused", async () => {
+    const { workspace, api } = await load();
+    workspace.setToken("tok");
+    fetchMock.mockResolvedValueOnce(jsonResponse(409, { detail: "Build tests before exporting." }));
+
+    const err = await api.exportSuite("a1").catch((e) => e);
+    expect(err).toBeInstanceOf(api.ApiError);
+    expect(err.message).toBe("Build tests before exporting.");
+  });
+
   it("returns the parsed body and keeps the server's message on a 409", async () => {
     const { workspace, api } = await load();
     workspace.setToken("tok");

@@ -11,7 +11,7 @@ import TestsSection from "./TestsSection";
 import ReadinessChip from "./ReadinessChip";
 import { ChangeReviewContainer } from "./ChangeReview";
 import { VersionHistoryContainer } from "./VersionHistory";
-import { staleMessage } from "../lib/testStatus";
+import { friendlyError, staleMessage } from "../lib/testStatus";
 import { readiness } from "../lib/readiness";
 
 const TEXT_FIELDS = [
@@ -134,6 +134,7 @@ export default function EvalCriteriaPanel({
   onUpdate,
   onAdd,
   onExportAll,
+  onExportSuite,
   saveError,
   suite = null,
   jobs = NO_JOBS,
@@ -245,6 +246,26 @@ export default function EvalCriteriaPanel({
   function handleRetry() {
     setFocusRequest({ kind: "retry" });
     setAttempt((a) => a + 1);
+  }
+
+  // The export is one request at a time; the ref closes the gap before the disabled button renders.
+  const [exporting, setExporting] = useState(false);
+  const [exportError, setExportError] = useState(null);
+  const exportingRef = useRef(false);
+
+  async function handleExportSuite() {
+    if (exportingRef.current) return;
+    exportingRef.current = true;
+    setExporting(true);
+    setExportError(null);
+    try {
+      await onExportSuite();
+    } catch (err) {
+      setExportError(friendlyError(err));
+    } finally {
+      exportingRef.current = false;
+      setExporting(false);
+    }
   }
 
   function handleToggle(index) {
@@ -372,18 +393,30 @@ export default function EvalCriteriaPanel({
 
       {/* Fixed footer — Export is the filled action unless Discover evals is the next step */}
       <Separator />
-      <div className="px-4 py-3 flex gap-2 flex-shrink-0">
-        <Button
-          variant={discoverPending ? "outline" : "accent"}
-          className="flex-1"
-          onClick={onExportAll}
-        >
-          Export all
-        </Button>
-        <Button variant="outline" className="flex-1" onClick={onAdd}>
-          <Plus className="h-4 w-4" aria-hidden="true" />
-          Add criterion
-        </Button>
+      <div className="px-4 py-3 flex flex-col gap-2 flex-shrink-0">
+        {exportError && (
+          <p role="alert" className="text-xs text-red-700">
+            {exportError}
+          </p>
+        )}
+        <div className="flex gap-2">
+          <Button
+            variant={discoverPending ? "outline" : "accent"}
+            className="flex-1"
+            onClick={onExportAll}
+          >
+            Export all
+          </Button>
+          <Button variant="outline" className="flex-1" onClick={onAdd}>
+            <Plus className="h-4 w-4" aria-hidden="true" />
+            Add criterion
+          </Button>
+        </div>
+        {onExportSuite && (
+          <Button type="button" variant="outline" onClick={handleExportSuite} disabled={exporting}>
+            Export suite for CI
+          </Button>
+        )}
       </div>
     </div>
   );
