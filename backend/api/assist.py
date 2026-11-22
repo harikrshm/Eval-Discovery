@@ -39,6 +39,7 @@ from backend.core.assist.intent import Intent, primary_section
 from backend.core.config import CHAT_MAX_TOKENS
 from backend.db.agents import current_prompt_version
 from backend.db.assist import (
+    MAX_ASSIST_RUNS,
     SessionConflict,
     add_question,
     count_runs,
@@ -63,7 +64,6 @@ NOT_CONFIGURED = "Assist is not configured."
 ASSIST_UNAVAILABLE = "The assistant is not available right now."
 CHAT_FAILED = "The assistant could not answer right now. Please try again."
 FLAGGED_SOURCE = "assist"
-MAX_ASSIST_RUNS = 1000  # flagged conversations kept per workspace; past it new sessions are not saved
 QUESTION_NOT_FOUND = "Question not found."
 SESSION_CONFLICT = "This session cannot be updated."
 BRIEF_MISMATCH = "The brief does not match the question."

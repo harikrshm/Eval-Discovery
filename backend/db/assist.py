@@ -8,12 +8,14 @@ from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
+from backend.core.assist.bounce import is_bounce
 from backend.core.assist.brief import Brief
 from backend.core.assist.evidence import MAX_EVIDENCE_CHARS, cut_on_line, evidence_summary
 from backend.db.models import Agent, AssistPageView, AssistQuestion, Run, Workspace, utcnow
 
 ASSIST_AGENT_ENV = "ASSIST_AGENT_ID"
 ASSIST_AGENT_MISSING = "The assistant agent is not configured."
+MAX_ASSIST_RUNS = 1000  # flagged conversations kept per workspace; past it new sessions are not saved
 
 
 def get_assist_agent(db: Session) -> tuple[Agent, Workspace]:
@@ -32,17 +34,6 @@ def get_assist_agent(db: Session) -> tuple[Agent, Workspace]:
     if workspace is None:
         raise LookupError(ASSIST_AGENT_MISSING)
     return agent, workspace
-
-
-BOUNCE_MAX_DWELL_MS = 10_000
-BOUNCE_ENGAGED_SECTION_MS = 3_000
-
-
-def is_bounce(dwell_ms: int, sections: dict) -> bool:
-    """A bounce is a short visit (under 10 s) in which no section was visible for 3 s or more."""
-    return dwell_ms < BOUNCE_MAX_DWELL_MS and not any(
-        ms >= BOUNCE_ENGAGED_SECTION_MS for ms in sections.values()
-    )
 
 
 class SessionConflict(LookupError):
