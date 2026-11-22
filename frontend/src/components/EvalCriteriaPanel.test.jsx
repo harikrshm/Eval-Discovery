@@ -93,6 +93,20 @@ afterEach(async () => {
   container.remove();
 });
 
+describe("EvalCriteriaPanel version history", () => {
+  it("shows the version history below the criteria when wired, and not otherwise", async () => {
+    await render({ versionHistory: { agentId: "a1", onRestore: vi.fn() } });
+    const section = container.querySelector('section[aria-label="Version history"]');
+    expect(section).not.toBeNull();
+    const card = container.querySelector("[aria-expanded]");
+    expect(card.compareDocumentPosition(section) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(buttonByText("Version history").getAttribute("aria-expanded")).toBe("false");
+
+    await rerender({ versionHistory: undefined });
+    expect(container.querySelector('section[aria-label="Version history"]')).toBeNull();
+  });
+});
+
 describe("EvalCriteriaPanel prompt editor and tests", () => {
   it("renders the prompt editor with the current version", async () => {
     await render({});

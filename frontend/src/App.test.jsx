@@ -13,6 +13,8 @@ vi.mock("./api", async (importOriginal) => {
     getReport: vi.fn(),
     approveVersion: vi.fn(),
     rejectVersion: vi.fn(),
+    restoreVersion: vi.fn(),
+    getVersions: vi.fn(),
     addCriterion: vi.fn(),
     updatePrompt: vi.fn(),
     suggestFix: vi.fn(),
@@ -287,6 +289,71 @@ describe("App change review", () => {
     expect(api.approveVersion).toHaveBeenCalledWith("v3");
     expect(document.activeElement.tagName).not.toBe("H3");
     expect(container.textContent).toContain("A fix is already proposed or being verified.");
+  });
+});
+
+describe("App version history", () => {
+  const HISTORY = [
+    { id: "pv2", number: 2, origin: "manual", status: "promoted", strength: null, created_at: "2026-11-21T12:00:00", is_current: true },
+    { id: "pv1", number: 1, origin: "initial", status: "superseded", strength: null, created_at: "2026-11-20T12:00:00", is_current: false },
+  ];
+
+  async function restoreFirst() {
+    await act(async () => {
+      buttonByText("Version history").click();
+    });
+    await settle();
+    await act(async () => {
+      buttonByText("Restore").click();
+    });
+    await act(async () => {
+      buttonByText("Confirm restore").click();
+    });
+    await settle();
+  }
+
+  it("restores through the wired handler, refreshes the suite and the agent, and returns focus to the toggle", async () => {
+    api.getAgentState.mockResolvedValueOnce(agentState(AGENT_V2)).mockResolvedValue(agentState({ ...AGENT_V2, prompt_version_id: "pv3", prompt_version_number: 3, system_prompt: "You are Alex." }));
+    api.getTests.mockResolvedValueOnce(suiteFor()).mockResolvedValue(suiteFor({ versionId: "pv3", versionNumber: 3 }));
+    api.getVersions.mockResolvedValue(HISTORY);
+    api.restoreVersion.mockResolvedValue({ id: "pv3" });
+    await renderApp();
+
+    await restoreFirst();
+
+    expect(api.restoreVersion).toHaveBeenCalledWith("pv1");
+    expect(api.getTests.mock.calls.length).toBeGreaterThanOrEqual(2);
+    const editor = container.querySelector('section[aria-label="Agent prompt"]');
+    expect(editor.textContent).toContain("Chat uses v3");
+    expect(document.activeElement).toBe(buttonByText("Version history"));
+  });
+
+  it("still reports the restore as done when the agent reload fails", async () => {
+    api.getAgentState.mockResolvedValueOnce(agentState(AGENT_V2)).mockRejectedValue(new TypeError("Failed to fetch"));
+    api.getTests.mockResolvedValueOnce(suiteFor()).mockResolvedValue(suiteFor({ versionId: "pv3", versionNumber: 3 }));
+    api.getVersions.mockResolvedValue(HISTORY);
+    api.restoreVersion.mockResolvedValue({ id: "pv3" });
+    await renderApp();
+
+    await restoreFirst();
+
+    expect(container.querySelector('section[aria-label="Version history"] [role="status"]').textContent).toContain("Restored v1");
+    expect(document.activeElement).toBe(buttonByText("Version history"));
+  });
+
+  it("shows the server's refusal and keeps the version restorable", async () => {
+    api.getAgentState.mockResolvedValue(agentState(AGENT_V2));
+    api.getTests.mockResolvedValue(suiteFor());
+    api.getVersions.mockResolvedValue(HISTORY);
+    api.restoreVersion.mockRejectedValue(new Error("A fix is being verified. Wait for it to finish."));
+    await renderApp();
+
+    await restoreFirst();
+
+    expect(container.querySelector('section[aria-label="Version history"] [role="alert"]').textContent).toBe(
+      "A fix is being verified. Wait for it to finish."
+    );
+    expect(document.activeElement).toBe(buttonByText("Restore"));
   });
 });
 

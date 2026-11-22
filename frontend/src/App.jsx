@@ -213,6 +213,14 @@ export default function App() {
     tests.refresh();
   }
 
+  // A restore changes the live prompt: load it into the chat screen too. A failed reload never
+  // hides the restore (the editor flags a draft based on the old version by itself).
+  async function handleRestoreVersion(versionId) {
+    const ok = await tests.restore(versionId);
+    if (ok) await refreshAgent();
+    return ok;
+  }
+
   function handleDataDeleted() {
     // Back to the first-run state: no agent, no stored token, clean UI.
     setHistoryVisible(false);
@@ -444,6 +452,7 @@ export default function App() {
                 onGenerateHeldout={tests.generateHeldout}
                 onApprove={tests.approve}
                 onReject={tests.reject}
+                versionHistory={{ agentId, onRestore: handleRestoreVersion }}
                 promptEditor={{
                   promptText: agent.system_prompt,
                   versionNumber: agent.prompt_version_number,

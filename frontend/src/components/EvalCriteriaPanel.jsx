@@ -10,6 +10,7 @@ import PromptEditor from "./PromptEditor";
 import TestsSection from "./TestsSection";
 import ReadinessChip from "./ReadinessChip";
 import { ChangeReviewContainer } from "./ChangeReview";
+import { VersionHistoryContainer } from "./VersionHistory";
 import { staleMessage } from "../lib/testStatus";
 import { readiness } from "../lib/readiness";
 
@@ -146,6 +147,7 @@ export default function EvalCriteriaPanel({
   onApprove,
   onReject,
   promptEditor,
+  versionHistory,
   testsError = null,
   testsLoading = false,
   onRetryTests,
@@ -359,6 +361,8 @@ export default function EvalCriteriaPanel({
               onGenerateHeldout={onGenerateHeldout}
             />
           ))}
+
+          {versionHistory && <VersionHistoryContainer {...versionHistory} suite={suite} jobs={jobs} />}
         </div>
       </ScrollArea>
 
