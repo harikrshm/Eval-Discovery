@@ -43,18 +43,43 @@ class Intent(str, Enum):
 
 # ---- keyword lists (regex fragments, matched case-insensitively) -------------
 
+# Every gap between two keywords is bounded ({0,N}); an unbounded gap rescans the
+# rest of the text for every start and makes long input quadratic.
+_PRODUCT = r"my (?:product|device|design|invention|idea|widget|company|system|method)"
+_COVERAGE = r"(?:cover|covers|covered|read|reads|claim|claims|infring\w*)"
+# Words after "can i use the ..." that mean the page UI, not a freedom-to-operate question.
+_UI_WORDS = r"(?:translate|download|search|filter|menu|tab|link|button|page|site|tool|feature|toolbar|sidebar|viewer|pdf)"
+
 LEGAL_OPINION_PATTERNS = (
-    r"\bis\b[^?.!]*\bvalid\b",  # "is it valid", "is claim 1 valid"
+    # "is it valid", "is claim 1 valid", "is this patent still valid", "are claims 1-3 valid"
+    r"\b(?:is|are)\s+(?:(?:the|this|that|my|your|its)\s+)?"
+    r"(?:patent|claims?(?:\s+[0-9][-0-9, and]{0,30})?|it|this|that|they)\s+"
+    r"(?:(?:still|really|actually|currently|even|legally|truly)\s+)?valid\b",
+    r"\bvalid patent\b",
+    r"\bvalidity of (?:this|the|claims?)\b",
     r"\binvalid",
     r"\binfring",
+    r"\bviolat",
     r"\bfreedom to operate\b",
     r"\bfto\b",
-    r"\bcan i (?:use|make|sell|copy|build)\b",
+    r"\bcan i (?:make|sell|copy|build)\b(?! sense\b)",
+    rf"\bcan i use\b(?! the {_UI_WORDS}\b)",
     r"\bwould (?:this|it|that) hold up\b",
+    r"\bsurvive\b",
+    r"\bwithstand\b",
+    r"\bchallenge[ds]?\b",
     r"\bshould i (?:file|patent|apply)\b",
-    r"\bpatentable\b",
+    r"\bdo i need (?:a )?licen",
+    r"\bam i (?:allowed|free|safe|permitted)\b",
+    r"\b(?:safe|ok|okay) to (?:sell|use|make|build|copy)\b",
+    r"\bread(?:s)? on\b",
+    r"\bany good\b",
+    r"\b(?:is|would|will|could)\s+(?:it|this|that|the patent|my \w{1,20}|the invention|the idea)\s+(?:be\s+)?patentable\b",
     r"\benforceable\b",
     r"\blegal advice\b",
+    # "my product" together with a coverage / reading / infringing word, either order
+    rf"\b{_PRODUCT}\b.{{0,80}}?\b{_COVERAGE}\b",
+    rf"\b{_COVERAGE}\b.{{0,80}}?\b{_PRODUCT}\b",
 )
 
 CLAIM_SCOPE_PATTERNS = (
@@ -128,6 +153,7 @@ LAW_CONCEPT_PATTERNS = (
     r"\bindefinite",
     r"\bdefiniteness\b",
     r"\beligib",
+    r"\bpatentab",
     r"\babstract idea\b",
     r"\bdoctrine of equivalents\b",
     r"\bprosecution history\b",
@@ -140,6 +166,7 @@ NAVIGATION_HELP_PATTERNS = (
     r"\bwhere (?:do|can) i\b",
     r"\bhow (?:do|can) i (?:find|use|get|see|open)\b",
     r"\bwhat does this button\b",
+    r"\bcan i (?:use|see|find|read|click|open|download|view)\b",
     r"\bwhich button\b",
     r"\bhow to navigate\b",
 )
