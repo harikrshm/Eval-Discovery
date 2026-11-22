@@ -552,6 +552,16 @@ class AssistConsoleMetricsOut(BaseModel):
     sources: dict
 
 
+class AssistInsightsOut(BaseModel):
+    """A model-written brief with the counts it was given and whether every figure in it checks out."""
+
+    brief: str
+    counts_used: dict
+    data_source_label: str | None
+    grounded: bool
+    warnings: list[str]
+
+
 class FlaggedQuestionOut(BaseModel):
     """Labels and flags only: never the question or answer text."""
 

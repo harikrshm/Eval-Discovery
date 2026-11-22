@@ -5,30 +5,51 @@ workspace's own assist agent. Responses carry counts, rates, ids and labels only
 answer text, no brief, no messages, no keys.
 """
 
+import logging
 from collections import defaultdict
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from backend.api.deps import get_current_workspace
+from backend.api.limits import rate_limit_llm
 from backend.api.schemas import (
     AssistConsoleMetricsOut,
+    AssistInsightsOut,
     AssistConsoleStatusOut,
     FlaggedQuestionOut,
     FlaggedRunOut,
 )
 from backend.core.assist.adoption import IMPORTED_SOURCE, PV, Q, compute_adoption, compute_version_comparison
+from backend.core.assist.insights import (
+    build_insights_messages,
+    check_grounded,
+    flatten_metrics,
+    hotspots,
+    imported_total,
+    metrics_for_prompt,
+    select_texts,
+)
 from backend.core.assist.intent import SECTION_NAMES, Intent
 from backend.db.assist import EVIDENCE_SOURCES
 from backend.db.models import Agent, AssistPageView, AssistQuestion, PromptVersion, Run, Workspace
 from backend.db.session import get_db
+from backend.groq_client import MODEL_JUDGE, groq_chat, request_retries
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/assist/console", tags=["assist-console"])
 
 NO_ASSIST_AGENT = "No assistant agent in this workspace."
 DEMO_LABEL = "demo dataset"
+NO_INSIGHT_DATA = "Not enough data yet."
+INSIGHTS_FAILED = "The insights could not be generated right now. Please try again."
+INSIGHTS_MAX_TOKENS = 700
+INSIGHTS_TEMPERATURE = 0.2
+MAX_BRIEF_CHARS = 2500
+SAMPLE_SCAN_ROWS = 40  # newest rows scanned per hotspot to find up to 3 distinct texts
 DEFAULT_FLAGGED_LIMIT = 50
 MAX_FLAGGED_LIMIT = 200
 _INTENTS = {i.value for i in Intent}
@@ -93,11 +114,7 @@ def _load_questions(db: Session, workspace_id: str) -> list:
     )
 
 
-@router.get("/metrics", response_model=AssistConsoleMetricsOut)
-def console_metrics(
-    workspace: Workspace = Depends(get_current_workspace), db: Session = Depends(get_db)
-) -> AssistConsoleMetricsOut:
-    _assist_agent(db, workspace)
+def _compute_adoption(db: Session, workspace: Workspace) -> tuple[dict, list]:
     views = [
         PV(r.session_id, r.sections or {}, r.dwell_ms or 0, bool(r.bounce), r.source, r.assist_version)
         for r in db.execute(
@@ -116,13 +133,73 @@ def console_metrics(
           r.source, r.assist_version)
         for r in _load_questions(db, workspace.id)
     ]
-    adoption = compute_adoption(views, questions)
-    imported = sum(adoption["sources"][k]["imported"] for k in ("page_views", "questions"))
+    return compute_adoption(views, questions), questions
+
+
+@router.get("/metrics", response_model=AssistConsoleMetricsOut)
+def console_metrics(
+    workspace: Workspace = Depends(get_current_workspace), db: Session = Depends(get_db)
+) -> AssistConsoleMetricsOut:
+    _assist_agent(db, workspace)
+    adoption, questions = _compute_adoption(db, workspace)
     return AssistConsoleMetricsOut(
         adoption=adoption,
         version_comparison=compute_version_comparison(questions),
-        data_source_label=DEMO_LABEL if imported else None,
+        data_source_label=DEMO_LABEL if imported_total(adoption) else None,
         sources=adoption["sources"],
+    )
+
+
+def _hotspot_samples(db: Session, workspace: Workspace, adoption: dict) -> dict[str, list[str]]:
+    """Up to 3 distinct, cleaned question texts per hotspot, this workspace only, newest first."""
+    samples: dict[str, list[str]] = {}
+    for kind, name in hotspots(adoption):
+        column = AssistQuestion.section_focus if kind == "section" else AssistQuestion.intent
+        texts = db.scalars(
+            select(AssistQuestion.text)
+            .where(AssistQuestion.workspace_id == workspace.id, column == name)
+            .order_by(AssistQuestion.created_at.desc(), AssistQuestion.id.desc())
+            .limit(SAMPLE_SCAN_ROWS)
+        )
+        picked = select_texts(texts)
+        if picked:
+            samples[f"{kind}:{name}"] = picked
+    return samples
+
+
+@router.post("/insights", response_model=AssistInsightsOut)
+def console_insights(
+    request: Request,
+    workspace: Workspace = Depends(get_current_workspace),
+    db: Session = Depends(get_db),
+) -> AssistInsightsOut:
+    """A model-written brief grounded in the computed aggregates (plus a few anonymised questions)."""
+    _assist_agent(db, workspace)
+    adoption, _ = _compute_adoption(db, workspace)
+    if adoption["totals"]["page_views"] == 0 and adoption["totals"]["questions"] == 0:
+        raise HTTPException(status_code=409, detail=NO_INSIGHT_DATA)
+    rate_limit_llm(request)
+    samples = _hotspot_samples(db, workspace, adoption)
+    system, messages = build_insights_messages(adoption, samples)
+    try:
+        with request_retries(2):
+            reply = groq_chat(
+                system, messages, model=MODEL_JUDGE, max_tokens=INSIGHTS_MAX_TOKENS,
+                temperature=INSIGHTS_TEMPERATURE,
+            )
+    except Exception:
+        logger.warning("Assist insights failed", exc_info=True)
+        raise HTTPException(status_code=502, detail=INSIGHTS_FAILED) from None
+    brief = reply.strip()[:MAX_BRIEF_CHARS] if isinstance(reply, str) else ""
+    if not brief:
+        raise HTTPException(status_code=502, detail=INSIGHTS_FAILED)
+    grounded, warnings = check_grounded(brief, adoption, samples)
+    return AssistInsightsOut(
+        brief=brief,
+        counts_used=flatten_metrics(metrics_for_prompt(adoption)),
+        data_source_label=DEMO_LABEL if imported_total(adoption) else None,
+        grounded=grounded,
+        warnings=warnings,
     )
 
 
