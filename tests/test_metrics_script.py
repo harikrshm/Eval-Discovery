@@ -41,6 +41,8 @@ SEED = (
     + [("B", "fix_verification_failed")]
     + [("B", "fix_verified")]
     + [("B", "fix_promoted")]
+    # workspace C: a test but NO criterion (separates the bounded from the literal formula)
+    + [("C", "test_created")]
 )
 
 
@@ -55,6 +57,8 @@ def test_counts_per_workspace_and_total():
     assert b["counts"]["fix_promoted"] == 1
     assert m["totals"]["counts"]["run_saved"] == 8
     assert m["totals"]["counts"]["criterion_created"] == 3
+    assert m["totals"]["counts"]["test_created"] == 2
+    assert m["workspaces"]["C"]["counts"]["test_created"] == 1
     assert m["totals"]["counts"]["agent_created"] == 1
     assert m["totals"]["counts"]["replay_passed"] == 1
     assert set(m["totals"]["counts"]) == set(metrics.COUNTED_EVENTS)
@@ -63,7 +67,11 @@ def test_counts_per_workspace_and_total():
 def test_every_rate_in_total():
     r = metrics.compute_metrics(_rows(SEED))["totals"]["rates"]
     assert r["acceptance_rate"] == pytest.approx(3 / 4)
-    assert r["test_conversion"] == pytest.approx(1 / 2)  # A has a test; A and B have criteria
+    # Bounded definition: workspaces with BOTH a criterion and a test (A only) over workspaces
+    # with a criterion (A, B) = 1/2. The literal "workspaces with a test / workspaces with a
+    # criterion" would count C too and give 2/2 = 100%.
+    assert r["test_conversion"] == pytest.approx(0.5)
+    assert r["test_conversion"] != pytest.approx(1.0)
     assert r["fix_approval_rate"] == pytest.approx(3 / 4)
     assert r["verification_pass_rate"] == pytest.approx(2 / 3)
 
@@ -147,7 +155,7 @@ def seeded_url(tmp_path):
     engine = create_engine(url)
     Base.metadata.create_all(engine)
     with engine.begin() as conn:
-        for ws in ("A", "B"):
+        for ws in ("A", "B", "C"):
             conn.execute(insert(Workspace.__table__).values(id=ws, token_hash=f"h{ws}", created_at=T0, expires_at=T0))
         for i, (ws, name) in enumerate(SEED):
             conn.execute(
@@ -167,11 +175,14 @@ def test_main_json(seeded_url, capsys):
     code = metrics.main(["--database-url", seeded_url, "--format", "json"], {})
     assert code == 0
     data = json.loads(capsys.readouterr().out)
-    assert set(data) == {"totals", "workspaces"}
+    assert set(data) == {"totals", "workspaces", "definitions"}
     assert set(data["totals"]) == {"counts", "rates", "runs_until_first_pass"}
     assert data["totals"]["rates"]["acceptance_rate"] == pytest.approx(0.75)
+    assert data["totals"]["rates"]["test_conversion"] == pytest.approx(0.5)
     assert data["workspaces"]["A"]["runs_until_first_pass"] == 3
     assert data["workspaces"]["B"]["runs_until_first_pass"] is None
+    assert "both a criterion and a test" in data["definitions"]["test_conversion"]
+    assert "only computed for the total" in data["definitions"]["test_conversion"]
 
 
 def test_main_text_default_and_env_url(seeded_url, capsys):
@@ -235,3 +246,74 @@ def test_masked_url_helper():
 def test_output_header_shows_masked_database(seeded_url, capsys):
     metrics.main(["--database-url", seeded_url], {})
     assert "m.db" in capsys.readouterr().out
+
+
+def test_text_footer_and_help_state_test_conversion_definition(seeded_url, capsys):
+    metrics.main(["--database-url", seeded_url], {})
+    out = capsys.readouterr().out
+    assert "workspaces that have both a criterion and a test" in out
+    assert "only computed for the total" in out
+    with pytest.raises(SystemExit):
+        metrics.main(["--help"], {})
+    help_text = " ".join(capsys.readouterr().out.split())
+    assert "workspaces that have both a criterion and a test" in help_text
+    assert "only computed for the total" in help_text
+
+
+# --- masking on the success path ------------------------------------------------
+
+SECRET_URL = (
+    "postgresql://reader:S3cretPW@db.example.com:5432/app"
+    "?sslmode=require&password=QueryPW1&sslpassword=QueryPW2&api_key=QueryKey3"
+    "&auth_token=QueryTok4&client_secret=QuerySec5&application_name=metrics"
+)
+SECRETS = ("S3cretPW", "QueryPW1", "QueryPW2", "QueryKey3", "QueryTok4", "QuerySec5")
+
+
+@pytest.mark.parametrize("fmt", ["text", "json"])
+def test_secrets_absent_on_success_path(seeded_url, capsys, fmt):
+    seen = []
+
+    def factory(url):  # open the seeded sqlite file whatever URL we were handed
+        seen.append(url)
+        return create_engine(seeded_url)
+
+    code = metrics.main(["--database-url", SECRET_URL, "--format", fmt], {}, engine_factory=factory)
+    captured = capsys.readouterr()
+    assert code == 0
+    assert seen == [SECRET_URL]  # the real URL is what gets connected to
+    for secret in SECRETS:
+        assert secret not in captured.out
+        assert secret not in captured.err
+    if fmt == "text":  # the header was reached, shows the masked form and keeps harmless parts
+        assert "Database: postgresql://reader:***@db.example.com:5432/app" in captured.out
+        assert "sslmode=require" in captured.out
+        assert "application_name=metrics" in captured.out
+    else:
+        assert json.loads(captured.out)["totals"]["counts"]["run_saved"] == 8
+
+
+def test_secrets_absent_on_connection_failure(capsys):
+    def factory(url):
+        raise RuntimeError("could not connect with " + url)
+
+    code = metrics.main(["--database-url", SECRET_URL], {}, engine_factory=factory)
+    captured = capsys.readouterr()
+    assert code == 1
+    assert "db.example.com" in captured.err
+    for secret in SECRETS:
+        assert secret not in captured.out + captured.err
+
+
+def test_mask_url_hides_password_and_secret_query_params():
+    masked = metrics.mask_url(SECRET_URL)
+    for secret in SECRETS:
+        assert secret not in masked
+    assert "reader" in masked and "db.example.com" in masked
+    assert "sslmode=require" in masked
+
+
+@pytest.mark.parametrize("key", ["PASSWORD", "SslPassword", "Secret", "access_token", "private_KEY"])
+def test_mask_url_query_key_match_is_case_insensitive(key):
+    masked = metrics.mask_url(f"postgresql://u@h/db?{key}=ValueToHide")
+    assert "ValueToHide" not in masked

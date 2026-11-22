@@ -9,6 +9,7 @@ Rates with a zero denominator are reported as `n/a` (null in JSON).
 import argparse
 import json
 import os
+import re
 import statistics
 import sys
 from collections import defaultdict
@@ -31,6 +32,26 @@ COUNTED_EVENTS = (
     "fix_verification_failed",
     "fix_promoted",
 )
+
+TEST_CONVERSION_DEFINITION = (
+    "test conversion = workspaces that have both a criterion and a test / "
+    "workspaces with a criterion; only computed for the total"
+)
+
+DEFINITIONS = {
+    "acceptance_rate": "criterion_created / loop_detected",
+    "test_conversion": TEST_CONVERSION_DEFINITION,
+    "fix_approval_rate": "fix_approved / fix_suggested",
+    "verification_pass_rate": "fix_verified / fix_approved",
+    "runs_until_first_pass": (
+        "run_saved events (in created_at order) strictly before the first replay_passed, "
+        "per workspace; null when the workspace has no replay_passed; the total is the "
+        "median over workspaces with a value"
+    ),
+    "zero_denominator": "rates with a zero denominator are null (n/a in text)",
+}
+
+_SECRET_QUERY_KEY = re.compile(r"pass|secret|token|key", re.IGNORECASE)
 
 # A lightweight view of the event table: no app (or fastapi) import needed.
 _EVENT = table("event", column("id"), column("workspace_id"), column("name"), column("created_at"))
@@ -103,7 +124,12 @@ def compute_metrics(rows) -> dict:
 def mask_url(url: str) -> str:
     """Render a database URL with its password hidden."""
     try:
-        return make_url(url).render_as_string(hide_password=True)
+        parsed = make_url(url)
+        query = {
+            key: ("***" if _SECRET_QUERY_KEY.search(key) else value)
+            for key, value in parsed.query.items()
+        }
+        return parsed.set(query=query).render_as_string(hide_password=True)
     except Exception:
         return "<unparseable database url>"
 
@@ -154,9 +180,9 @@ def format_text(metrics: dict, database: str | None = None) -> str:
     ]
     lines.append(row("runs until first pass", values))
     lines.append(
-        f"(total column = median over {runs['workspaces_with_value']} workspace(s) with a value; "
-        "test conversion is only defined for the total)"
+        f"(total column = median over {runs['workspaces_with_value']} workspace(s) with a value)"
     )
+    lines.append(f"({TEST_CONVERSION_DEFINITION})")
     return "\n".join(lines)
 
 
@@ -168,9 +194,12 @@ def fetch_rows(engine) -> list[tuple]:
         return [tuple(r) for r in conn.execute(query)]
 
 
-def main(argv=None, env=None) -> int:
+def main(argv=None, env=None, engine_factory=create_engine) -> int:
     env = os.environ if env is None else env
-    parser = argparse.ArgumentParser(description="Product metrics from the event table (read-only).")
+    parser = argparse.ArgumentParser(
+        description="Product metrics from the event table (read-only).",
+        epilog="Definitions: " + TEST_CONVERSION_DEFINITION + ".",
+    )
     parser.add_argument("--database-url", default=None, help="defaults to $DATABASE_URL")
     parser.add_argument("--format", choices=("text", "json"), default="text")
     args = parser.parse_args(argv)
@@ -182,7 +211,7 @@ def main(argv=None, env=None) -> int:
     masked = mask_url(url)
     engine = None
     try:
-        engine = create_engine(url)
+        engine = engine_factory(url)
         rows = fetch_rows(engine)
     except Exception as exc:  # never echo str(exc): it can carry connection details
         print(f"error: could not read events from {masked} ({type(exc).__name__})", file=sys.stderr)
@@ -193,7 +222,7 @@ def main(argv=None, env=None) -> int:
 
     metrics = compute_metrics(rows)
     if args.format == "json":
-        print(json.dumps(metrics, indent=2, sort_keys=True))
+        print(json.dumps({**metrics, "definitions": DEFINITIONS}, indent=2, sort_keys=True))
     else:
         print(format_text(metrics, masked))
     return 0
