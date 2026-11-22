@@ -39,7 +39,8 @@ class Decision:
     failing_test_ids: tuple[str, ...]
 
 
-def _validate(required: list[RequiredTest], verdicts: dict[str, str]) -> None:
+def _validate(required: list[RequiredTest], verdicts: dict[str, str], partial: bool = False) -> None:
+    """Validate the required list and its verdicts; `partial` allows missing verdicts."""
     seen: set[str] = set()
     counts = {role: 0 for role in ROLES}
     for test in required:
@@ -50,6 +51,8 @@ def _validate(required: list[RequiredTest], verdicts: dict[str, str]) -> None:
         seen.add(test.test_id)
         counts[test.role] += 1
         if test.test_id not in verdicts:
+            if partial:
+                continue
             raise ValueError(f"No verdict for required test {test.test_id!r}")
         if verdicts[test.test_id] not in VERDICTS:
             raise ValueError(f"Unknown verdict for test {test.test_id!r}: {verdicts[test.test_id]!r}")
@@ -83,6 +86,33 @@ def decide_promotion(required: list[RequiredTest], verdicts: dict[str, str]) -> 
         return Decision(False, REGRESSION_FAILED_REASON, regressions)
 
     return Decision(True, SUCCESS_REASON, ())
+
+
+def early_failure(required: list[RequiredTest], verdicts: dict[str, str]) -> Decision | None:
+    """A failing Decision as soon as the present verdicts already decide it, else None.
+
+    `verdicts` may be partial: a missing verdict never decides anything. The
+    order matches decide_promotion (fix, held-out, regression). Never returns
+    a promoting Decision. Raises ValueError for a malformed required list or an
+    unknown verdict string among the present verdicts of the required tests.
+    """
+    _validate(required, verdicts, partial=True)
+
+    fix = next(t for t in required if t.role == "fix")
+    if fix.test_id in verdicts and verdicts[fix.test_id] != "pass":
+        return Decision(False, FIX_FAILED_REASON, (fix.test_id,))
+
+    heldout = next((t for t in required if t.role == "heldout"), None)
+    if heldout is not None and heldout.test_id in verdicts and verdicts[heldout.test_id] != "pass":
+        return Decision(False, HELDOUT_FAILED_REASON, (heldout.test_id,))
+
+    regressions = tuple(
+        t.test_id for t in required if t.role == "regression" and verdicts.get(t.test_id) == "fail"
+    )
+    if regressions:
+        return Decision(False, REGRESSION_FAILED_REASON, regressions)
+
+    return None
 
 
 def strength_for(required: list[RequiredTest]) -> str:
