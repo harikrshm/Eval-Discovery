@@ -8,7 +8,7 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from backend.api.deps import get_current_workspace
-from backend.api.limits import FIX_VERIFYING, MAX_CRITERIA_PER_AGENT, rate_limit_llm
+from backend.api.limits import FIX_VERIFYING, MAX_CRITERIA_PER_AGENT, MAX_PATTERN_RUNS, rate_limit_llm
 from backend.api.schemas import (
     MAX_CRITERION_NAME_CHARS,
     CriterionCreate,
@@ -18,6 +18,7 @@ from backend.api.schemas import (
 )
 from backend.core.config import AgentConfig
 from backend.core.criteria import CriterionGenerationFailed, generate_criterion
+from backend.db.assist import checked_flagged_runs, evidence_for_runs
 from backend.db.agents import current_prompt, get_owned_agent, lock_agent
 from backend.db.candidates import verifying_version
 from backend.db.events import try_log_event
@@ -86,6 +87,14 @@ def _enqueue_build_tests(db: Session, workspace: Workspace, criterion: Criterion
         return None
 
 
+def _assist_evidence(db: Session, agent: Agent) -> list[str]:
+    """Evidence of the flagged runs behind the pattern: the newest runs up to the last pattern check
+    (the check marks what it analysed), as many as the check sent. Empty for general agents."""
+    if agent.kind != "assist":
+        return []
+    return evidence_for_runs(db, checked_flagged_runs(db, agent, MAX_PATTERN_RUNS))
+
+
 @router.post("/agents/{agent_id}/criteria/discover", status_code=201, response_model=DiscoveredCriterionOut)
 def discover(
     agent_id: str,
@@ -103,7 +112,11 @@ def discover(
     )
     try:
         with request_retries(2):
-            draft = generate_criterion(config, agent.pattern_summary)
+            evidence = _assist_evidence(db, agent)
+            if evidence:
+                draft = generate_criterion(config, agent.pattern_summary, evidence=evidence)
+            else:
+                draft = generate_criterion(config, agent.pattern_summary)
     except CriterionGenerationFailed:
         logger.warning("Criterion generation failed", exc_info=True)
         raise HTTPException(status_code=502, detail=GENERATION_FAILED) from None

@@ -21,6 +21,7 @@ from backend.core.replay import ReplayFailed, replay, user_messages
 from backend.core.report import ReportFailed, write_report
 from backend.core.suggest import SuggestFailed, SuggestTooLong, suggest_fix
 from backend.core.testsuite import pick_test_runs
+from backend.db.assist import EVIDENCE_SOURCES, run_evidence
 from backend.db.candidates import (
     CandidateOpen,
     ParentChanged,
@@ -307,6 +308,17 @@ def _current_version_id(db: Session, agent: Agent) -> str | None:
     return db.scalar(select(Agent.current_prompt_version_id).where(Agent.id == agent.id))
 
 
+def _source_run_evidence(db: Session, agent: Agent, test: EvalTest) -> list[str]:
+    """Evidence of the failing test's source run, for assistant agents and assistant-sourced runs only."""
+    if agent.kind != "assist" or not test.source_run_id:
+        return []
+    run = db.get(Run, test.source_run_id)
+    if run is None or run.agent_id != agent.id or run.source not in EVIDENCE_SOURCES:
+        return []
+    text = run_evidence(db, run)
+    return [text] if text else []
+
+
 def handle_suggest_fix(db: Session, job: Job) -> dict:
     test_id = _payload_id(job, "test_id", _TEST_GONE)
     test = db.get(EvalTest, test_id)
@@ -332,10 +344,14 @@ def handle_suggest_fix(db: Session, job: Job) -> dict:
     rationale = failing.rationale
     transcript = [dict(message) for message in failing.transcript]
     workspace_id = job.workspace_id
+    evidence = _source_run_evidence(db, agent, test)
     # End the read transaction before the slow LLM call (expire_on_commit=False keeps rows usable).
     db.commit()
     try:
-        fix = suggest_fix(config, spec, rationale, transcript)
+        if evidence:
+            fix = suggest_fix(config, spec, rationale, transcript, evidence=evidence)
+        else:
+            fix = suggest_fix(config, spec, rationale, transcript)
     except SuggestTooLong as exc:
         logger.warning("suggest_fix too long for job %s: %s", job.id, exc)
         raise JobFailed(_SUGGEST_TOO_LONG) from exc
@@ -362,6 +378,8 @@ def handle_suggest_fix(db: Session, job: Job) -> dict:
         "expected_effect": fix.expected_effect[:MAX_WHY_FIELD_CHARS],
         "risk": fix.risk[:MAX_WHY_FIELD_CHARS],
     }
+    if fix.law_pack_gap:
+        why["law_pack_gap"] = fix.law_pack_gap[:MAX_WHY_FIELD_CHARS]
     try:
         version = create_proposed_version(db, agent, fix.prompt_text, test.id, why, expected_parent_id=current_id)
     except CandidateOpen as exc:

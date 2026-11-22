@@ -8,6 +8,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from backend.core.assist.brief import Brief
+from backend.core.assist.evidence import evidence_summary
 from backend.db.models import Agent, AssistPageView, AssistQuestion, Run, Workspace, utcnow
 
 ASSIST_AGENT_ENV = "ASSIST_AGENT_ID"
@@ -235,3 +236,82 @@ def count_runs(db: Session, agent: Agent) -> int:
 
 def has_run_for_session(db: Session, agent: Agent, session_id: str) -> bool:
     return db.scalar(select(Run.id).where(Run.agent_id == agent.id, Run.session_id == session_id)) is not None
+
+
+# ---- flywheel evidence ---------------------------------------------------------
+
+EVIDENCE_SOURCES = ("assist", "imported")  # run sources that carry assistant evidence (never "manual")
+MAX_EVIDENCE_QUESTIONS = 3
+MAX_RUN_EVIDENCE_CHARS = 3000
+
+
+def _is_flagged(question: AssistQuestion) -> bool:
+    return question.rating in ("down", "no_answer") or bool(question.reasked) or not question.citation_ok
+
+
+def run_evidence(db: Session, run: Run) -> str:
+    """The evidence text for a flagged run: one `evidence_summary` block per question of its session.
+
+    Questions come from `assist_question` by (workspace, session_id), flagged ones first and then the
+    most recent, at most MAX_EVIDENCE_QUESTIONS in time order. "" for a run without a session or
+    without stored questions.
+    """
+    if not run.session_id:
+        return ""
+    workspace_id = db.scalar(select(Agent.workspace_id).where(Agent.id == run.agent_id))
+    if workspace_id is None:
+        return ""
+    questions = list(
+        db.scalars(
+            select(AssistQuestion)
+            .where(AssistQuestion.workspace_id == workspace_id, AssistQuestion.session_id == run.session_id)
+            .order_by(AssistQuestion.created_at, AssistQuestion.id)
+        )
+    )
+    if not questions:
+        return ""
+    flagged = [q for q in questions if _is_flagged(q)]
+    rest = [q for q in questions if not _is_flagged(q)]
+    chosen = flagged[-MAX_EVIDENCE_QUESTIONS:]
+    if len(chosen) < MAX_EVIDENCE_QUESTIONS:
+        chosen = chosen + rest[len(chosen) - MAX_EVIDENCE_QUESTIONS:]
+    chosen.sort(key=lambda q: (q.created_at, q.id))
+    snapshot = run.brief_snapshot or {}
+    blocks = [
+        evidence_summary(
+            run.messages or [],
+            snapshot,
+            {
+                "intent": q.intent,
+                "section_focus": q.section_focus,
+                "rating": q.rating,
+                "reasked": q.reasked,
+                "citation_ok": q.citation_ok,
+                "assist_version": q.assist_version,
+                "completeness": snapshot.get("completeness"),
+            },
+        )
+        for q in chosen
+    ]
+    return "\n---\n".join(blocks)[:MAX_RUN_EVIDENCE_CHARS]
+
+
+def evidence_for_runs(db: Session, runs: list[Run]) -> list[str]:
+    """One evidence text per assistant-sourced run (source assist/imported), skipping runs with none."""
+    texts = (run_evidence(db, run) for run in runs if run.source in EVIDENCE_SOURCES)
+    return [text for text in texts if text]
+
+
+def checked_flagged_runs(db: Session, agent: Agent, limit: int) -> list[Run]:
+    """The newest `limit` assistant-sourced runs at or before the agent's last pattern-checked position, oldest first."""
+    newest_first = db.scalars(
+        select(Run)
+        .where(
+            Run.agent_id == agent.id,
+            Run.position <= agent.last_checked_at_run,
+            Run.source.in_(EVIDENCE_SOURCES),
+        )
+        .order_by(Run.position.desc())
+        .limit(limit)
+    ).all()
+    return list(reversed(newest_first))

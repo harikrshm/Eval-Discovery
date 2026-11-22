@@ -12,6 +12,7 @@ from backend.api.limits import MAX_PATTERN_RUNS, MAX_RUNS_PER_WORKSPACE, rate_li
 from backend.api.schemas import PatternCheckOut, RunCreate, RunOut, RunSaved
 from backend.core.config import AgentConfig
 from backend.core.pattern import PatternCheckFailed, TranscriptTooShort, detect_pattern, keyword_prefilter
+from backend.db.assist import evidence_for_runs
 from backend.db.agents import current_behaviors, current_prompt, get_owned_agent
 from backend.db.events import try_log_event
 from backend.db.models import Agent, Run, Workspace
@@ -27,6 +28,7 @@ PATTERN_FAILED = "Pattern check unavailable, try again."
 EMPTY_DELTA = "Nothing to check: the set of new runs is empty. Save a run first."
 RUN_CONFLICT = "Another run was saved at the same time. Try again."
 CHECK_DUE_MIN_NEW_RUNS = 2
+ASSIST_MIN_TURNS = 2  # an assistant conversation is a question and its answer
 
 
 def _owned_or_404(db: Session, workspace: Workspace, agent_id: str) -> Agent:
@@ -90,8 +92,12 @@ def save_run(
     check_due = False
     unchecked = position - agent.last_checked_at_run
     if unchecked >= CHECK_DUE_MIN_NEW_RUNS:
-        window = _delta_runs(db, agent)
-        check_due = keyword_prefilter(current_behaviors(agent), _transcripts(window))
+        if agent.kind == "assist":
+            # Flagged assistant conversations are signals already; the trigger-term filter does not apply.
+            check_due = True
+        else:
+            window = _delta_runs(db, agent)
+            check_due = keyword_prefilter(current_behaviors(agent), _transcripts(window))
         if not check_due and unchecked > MAX_PATTERN_RUNS:
             # Older runs can never be analysed (only the newest MAX_PATTERN_RUNS are sent), so skip
             # past them; otherwise the unchecked backlog would only ever grow.
@@ -121,7 +127,15 @@ def check_pattern(
     )
     try:
         with request_retries(2):
-            result = detect_pattern(config, _transcripts(runs))
+            if agent.kind == "assist":
+                result = detect_pattern(
+                    config,
+                    _transcripts(runs),
+                    evidence=evidence_for_runs(db, runs) or None,
+                    min_turns=ASSIST_MIN_TURNS,
+                )
+            else:
+                result = detect_pattern(config, _transcripts(runs))
     except TranscriptTooShort as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from None
     except PatternCheckFailed:

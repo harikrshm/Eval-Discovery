@@ -56,18 +56,27 @@ def _parse(raw: str) -> PatternResult:
     return PatternResult(found=data["found"], pattern_summary=summary)
 
 
-def detect_pattern(config: AgentConfig, transcripts: list[list[dict]]) -> PatternResult:
-    """Ask the model whether the transcripts show a repeated testing pattern."""
+def detect_pattern(
+    config: AgentConfig,
+    transcripts: list[list[dict]],
+    *,
+    evidence: list[str] | None = None,
+    min_turns: int = MIN_TURNS_PER_TRANSCRIPT,
+) -> PatternResult:
+    """Ask the model whether the transcripts show a repeated testing pattern.
+
+    ``evidence`` (assistant agents only) adds signal summaries to the user message; ``min_turns`` is
+    the shortest transcript accepted (the assistant kind passes 2: one question and one answer)."""
     if not transcripts:
         raise ValueError("transcripts must not be empty.")
     for i, transcript in enumerate(transcripts, 1):
-        if len(transcript) < MIN_TURNS_PER_TRANSCRIPT:
+        if len(transcript) < min_turns:
             raise TranscriptTooShort(
                 f"Transcript {i} is too short; have a longer conversation first "
-                f"(minimum {MIN_TURNS_PER_TRANSCRIPT} turns)."
+                f"(minimum {min_turns} turns)."
             )
 
-    system, messages = build_pattern_messages(config, transcripts)
+    system, messages = build_pattern_messages(config, transcripts, evidence=evidence)
     try:
         raw = groq_chat(system, messages, model=MODEL_PATTERN)
     except Exception as exc:

@@ -55,12 +55,16 @@ def _parse(raw: str) -> CriterionDraft:
     return CriterionDraft(**values)
 
 
-def generate_criterion(config: AgentConfig, pattern_summary: str) -> CriterionDraft:
-    """Generate one evaluation criterion grounded in the detected pattern."""
+def generate_criterion(
+    config: AgentConfig, pattern_summary: str, *, evidence: list[str] | None = None
+) -> CriterionDraft:
+    """Generate one evaluation criterion grounded in the detected pattern.
+
+    ``evidence`` (assistant agents only) adds signal summaries to the user message."""
     if not pattern_summary or not pattern_summary.strip():
         raise ValueError("pattern_summary must not be blank.")
 
-    system, messages = build_rubric_messages(config, pattern_summary)
+    system, messages = build_rubric_messages(config, pattern_summary, evidence=evidence)
     try:
         raw = groq_chat(system, messages, model=MODEL_CRITERIA)
     except Exception as exc:

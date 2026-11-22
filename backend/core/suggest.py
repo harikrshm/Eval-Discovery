@@ -14,6 +14,7 @@ from backend.groq_client import MODEL_JUDGE, groq_chat
 from backend.utils import extract_json
 
 _TEXT_FIELDS = ("change_summary", "touched_section", "expected_effect", "risk")
+MAX_LAW_PACK_GAP_CHARS = 300
 
 
 @dataclass(frozen=True)
@@ -24,6 +25,7 @@ class SuggestedFix:
     touched_section: str
     expected_effect: str
     risk: str
+    law_pack_gap: str | None = None  # optional: a law-pack provision the model found missing
 
 
 class SuggestFailed(RuntimeError):
@@ -40,6 +42,17 @@ def _numbered_transcript(config: AgentConfig, transcript: list[dict]) -> str:
         speaker = config.user_role_label if msg["role"] == "user" else config.name
         lines.append(f"[{i}] {speaker}: {msg['content']}")
     return "\n".join(lines)
+
+
+def _law_pack_gap(data: dict) -> str | None:
+    """The optional gap note: stripped; anything missing, empty, not a string or over the cap counts as absent."""
+    value = data.get("law_pack_gap")
+    if not isinstance(value, str):
+        return None
+    value = value.strip()
+    if not value or len(value) > MAX_LAW_PACK_GAP_CHARS:
+        return None
+    return value
 
 
 def _parse(raw: str, config: AgentConfig, turn_count: int) -> SuggestedFix:
@@ -69,7 +82,7 @@ def _parse(raw: str, config: AgentConfig, turn_count: int) -> SuggestedFix:
         if not isinstance(value, str) or not value.strip():
             raise SuggestFailed(f"suggester output is missing {key}")
         fields[key] = value.strip()
-    return SuggestedFix(prompt_text=prompt, failing_turn_index=index, **fields)
+    return SuggestedFix(prompt_text=prompt, failing_turn_index=index, law_pack_gap=_law_pack_gap(data), **fields)
 
 
 def suggest_fix(
@@ -77,12 +90,19 @@ def suggest_fix(
     criterion: CriterionSpec,
     failing_rationale: str,
     failing_transcript: list[dict],
+    *,
+    evidence: list[str] | None = None,
 ) -> SuggestedFix:
     """Propose a replacement prompt from one failing result.
 
-    ``failing_turn_index`` in the result indexes ``failing_transcript``."""
+    ``failing_turn_index`` in the result indexes ``failing_transcript``. ``evidence`` (assistant agents
+    only) adds signal summaries to the user message and invites an optional ``law_pack_gap``."""
     system, messages = build_suggest_messages(
-        config, criterion, failing_rationale, _numbered_transcript(config, failing_transcript)
+        config,
+        criterion,
+        failing_rationale,
+        _numbered_transcript(config, failing_transcript),
+        evidence=evidence,
     )
     try:
         raw = groq_chat(system, messages, model=MODEL_JUDGE, temperature=0.2)
