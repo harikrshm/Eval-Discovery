@@ -32,3 +32,8 @@ simulation/results/
 
 # Local database
 dev.db
+
+# Patent Assist extension
+extension/fixtures/raw/
+extension/dist/
+extension/node_modules/
