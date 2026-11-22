@@ -107,6 +107,48 @@ describe("EvalCriteriaPanel version history", () => {
   });
 });
 
+describe("EvalCriteriaPanel expanded card", () => {
+  const second = { ...CRITERION, id: "c2", name: "Asks one question" };
+  const third = { ...CRITERION, id: "c3", name: "Confirms the next step" };
+  const expandedOf = (name) => buttonByText(name).getAttribute("aria-expanded");
+
+  it("starts with only the last card open and lets the user open and close the others", async () => {
+    await render({ evalCriteria: [CRITERION, second] });
+    expect(expandedOf("Stays on topic")).toBe("false");
+    expect(expandedOf("Asks one question")).toBe("true");
+
+    await act(async () => buttonByText("Stays on topic").click());
+    expect(expandedOf("Stays on topic")).toBe("true");
+    expect(expandedOf("Asks one question")).toBe("false");
+
+    await act(async () => buttonByText("Stays on topic").click());
+    expect(expandedOf("Stays on topic")).toBe("false");
+  });
+
+  it("expands the new last card when a criterion is appended, wherever the user had opened", async () => {
+    await render({ evalCriteria: [CRITERION, second] });
+    await act(async () => buttonByText("Stays on topic").click());
+
+    await rerender({ evalCriteria: [CRITERION, second, third] });
+    expect(expandedOf("Stays on topic")).toBe("false");
+    expect(expandedOf("Asks one question")).toBe("false");
+    expect(expandedOf("Confirms the next step")).toBe("true");
+
+    await act(async () => buttonByText("Asks one question").click());
+    expect(expandedOf("Asks one question")).toBe("true");
+    expect(expandedOf("Confirms the next step")).toBe("false");
+  });
+
+  it("keeps the user's choice across re-renders that do not change the list length", async () => {
+    await render({ evalCriteria: [CRITERION, second] });
+    await act(async () => buttonByText("Stays on topic").click());
+
+    await rerender({ evalCriteria: [{ ...CRITERION, definition: "edited" }, second] });
+    expect(expandedOf("Stays on topic")).toBe("true");
+    expect(expandedOf("Asks one question")).toBe("false");
+  });
+});
+
 describe("EvalCriteriaPanel prompt editor and tests", () => {
   it("renders the prompt editor with the current version", async () => {
     await render({});

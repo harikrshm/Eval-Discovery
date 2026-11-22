@@ -42,16 +42,17 @@ NOT_APPROVABLE = "This fix can't be approved in its current state."
 NOT_REJECTABLE = "This fix can't be rejected in its current state."
 NOT_RESTORABLE = "This version can't be restored."
 FIX_MISMATCH = "That fix no longer matches its test."
-STALE_FIX = "That fix is based on an older prompt. Suggest a new fix."
+STALE_FIX = "That fix is based on an older prompt. Reject it and suggest a new fix."
 
 
 def version_out(version: PromptVersion, current_id: str | None) -> VersionOut:
+    verification = version.verification if isinstance(version.verification, dict) else {}
     return VersionOut(
         id=version.id,
         number=version.number,
         origin=version.origin,
         status=version.status,
-        strength=(version.verification or {}).get("strength"),
+        strength=verification.get("strength"),
         created_at=version.created_at,
         is_current=version.id == current_id,
     )

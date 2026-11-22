@@ -167,10 +167,13 @@ export default function EvalCriteriaPanel({
   // expandedIndex: only the last card is expanded by default
   const [expandedIndex, setExpandedIndex] = useState(evalCriteria.length - 1);
 
-  // When the list grows (new criterion appended), expand the new last card
-  useEffect(() => {
+  // When the list changes length (a criterion is appended), expand the new last card. This adjusts
+  // state during render, keyed on the previous length, rather than syncing it in an effect.
+  const [seenLength, setSeenLength] = useState(evalCriteria.length);
+  if (seenLength !== evalCriteria.length) {
+    setSeenLength(evalCriteria.length);
     setExpandedIndex(evalCriteria.length - 1);
-  }, [evalCriteria.length]);
+  }
 
   // The review remounts when its candidate changes status, so a focused Approve or Reject button
   // is gone by the time the action settles. The panel owns where focus goes next, and only after

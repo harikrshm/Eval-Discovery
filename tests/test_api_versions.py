@@ -35,6 +35,18 @@ def _other_headers(db_session):
     return {"X-Workspace-Token": token}
 
 
+@pytest.mark.parametrize("odd", [["strength", "full"], "full", 3])
+def test_versions_list_tolerates_a_non_dict_verification(client, auth_headers, db_session, odd):
+    agent_id = _agent(client, auth_headers)
+    first = db_session.query(PromptVersion).filter_by(agent_id=agent_id).one()
+    _add_version(db_session, agent_id, 2, "promoted", parent_id=first.id, verification=odd)
+
+    r = client.get(f"/agents/{agent_id}/prompt-versions", headers=auth_headers)
+
+    assert r.status_code == 200
+    assert [row["strength"] for row in r.json()] == [None, None]
+
+
 def test_versions_list_is_newest_first_with_is_current_and_strength(client, auth_headers, db_session):
     agent_id = _agent(client, auth_headers)
     agent = db_session.get(Agent, agent_id)
@@ -374,7 +386,7 @@ def test_approve_loses_a_race_with_a_manual_edit_that_supersedes_the_proposal(
     assert _jobs(db_session) == []
 
 
-STALE_FIX = "That fix is based on an older prompt. Suggest a new fix."
+STALE_FIX = "That fix is based on an older prompt. Reject it and suggest a new fix."
 
 
 def test_approve_is_409_when_the_candidate_is_based_on_an_older_prompt(client, auth_headers, db_session):

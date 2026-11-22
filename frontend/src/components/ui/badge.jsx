@@ -1,21 +1,6 @@
 import * as React from "react";
-import { cva } from "class-variance-authority";
+import { badgeVariants } from "./badge-variants";
 import { cn } from "../../lib/utils";
-
-const badgeVariants = cva(
-  "inline-flex items-center rounded-full border px-2.5 py-0.5 text-xs font-semibold transition-colors",
-  {
-    variants: {
-      variant: {
-        default: "border-transparent bg-foreground text-background",
-        outline: "text-foreground border-border",
-      },
-    },
-    defaultVariants: {
-      variant: "default",
-    },
-  }
-);
 
 function Badge({ className, variant, ...props }) {
   return (
@@ -23,4 +8,4 @@ function Badge({ className, variant, ...props }) {
   );
 }
 
-export { Badge, badgeVariants };
+export { Badge };
