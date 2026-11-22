@@ -177,9 +177,12 @@ export default function App() {
     a.href = url;
     a.download = filename;
     document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    URL.revokeObjectURL(url);
+    try {
+      a.click();
+    } finally {
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    }
   }
 
   function handleExportAll() {
@@ -440,6 +443,7 @@ export default function App() {
           {evalCriteria.length > 0 && (
             <div className="h-full" style={{ width: PANEL_WIDTH }}>
               <EvalCriteriaPanel
+                key={agentId}
                 evalCriteria={evalCriteria}
                 patternState={patternState}
                 discoverPending={showDiscoverButton}

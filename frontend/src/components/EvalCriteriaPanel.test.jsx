@@ -148,6 +148,23 @@ describe("EvalCriteriaPanel export for CI", () => {
     expect(onExportSuite).toHaveBeenCalledTimes(2);
     expect(container.querySelector('[role="alert"]')).toBeNull();
   });
+
+  it("starts clean for another agent: a panel keyed by agent id drops a shown export error", async () => {
+    // App renders <EvalCriteriaPanel key={agentId} />, so switching agents remounts the panel.
+    const onExportSuite = vi.fn().mockRejectedValue(new Error("Build tests before exporting."));
+    await render({ onExportSuite });
+    await act(async () => {
+      root.render(createElement(EvalCriteriaPanel, { key: "a1", ...panelProps({ onExportSuite }) }));
+    });
+    await act(async () => buttonByText("Export suite for CI").click());
+    expect(container.querySelector('[role="alert"]').textContent).toBe("Build tests before exporting.");
+
+    await act(async () => {
+      root.render(createElement(EvalCriteriaPanel, { key: "a2", ...panelProps({ onExportSuite }) }));
+    });
+    expect(container.querySelector('[role="alert"]')).toBeNull();
+    expect(buttonByText("Export suite for CI").disabled).toBe(false);
+  });
 });
 
 describe("EvalCriteriaPanel version history", () => {

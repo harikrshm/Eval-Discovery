@@ -426,6 +426,22 @@ describe("App export", () => {
     expect(downloads).toHaveLength(0);
   });
 
+  it("removes the anchor and revokes the Blob URL even when the click throws", async () => {
+    HTMLAnchorElement.prototype.click.mockImplementation(() => {
+      throw new Error("click blocked");
+    });
+    api.exportSuite.mockResolvedValue(SUITE_DOC);
+    await renderApp();
+
+    await act(async () => buttonByText("Export suite for CI").click());
+    await settle();
+
+    expect(document.body.querySelector("a[download]")).toBeNull();
+    expect(URL.revokeObjectURL).toHaveBeenCalledTimes(1);
+    expect(URL.revokeObjectURL).toHaveBeenCalledWith("blob:1");
+    expect(container.querySelector('[aria-label="Eval criteria"] [role="alert"]').textContent).toBe("click blocked");
+  });
+
   it("leaves Export all writing the criteria as eval-criteria.json", async () => {
     await renderApp();
 
