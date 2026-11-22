@@ -2,7 +2,7 @@
 
 import re
 from datetime import datetime
-from typing import Literal
+from typing import Annotated, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
@@ -13,7 +13,8 @@ from backend.api.limits import (
     MAX_PROMPT_CHARS,
     MAX_REQUEST_CHARS,
 )
-from backend.core.assist.brief import Brief
+from backend.core.assist.brief import Brief, is_us_patent
+from backend.core.assist.intent import SECTION_NAMES
 
 MAX_NAME_CHARS = 60
 MAX_ROLE_LABEL_CHARS = 40
@@ -439,6 +440,85 @@ class AssistChatRequest(_Strict):
         total = len(self.question) + sum(len(t.content) for t in self.history)
         if total > MAX_REQUEST_CHARS:
             raise ValueError(f"history and question must total at most {MAX_REQUEST_CHARS} characters")
+        return self
+
+
+ASSIST_MAX_CONVERSATION_TURNS = 2 * ASSIST_MAX_HISTORY_TURNS + 2  # a full history plus the last question and answer
+ASSIST_MAX_REASON_CHARS = 500
+MAX_DURATION_MS = 86_400_000  # one day
+_QUESTION_ID_RE = re.compile(r"[A-Za-z0-9-]{1,36}", re.ASCII)
+
+DurationMs = Annotated[int, Field(strict=True, ge=0, le=MAX_DURATION_MS)]
+
+
+class AssistPageViewRequest(_Strict):
+    """A tracker heartbeat. `bounce` is accepted for the extension's sake but the server recomputes it."""
+
+    session_id: str
+    patent_number: str
+    dwell_ms: DurationMs
+    sections: dict[str, DurationMs] = Field(default_factory=dict)
+    bounce: bool = False
+
+    @field_validator("session_id")
+    @classmethod
+    def _session_id_shape(cls, value: str) -> str:
+        if _SESSION_ID_RE.fullmatch(value) is None:
+            raise ValueError("must be 8-64 characters: letters, digits and hyphens")
+        return value
+
+    @field_validator("patent_number")
+    @classmethod
+    def _us_patent_only(cls, value: str) -> str:
+        if not is_us_patent(value):
+            raise ValueError("must be a US patent number")
+        return value.strip()
+
+    @field_validator("sections")
+    @classmethod
+    def _known_sections(cls, value: dict[str, int]) -> dict[str, int]:
+        if any(name not in SECTION_NAMES for name in value):
+            raise ValueError("unknown section name")
+        return value
+
+
+class _AssistConversationSignal(_Strict):
+    """Shared by ratings and re-asks: the question it is about, the conversation to flag and the page brief."""
+
+    question_id: str
+    conversation: list[AssistTurn] = Field(max_length=ASSIST_MAX_CONVERSATION_TURNS)
+    brief: Brief
+
+    @field_validator("question_id")
+    @classmethod
+    def _question_id_shape(cls, value: str) -> str:
+        if _QUESTION_ID_RE.fullmatch(value) is None:
+            raise ValueError("must be an id of at most 36 letters, digits and hyphens")
+        return value
+
+    @model_validator(mode="after")
+    def _total_size(self) -> "_AssistConversationSignal":
+        if sum(len(t.content) for t in self.conversation) > MAX_REQUEST_CHARS:
+            raise ValueError(f"conversation must total at most {MAX_REQUEST_CHARS} characters")
+        return self
+
+
+class AssistRatingRequest(_AssistConversationSignal):
+    rating: Literal["up", "down", "no_answer"]
+    reason: str | None = Field(default=None, max_length=ASSIST_MAX_REASON_CHARS)
+
+    @model_validator(mode="after")
+    def _flagged_rating_needs_a_conversation(self) -> "AssistRatingRequest":
+        if self.rating != "up" and not self.conversation:
+            raise ValueError("a flagged rating needs the conversation")
+        return self
+
+
+class AssistReaskRequest(_AssistConversationSignal):
+    @model_validator(mode="after")
+    def _needs_a_conversation(self) -> "AssistReaskRequest":
+        if not self.conversation:
+            raise ValueError("a re-ask needs the conversation")
         return self
 
 

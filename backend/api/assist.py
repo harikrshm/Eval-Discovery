@@ -1,21 +1,37 @@
-"""Patent Assist chat API: the one key-authenticated endpoint the Chrome extension calls.
+"""Patent Assist API: the key-authenticated endpoints the Chrome extension calls (chat and its signals).
 
 Auth is a shared secret (env ASSIST_KEY, header X-Assist-Key), not a workspace token. ASSIST_KEY is
 stripped of surrounding whitespace before use (a blank value counts as unset), so configure it without any. The flow, in order:
 auth -> request validation -> rate limits -> assist agent lookup -> US check -> intent -> law excerpts ->
 prompt assembly -> model call -> answer checks -> store the question (and flag a bad answer) -> respond.
+
+The signal endpoints (page-views, ratings, reasks) are write-only: they answer 204 and never read data back.
+Their flow is auth -> request validation -> rate limits -> assist agent lookup -> write.
 """
 
 import hmac
 import logging
 import os
 
-from fastapi import APIRouter, Depends, Header, HTTPException, Request
+from fastapi import APIRouter, Depends, Header, HTTPException, Request, Response
 from sqlalchemy.orm import Session
 
 from backend.api.agents import CHAT_MAX_TOKENS
-from backend.api.limits import MAX_ASSISTANT_MESSAGE_CHARS, rate_limit_assist_session, rate_limit_llm
-from backend.api.schemas import AssistChatRequest, AssistChatResponse, CitationCheckOut
+from backend.api.limits import (
+    MAX_ASSISTANT_MESSAGE_CHARS,
+    rate_limit_assist_heartbeat,
+    rate_limit_assist_session,
+    rate_limit_assist_signals,
+    rate_limit_llm,
+)
+from backend.api.schemas import (
+    AssistChatRequest,
+    AssistChatResponse,
+    AssistPageViewRequest,
+    AssistRatingRequest,
+    AssistReaskRequest,
+    CitationCheckOut,
+)
 from backend.core.assist import ASSIST_MODEL
 from backend.core.assist.assemble import NOT_US_ANSWER, assemble
 from backend.core.assist.brief import is_us_patent
@@ -23,7 +39,17 @@ from backend.core.assist.citations import CitationCheck, check_citations
 from backend.core.assist.intent import Intent, classify_intent, primary_section
 from backend.core.assist.lawpack import NOT_LEGAL_ADVICE, excerpts_for_question
 from backend.db.agents import current_prompt_version
-from backend.db.assist import add_question, get_assist_agent, save_flagged_run
+from backend.db.assist import (
+    add_question,
+    count_runs,
+    get_assist_agent,
+    has_run_for_session,
+    mark_reasked,
+    save_flagged_run,
+    set_rating,
+    upsert_page_view,
+)
+from backend.db.models import Agent, AssistQuestion
 from backend.db.session import get_db
 from backend.groq_client import groq_chat, request_retries
 
@@ -38,6 +64,9 @@ ASSIST_UNAVAILABLE = "The assistant is not available right now."
 CHAT_FAILED = "The assistant could not answer right now. Please try again."
 CITATION_NOTE = "Some citations in this answer could not be verified against the page."
 FLAGGED_SOURCE = "assist"
+MAX_ASSIST_RUNS = 1000  # flagged conversations kept per workspace; past it new sessions are not saved
+QUESTION_NOT_FOUND = "Question not found."
+SESSION_CONFLICT = "This session cannot be updated."
 _REPLY_BUDGET = MAX_ASSISTANT_MESSAGE_CHARS - len(NOT_LEGAL_ADVICE) - len(CITATION_NOTE) - 4
 
 
@@ -129,3 +158,77 @@ def chat(body: AssistChatRequest, request: Request, db: Session = Depends(get_db
             db.rollback()
             logger.warning("Saving the flagged assist run failed", exc_info=True)
     return _response(row.id, answer, intent, version.number, check)
+
+
+@router.post("/page-views", status_code=204, dependencies=[Depends(require_assist_key)])
+def page_view(body: AssistPageViewRequest, request: Request, db: Session = Depends(get_db)) -> Response:
+    # The per-IP limiter goes first so a rejected caller cannot create session keys.
+    rate_limit_assist_signals(request)
+    rate_limit_assist_heartbeat(body.session_id)
+    agent, workspace = _assist_agent_or_503(db)
+    try:
+        # bounce=None: the server decides from the merged values; the client's own flag is ignored.
+        upsert_page_view(
+            db, workspace.id, body.session_id, body.patent_number, body.dwell_ms, body.sections,
+            None, current_prompt_version(agent).number, "live",
+        )
+    except LookupError:
+        raise HTTPException(status_code=409, detail=SESSION_CONFLICT) from None
+    return Response(status_code=204)
+
+
+@router.post("/ratings", status_code=204, dependencies=[Depends(require_assist_key)])
+def rating(body: AssistRatingRequest, request: Request, db: Session = Depends(get_db)) -> Response:
+    rate_limit_assist_signals(request)
+    agent, workspace = _assist_agent_or_503(db)
+    question = _question_or_404(db, workspace.id, body.question_id)
+    reason = (body.reason or "").strip() or None
+    set_rating(db, question.id, body.rating, reason)
+    if body.rating != "up":
+        _flag_conversation(db, agent, question, body)
+    return Response(status_code=204)
+
+
+@router.post("/reasks", status_code=204, dependencies=[Depends(require_assist_key)])
+def reask(body: AssistReaskRequest, request: Request, db: Session = Depends(get_db)) -> Response:
+    rate_limit_assist_signals(request)
+    agent, workspace = _assist_agent_or_503(db)
+    question = _question_or_404(db, workspace.id, body.question_id)
+    mark_reasked(db, question.id)
+    _flag_conversation(db, agent, question, body)
+    return Response(status_code=204)
+
+
+def _assist_agent_or_503(db: Session):
+    try:
+        return get_assist_agent(db)
+    except LookupError:
+        raise HTTPException(status_code=503, detail=ASSIST_UNAVAILABLE) from None
+
+
+def _question_or_404(db: Session, workspace_id: str, question_id: str) -> AssistQuestion:
+    """The question, only when it belongs to the assist workspace (one fixed 404 for every miss)."""
+    question = db.get(AssistQuestion, question_id)
+    if question is None or question.workspace_id != workspace_id:
+        raise HTTPException(status_code=404, detail=QUESTION_NOT_FOUND)
+    return question
+
+
+def _flag_conversation(db: Session, agent: Agent, question: AssistQuestion, body) -> None:
+    """Save the conversation as the question's session run. The run belongs to the STORED session.
+
+    A new session is skipped once the workspace holds MAX_ASSIST_RUNS runs; the signal is still recorded.
+    A failed save never fails the call (the rating or re-ask is already stored).
+    """
+    try:
+        if count_runs(db, agent) >= MAX_ASSIST_RUNS and not has_run_for_session(db, agent, question.session_id):
+            logger.warning("Assist flagged-run cap reached; conversation not saved")
+            return
+        save_flagged_run(
+            db, agent, question.session_id,
+            messages=[turn.model_dump() for turn in body.conversation],
+            brief=body.brief, source=FLAGGED_SOURCE,
+        )
+    except Exception:
+        db.rollback()
+        logger.warning("Saving the flagged assist run failed", exc_info=True)

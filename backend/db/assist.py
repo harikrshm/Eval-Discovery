@@ -32,6 +32,17 @@ def get_assist_agent(db: Session) -> tuple[Agent, Workspace]:
     return agent, workspace
 
 
+BOUNCE_MAX_DWELL_MS = 10_000
+BOUNCE_ENGAGED_SECTION_MS = 3_000
+
+
+def is_bounce(dwell_ms: int, sections: dict) -> bool:
+    """A bounce is a short visit (under 10 s) in which no section was visible for 3 s or more."""
+    return dwell_ms < BOUNCE_MAX_DWELL_MS and not any(
+        ms >= BOUNCE_ENGAGED_SECTION_MS for ms in sections.values()
+    )
+
+
 def upsert_page_view(
     db: Session,
     workspace_id: str,
@@ -39,12 +50,17 @@ def upsert_page_view(
     patent_number: str,
     dwell_ms: int,
     sections: dict,
-    bounce: bool,
+    bounce: bool | None,
     assist_version: int | None,
     source: str,
     started_at: datetime | None = None,
 ) -> AssistPageView:
-    """Create the page view for a session, or update it (keeping `started_at`) when it exists."""
+    """Create the page view for a session, or merge into it (keeping `started_at`) when it exists.
+
+    A heartbeat only ever raises what is stored: `dwell_ms` and each section's `visible_ms` become the
+    larger of the stored and incoming value, and a section missing from the incoming call keeps its
+    stored value. `bounce=None` derives it from the merged values (see `is_bounce`); a bool is stored as given.
+    """
     for attempt in (1, 2):
         try:
             view = db.get(AssistPageView, session_id)
@@ -57,8 +73,8 @@ def upsert_page_view(
                     started_at=started_at or now,
                     updated_at=now,
                     dwell_ms=dwell_ms,
-                    sections=sections,
-                    bounce=bounce,
+                    sections=dict(sections),
+                    bounce=is_bounce(dwell_ms, sections) if bounce is None else bounce,
                     source=source,
                     assist_version=assist_version,
                 )
@@ -68,9 +84,13 @@ def upsert_page_view(
                     raise LookupError(session_id)  # a session id never moves between workspaces
                 view.patent_number = patent_number
                 view.updated_at = now
-                view.dwell_ms = dwell_ms
-                view.sections = sections
-                view.bounce = bounce
+                merged_dwell = max(view.dwell_ms or 0, dwell_ms)
+                merged = dict(view.sections or {})
+                for name, ms in sections.items():
+                    merged[name] = max(merged.get(name, 0), ms)
+                view.dwell_ms = merged_dwell
+                view.sections = merged  # a new dict, so the JSON column registers the change
+                view.bounce = is_bounce(merged_dwell, merged) if bounce is None else bounce
                 view.source = source
                 view.assist_version = assist_version
             db.commit()
@@ -189,3 +209,11 @@ def save_flagged_run(
             if attempt == 2:
                 raise
     raise AssertionError("unreachable")
+
+
+def count_runs(db: Session, agent: Agent) -> int:
+    return db.scalar(select(func.count()).select_from(Run).where(Run.agent_id == agent.id))
+
+
+def has_run_for_session(db: Session, agent: Agent, session_id: str) -> bool:
+    return db.scalar(select(Run.id).where(Run.agent_id == agent.id, Run.session_id == session_id)) is not None
