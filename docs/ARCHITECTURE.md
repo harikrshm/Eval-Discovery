@@ -402,7 +402,8 @@ sequenceDiagram
         J-->>W: verdict and rationale
         W->>DB: replay result for the candidate version, job done
     end
-    W->>R: reconcile_verifying (at the end of EVERY worker pass, also when idle)
+    Note over W,R: every worker pass ends with reconcile_verifying, also an idle one
+    W->>R: reconcile_verifying
     R->>DB: lock agent row, re-check status is still approved_verifying
     alt every required test has a current replay
         R->>R: decide_promotion (pure code, no LLM)
@@ -417,7 +418,7 @@ sequenceDiagram
     Dev->>API: GET /agents/id/tests and GET /prompt-versions/id/report (polled)
 ```
 
-Reconcile also covers the cases no single job can: a restart between the last replay and the reconcile (the next pass resolves it), a replay job that failed, was discarded (the criterion changed) or was lost, and malformed `verification` data ("Verification could not be completed."). With results still missing, no replay job queued or running and none failed, the candidate waits and fails after 30 minutes ("Verification timed out."). It is idempotent and takes the agent row lock, so overlapping passes cannot resolve a version twice.
+Reconcile also covers the cases no single job can: a restart between the last replay and the reconcile (the next pass resolves it), a replay job that failed, was discarded (the criterion changed) or was lost, and malformed `verification` data ("Verification could not be completed."). With results still missing, no replay job queued or running and none failed or discarded, the candidate fails 30 minutes after approval ("Verification timed out."); a queued or running replay keeps it waiting (a stuck one ends through stale-job recovery), and with the worker disabled nothing resolves it. It is idempotent and takes the agent row lock, so overlapping passes cannot resolve a version twice.
 
 ---
 
@@ -538,7 +539,7 @@ erDiagram
 | `criterion` | `source` is `discovered` or `manual`; `position` orders them. `judge_check` holds the judge sanity-check outcome (`passed`, `good_verdict`, `bad_verdict`); it is null until tests are built and cleared when the definition or examples are edited. `revision` (migration `0003`, default 0) is bumped whenever `definition`, `good_example` or `bad_example` changes; jobs record it when they start and discard their result if it changed. |
 | `event` | Product event log, see [6.5](#65-events). |
 | `test_case` (model `EvalTest`) | One runnable test for a criterion: `role` is `fix` or `heldout` (unique per criterion), `scripted_user_messages` are the saved run's user messages (first 20). `source_run_id` is a plain id, not a foreign key, so there is no second delete path through `run` (null for a generated test). `origin` (migration `0003`, default `run`) is `run` or `generated`. |
-| `test_result` (model `EvalResult`) | A judge verdict (`pass`, `fail`, `not_applicable`) with rationale and the transcript judged. `kind` is `baseline` (the original saved run, stored only for runs that became tests) or `replay`; only replays feed status. `prompt_version_id` is a plain id (no FK). `stale` is set when the criterion's judged fields change. Since `0003` only the latest replay result is kept per test and prompt version (older replays for the same pair are deleted; baselines are untouched). |
+| `test_result` (model `EvalResult`) | A judge verdict (`pass`, `fail`, `not_applicable`) with rationale and the transcript judged. `kind` is `baseline` (the original saved run, stored only for runs that became tests) or `replay`; only replays feed status. `prompt_version_id` is a plain id (no FK). `stale` is set when the criterion's judged fields change. The replay handler keeps only the latest replay result per test and prompt version (it deletes older replays for the same pair when it stores a new one; baselines are untouched, and migration `0003` itself deletes nothing). |
 | `job` | Queue row: `type` (`build_tests`, `replay`, `suggest_fix`, `generate_heldout` or `change_report`), `payload`, `status` (`queued`, `running`, `done`, `failed`), `attempts`, `locked_at`, `result` or a user-safe `error`. Cascades from the workspace. |
 
 ---
@@ -609,7 +610,7 @@ A minimal product event log records `agent_created`, `run_saved`, `loop_detected
 | Criteria per agent | 30 |
 | Prompt versions per agent | 20 counted (every version except `rejected` and `failed_verification`), and a hard cap of 60 rows including those. A manual edit or restore beyond either gets a 429 "Prompt version limit reached for this agent."; a suggestion that hits it fails its job with the same message |
 | Open candidates per agent | 1 (`proposed` or `approved_verifying`; a second suggestion fails with "A fix is already proposed or being verified.") |
-| While a fix verifies | Manual prompt edit, restore, a second approval, suggest fix and edits to a criterion's `definition`, `good_example` or `bad_example` get a 409 "A fix is being verified. Wait for it to finish." (a `name` edit is allowed) |
+| While a fix verifies | Manual prompt edit, restore and edits to a criterion's `definition`, `good_example` or `bad_example` get a 409 "A fix is being verified. Wait for it to finish." (a `name` edit is allowed), and so does approving another version while one verifies. A second approval of the same version gets 409 "This fix can't be approved in its current state." (it is no longer `proposed`). Suggest fix gets the open-candidate 409 above |
 | Stale draft | `PUT /agents/{id}/prompt` with an optional `base_version_id` that is no longer current gets a 409 "The prompt changed to v{n} while you were editing. Reload the prompt to continue." |
 | Background jobs | 30 started per workspace per hour (429 beyond that; discover still returns the criterion, with `job_id: null`). Exempt: the replay jobs queued by Approve (payload `system: true`) and `change_report` jobs. Suggest fix and generate held-out count |
 | Job queue depth | 100 queued jobs across all workspaces (429 "The test queue is busy" beyond that; run-all is all-or-nothing; discover still returns the criterion, with `job_id: null`). Approve is checked against it before any state changes; the report job queued by reconcile ignores it |
@@ -617,7 +618,7 @@ A minimal product event log records `agent_created`, `run_saved`, `loop_detected
 | Replay length | the first 20 user messages of the saved run |
 | Generated held-out scenario | 2 to 5 messages of at most 2000 characters, up to 3 attempts per job |
 | Suggested prompt | at most 4000 characters (otherwise the job fails) |
-| Verification | resolves within 30 minutes of approval at the latest |
+| Verification | a candidate with missing results and no queued or running replay job fails 30 minutes after approval. A queued or running replay keeps it waiting, and with the worker disabled nothing resolves it |
 | Runs sent to pattern detection | the most recent 10 unchecked |
 | LLM-backed calls | 30 per minute per client, plus a process-wide budget of 600 per minute (`LLM_GLOBAL_PER_MINUTE`). The replay, run-all, build-tests, suggest-fix and generate-heldout enqueue routes spend one of these per accepted request (a dedupe hit that returns an existing job does not). Approve, reject and restore do not |
 | Groq client | 45 s timeout and 2 retries per call |
@@ -695,7 +696,7 @@ Phase 3 folded in four Phase 2 deferrals: M4 (the stale banner now reads "N test
 Calls made in the Phase 3 plan (P1 to P6), the design addendum (section 11) and the review that followed:
 
 - **P1.** The diff is a small in-house line diff (`frontend/src/lib/diff.js`), not a new dependency. Prompts are at most 4000 characters.
-- **P2.** `reconcile_verifying` runs at the end of every worker pass, also when idle, so a restart or a failed job cannot strand a candidate. A candidate unresolved 30 minutes after approval fails ("Verification timed out.").
+- **P2.** `reconcile_verifying` runs at the end of every worker pass, also when idle, so a restart or a failed job cannot strand a candidate. A candidate whose results are still missing 30 minutes after approval fails ("Verification timed out.") only when no replay job for them is queued or running and none failed or was discarded; a running job keeps it waiting until the worker's stale-job recovery ends it. The guarantee holds while the worker runs.
 - **P3.** `verification.required[*].before` records the pre-fix verdict at approval time, so the report's "before" column cannot drift.
 - **P4.** A generated scenario has 2 to 5 messages, so one `generate_heldout` job makes at most 3 x (1 + 5 + 1) = 21 LLM calls.
 - **P5.** `useSession.refreshAgent()` reloads only the agent's prompt fields after a promotion or restore, so the prompt editor never shows stale text.
@@ -745,7 +746,7 @@ Verified on a throwaway real Postgres: migration `0003` applied over populated P
 | `/prompt-versions/{id}/report` | GET | The change report `{version_id, number, status, strength, why, outcome}`; logs `report_viewed` |
 | `/jobs/{id}` | GET | Job status: `{id, type, status, result, error}` |
 
-**Error codes:** `400` nothing or too little to check, `401` unknown or expired token, `404` agent, criterion, test or job not found in this workspace, `409` run-save race, no pattern to build from, tests already exist, a prompt edit whose `base_version_id` is no longer the current version ("The prompt changed to v{n} while you were editing. Reload the prompt to continue."), a candidate action in the wrong state (approve or reject on a version that is not `proposed`, restore of a version that cannot be restored) or "A fix is being verified. Wait for it to finish." (manual edit, restore, second approval, suggest fix or a judged-field criterion edit during verification), `422` invalid input, `429` quota, rate limit, hourly job cap, queue cap or version cap, `502` upstream LLM failure.
+**Error codes:** `400` nothing or too little to check, `401` unknown or expired token, `404` agent, criterion, test or job not found in this workspace, `409` run-save race, no pattern to build from, tests already exist, a prompt edit whose `base_version_id` is no longer the current version ("The prompt changed to v{n} while you were editing. Reload the prompt to continue."), a candidate action in the wrong state (approve or reject on a version that is not `proposed`, restore of a version that cannot be restored), "A fix is already proposed or being verified." (suggest fix while any candidate is open, also a merely proposed one), "This fix can't be approved in its current state." (a second approval) or "A fix is being verified. Wait for it to finish." (manual edit, restore, approving another version, or a judged-field criterion edit while a fix verifies), `422` invalid input, `429` quota, rate limit, hourly job cap, queue cap or version cap, `502` upstream LLM failure.
 
 ---
 
