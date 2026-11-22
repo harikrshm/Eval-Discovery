@@ -340,3 +340,54 @@ def test_a_chat_route_failure_falls_back_to_a_direct_preview():
         AppDriver.chat = original
     assert result.converged and result.path == "fallback"
     assert result.previews == 2  # the failed chat call is not a preview; one failing preview, one rewrite
+
+
+def test_a_failed_save_of_a_passing_run_does_not_undo_convergence():
+    from simulation.appdriver import AppDriver, DriverError
+
+    class AlwaysSafe(FakeGroq):
+        def _agent_chat(self, system):
+            return "I can't promise that, but I can pass this to the billing team."
+
+    original = AppDriver.save_run
+
+    def broken(self, agent_id, transcript):
+        raise DriverError(502, "The run could not be saved.")
+
+    AppDriver.save_run = broken
+    try:
+        with _install(AlwaysSafe(_behavior())):
+            result = run_flywheel(SCENARIO, trial=0)
+    finally:
+        AppDriver.save_run = original
+    assert result.converged is True
+    assert result.previews == 1  # no second preview: the pass was recorded before the save
+    assert any("could not be saved" in note and "pass still counts" in note for note in result.notes)
+    assert not any("Falling back" in note for note in result.notes)
+
+
+def test_a_promoted_fix_whose_next_preview_still_fails_falls_back_and_converges():
+    class ReferenceFailsAfterTheFix(FakeGroq):
+        """The app's own judge works as usual. The reference judge fails the first three previews: the
+        two before the app fix and the first one after it, then behaves normally."""
+
+        reference_calls = 0
+
+        def _judge(self, user: str) -> str:
+            if SCENARIO.goal.name in user:
+                type(self).reference_calls += 1
+                if type(self).reference_calls <= 3:
+                    return json.dumps({"verdict": "fail", "rationale": "The reference goal is not met."})
+            return super()._judge(user)
+
+    ReferenceFailsAfterTheFix.reference_calls = 0
+    fake = ReferenceFailsAfterTheFix(_behavior(rewrites_needed=99))
+    with _install(fake):
+        result = run_flywheel(SCENARIO, trial=0)
+    assert result.converged is True
+    assert result.path == "fallback"
+    assert result.previews == 4  # two failing, one after the promoted fix (still failing), one after a rewrite
+    assert fake.rewrite_calls == 1
+    assert result.final_prompt_changed is True
+    assert "The promoted fix did not pass the reference judge." in result.notes
+    assert "Falling back to manual prompt rewrites." in result.notes

@@ -249,12 +249,21 @@ def _app_loop(state: _State, driver: AppDriver) -> None:
     fix_attempted = False
     while state.previews < state.max_previews:
         outcome = _preview(state, lambda history: driver.chat(agent_id, history))
+        if outcome.passed:
+            # Record the pass first: saving the run is best effort, and a failure to save a passing
+            # run must not undo the convergence (the trial would preview again and lose the pass).
+            state.converged = True
+            if outcome.complete:
+                try:
+                    driver.save_run(agent_id, outcome.transcript)
+                except Exception as exc:
+                    state.notes.append(
+                        f"The passing run could not be saved ({type(exc).__name__}); the pass still counts."
+                    )
+            return
         if outcome.complete:
             driver.save_run(agent_id, outcome.transcript)
             saved_runs += 1
-        if outcome.passed:
-            state.converged = True
-            return
         state.last_failing = outcome.transcript
         if state.previews >= state.max_previews:
             return
