@@ -16,6 +16,7 @@ from backend.db.agents import current_behaviors, current_prompt, get_owned_agent
 from backend.db.events import try_log_event
 from backend.db.models import Agent, Run, Workspace
 from backend.db.session import get_db
+from backend.groq_client import request_retries
 
 logger = logging.getLogger(__name__)
 
@@ -119,7 +120,8 @@ def check_pattern(
         name=agent.name, system_prompt=current_prompt(agent), user_role_label=agent.user_role_label
     )
     try:
-        result = detect_pattern(config, _transcripts(runs))
+        with request_retries(2):
+            result = detect_pattern(config, _transcripts(runs))
     except TranscriptTooShort as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from None
     except PatternCheckFailed:

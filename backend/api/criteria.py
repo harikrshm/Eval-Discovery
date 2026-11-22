@@ -24,6 +24,7 @@ from backend.db.events import try_log_event
 from backend.db.models import Agent, Criterion, Workspace, utcnow
 from backend.db.session import get_db
 from backend.db.testsuite import mark_criterion_results_stale
+from backend.groq_client import request_retries
 from backend.jobs.queue import (
     JOBS_PER_WORKSPACE_PER_HOUR,
     MAX_QUEUED_JOBS,
@@ -101,7 +102,8 @@ def discover(
         name=agent.name, system_prompt=current_prompt(agent), user_role_label=agent.user_role_label
     )
     try:
-        draft = generate_criterion(config, agent.pattern_summary)
+        with request_retries(2):
+            draft = generate_criterion(config, agent.pattern_summary)
     except CriterionGenerationFailed:
         logger.warning("Criterion generation failed", exc_info=True)
         raise HTTPException(status_code=502, detail=GENERATION_FAILED) from None

@@ -36,7 +36,7 @@ from backend.db.agents import (
 from backend.db.events import try_log_event
 from backend.db.models import Agent, Criterion, Run, Workspace
 from backend.db.session import get_db
-from backend.groq_client import groq_chat
+from backend.groq_client import groq_chat, request_retries
 
 logger = logging.getLogger(__name__)
 
@@ -116,7 +116,8 @@ def create(
         _check_agent_quota(db, workspace)
         rate_limit_llm(request)
         try:
-            analysis = analyze_agent(body.system_prompt, body.name)
+            with request_retries(2):
+                analysis = analyze_agent(body.system_prompt, body.name)
             label = body.user_role_label
             if label is None:
                 label = sanitize_label(analysis.user_role_label, MAX_ROLE_LABEL_CHARS)
@@ -180,7 +181,8 @@ def chat(
     system = current_prompt(agent)
     messages = [m.model_dump() for m in body.messages]
     try:
-        reply = groq_chat(system, messages, max_tokens=CHAT_MAX_TOKENS)
+        with request_retries(2):
+            reply = groq_chat(system, messages, max_tokens=CHAT_MAX_TOKENS)
     except Exception:
         logger.warning("Agent chat failed", exc_info=True)
         raise HTTPException(status_code=502, detail=CHAT_FAILED) from None
