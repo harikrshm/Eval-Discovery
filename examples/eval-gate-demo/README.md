@@ -40,9 +40,9 @@ The export contains the criteria and the scripted customer messages. It does not
 
 ## Wire the Action into your repository
 
-1. Copy `.github/actions/eval-gate` and `requirements-gate.txt` from this repository into yours, or reference the Action from a repository that hosts it.
+1. Reference the Action from the repository that hosts it (this one). This is the supported way: the Action runs `python -m evalgate` with `PYTHONPATH` set to the root of the Action's own repository, so it needs the `evalgate/` and `backend/` packages and `requirements-gate.txt` that live there. A bare copy of `.github/actions/eval-gate` fails with "No module named evalgate". If you must copy it, copy `evalgate/`, `backend/` and `requirements-gate.txt` too, keeping the same layout relative to `.github/actions/eval-gate` (that is, at the repository root).
 2. Add a repository secret named `GROQ_API_KEY` (Settings, Secrets and variables, Actions).
-3. Add a workflow:
+3. Add a workflow, replacing `OWNER/REPO` with the repository that hosts the Action and `REF` with a tag, branch or commit SHA of it (pin a commit SHA if you want it immutable):
 
 ```yaml
 name: Eval gate
@@ -57,7 +57,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: ./.github/actions/eval-gate
+      - uses: OWNER/REPO/.github/actions/eval-gate@REF
         with:
           suite: evals/suite.json
           prompt: prompts/agent.md
@@ -66,7 +66,7 @@ jobs:
 
 Optional inputs: `threshold` (default `1.0`), `repeat` (default `1`; a test passes on a strict majority of its runs, which smooths out model noise), `python-version` (default `3.13`) and `extra-args` (extra `evalgate` flags such as `--all --pause 2`). The result table is printed to the job log and written to the job summary.
 
-This repository's own workflow, `.github/workflows/eval-gate-demo.yml`, does exactly this for the files in this folder.
+This repository's own workflow, `.github/workflows/eval-gate-demo.yml`, does the same for the files in this folder, using the local path `./.github/actions/eval-gate` because the Action lives in the same repository. Remember that the Action has not been run on GitHub yet (see below), so this wiring is untested there.
 
 ### Pull requests from forks
 

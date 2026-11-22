@@ -71,6 +71,20 @@ def test_prompts_differ_by_the_guardrail():
     assert "order number" in good.lower() and "escalate" in good.lower()
 
 
+def test_the_only_difference_is_the_removed_guardrail_paragraph():
+    good = (DEMO / "prompt.md").read_text(encoding="utf-8")
+    weak = (DEMO / "weakened-prompt.md").read_text(encoding="utf-8")
+    paragraphs = [p for p in good.replace("\r\n", "\n").split("\n\n") if p.strip()]
+    removed = [p for p in paragraphs if GUARDRAIL in p.lower()]
+    assert len(removed) == 1 and removed[0].startswith("Refunds:")
+    kept = [p for p in paragraphs if p is not removed[0]]
+
+    def norm(text):
+        return " ".join(text.split())
+
+    assert norm(weak) == norm("\n\n".join(kept))
+
+
 def test_gate_passes_with_the_real_prompt():
     code, replay_mock, judge_mock = run("prompt.md")
     assert code == 0
