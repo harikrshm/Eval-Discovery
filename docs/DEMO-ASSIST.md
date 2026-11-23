@@ -1,6 +1,6 @@
 # Demo script: Patent Assist
 
-A three-minute talk track for Patent Assist, the assistant that lives inside a product's own page (Google Patents) and improves through the Eval Discovery loop behind a human gate. Offer it as **"here is the loop, and here is the evidence the console shows"**. Do not offer it as "watch the answer get better": the code cannot guarantee that, and a real run with a real Groq key for Patent Assist is still pending (see below).
+A three-minute talk track for Patent Assist, the assistant that lives inside a product's own page (Google Patents) and improves through the Eval Discovery loop behind a human gate. Offer it as **"here is the loop, and here is the evidence the console shows"**. Do not offer it as "watch the answer get better": the code cannot guarantee that, and the one real run with a real Groq key (2026-11-23) did not show the flywheel improving the assistant (see below).
 
 Three minutes is the **target**, reached only by staging the slow parts beforehand (see [Staging](#staging-the-slow-parts)). The live version has never been timed, and the Evolution steps start background jobs that each take real model calls.
 
@@ -12,7 +12,8 @@ Say these things about the state of the work, before or during the demo, whichev
 - **The extension checklist has not been run.** `extension/CHECKLIST.md` is for the author to run in real Chrome, and it is marked NOT RUN. Everything the extension does on live Google Patents pages is verified only against four saved, trimmed pages and in jsdom. If you have not run the checklist yourself, you are the first person to see this in real Chrome, so rehearse.
 - **The imported data is a demo dataset.** The page views and questions in the Adoption tab come from `examples/assist/page_views.example.jsonl` (12 page views, 17 questions, 5 flagged conversations), which the author wrote by hand. The console labels it "demo dataset". It is not usage, and the version comparison deliberately ignores it.
 - **Nothing is pushed or deployed.** This runs locally, on the branch `feat/patent-assist`.
-- **The real run is pending.** The pipeline is built and tested with faked model calls. Whether a flagged conversation really goes through discover, tests, suggest, approve, verify and promote with a real model, and what that shows, is reported separately. Do not claim the flywheel improves Patent Assist answers. The Phase 4 simulation did not show the loop reducing preview runs, and that story is unchanged.
+- **One real run was made, on 2026-11-23, and the fixes after it were not re-run.** 14 chat calls with the real Groq models on 3 trimmed fixture pages (not live Google Patents). My judgement of the first 12 answers, before the fixes: 5 correct, 1 mostly correct, 3 partly correct, 3 wrong (list and table answers: cited-by, prior art, CPC codes). The extractor matched its committed expected output. The flywheel did not improve the assistant: the discovery path found a pattern about legal-opinion refusals in imported demo runs whose tests already passed, so it suggested no fix, and the manual-criterion path produced a v2 that failed verification for a judge-blind-spot reason that was then fixed but not re-verified. The insights brief failed its own grounding check. The defects were fixed afterwards and are covered by offline tests only. **A second real run after the fixes has not been done.** Do not claim the flywheel improves Patent Assist answers. The Phase 4 simulation did not show the loop reducing preview runs, and that story is unchanged.
+- **Not exercised in the real run:** a 429 from the provider and adversarial input (injection).
 - **Frontend focus behaviour and the cross-tab behaviour** of the console (a second tab following connect and disconnect) are checked only in jsdom, not in a real browser. Keep to one tab.
 
 ## Setup checklist
@@ -89,7 +90,7 @@ On the free tier the 120B model allows about 8000 tokens per minute (the extensi
 ### The backend is down
 
 - The widget shows "The assistant could not answer right now. Please try again." with **Retry**; the page is unaffected. The console shows "Couldn't load the console: ...". Start the backend (`uvicorn backend.main:app`), click **Retry** in the widget and **Refresh data** in the console.
-- If it will not start, you can still show what runs offline: `python scripts/import_page_views.py examples/assist/page_views.example.jsonl --dry-run` (no database needed; it prints "12 page views, 17 questions, 5 flagged conversations"), `npx vitest run` in `extension/` (342 tests), and the architecture section [docs/ARCHITECTURE.md, section 10](ARCHITECTURE.md#10-patent-assist). Say plainly that the live demo was not available.
+- If it will not start, you can still show what runs offline: `python scripts/import_page_views.py examples/assist/page_views.example.jsonl --dry-run` (no database needed; it prints "12 page views, 17 questions, 5 flagged conversations"), `npx vitest run` in `extension/` (347 tests), and the architecture section [docs/ARCHITECTURE.md, section 10](ARCHITECTURE.md#10-patent-assist). Say plainly that the live demo was not available.
 
 ### Smaller problems
 
@@ -101,6 +102,9 @@ On the free tier the 120B model allows about 8000 tokens per minute (the extensi
 
 Models vary from run to run. Do not hide it.
 
+- **A list answer is wrong or partial** (cited-by, prior art, CPC codes). This was the weakest area in the real run. The slice fitting was fixed afterwards and not re-run with the real model, so say "a list can be cut to fit and the assistant is told, but I have not re-verified it with the real model" and open the page's own section.
+- **Two near-identical questions get different answers.** Seen in the real run (a wrong and a right answer on one page). Known and not fixed; say so.
+- **The insights brief says its figures could not be matched, or that it was cut off.** The grounding check is best effort and the brief is flagged when the model stops early; say that, and read the figures against the counts shown.
 - **The assistant gives a verdict on a legal question, or leaves out the fixed sentence.** The sentence is appended by code for the intents the keyword rules catch, but a phrasing the rules miss depends on the model. Say so, and say it is a known limitation of keyword rules.
 - **A cited claim is wrong or unsupported.** The check catches claim numbers and law ids that do not exist in what the model was given. It does not check whether a correct citation supports the point.
 - **No pattern is found, or the discovered criterion is not the one you expected.** The criterion is a model's reading of the flagged conversations, and the panel lets you edit it. Say: "Discovery proposes, I decide."
@@ -111,7 +115,7 @@ Models vary from run to run. Do not hide it.
 
 | You can say | You cannot say |
 |-------------|----------------|
-| The pipeline is built and tested with faked model calls | The flywheel improves Patent Assist answers (a real run is pending) |
+| The pipeline is built and tested with faked model calls, and was run once with real models (2026-11-23), which found defects that were then fixed and tested offline only | The flywheel improves Patent Assist answers (the one real run did not show it, and the fixes were not re-run with a real model) |
 | The console shows counts, rates and a replay table, and labels demo data as such | The Adoption numbers are real usage, or that imported data measures an improvement |
 | A human approves every change, and promotion is a code-written rule | The assistant evolves on its own |
 | The law pack is a draft the author must review | The law pack is correct or reviewed |
