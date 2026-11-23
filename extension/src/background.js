@@ -20,7 +20,6 @@ const TIMEOUT_MS = 60000
 // nothing legitimate comes near this; a bigger one is not forwarded.
 export const MAX_PAYLOAD_CHARS = 1_000_000
 const CONTENT_ORIGIN = 'https://patents.google.com'
-const CONTENT_PATH = '/patent/'
 
 const isPlainObject = (v) => v !== null && typeof v === 'object' && !Array.isArray(v)
 
@@ -77,13 +76,17 @@ export function createMessageHandler({ key, origin, fetchFn = (...a) => fetch(..
   }
 }
 
-/** True when the sender is a page of https://patents.google.com/patent/... (where the content script runs). */
+/**
+ * True when the sender is a page of https://patents.google.com (origin only). The path is deliberately not
+ * checked: a patent view that ends by navigating to another page of the site flushes its final heartbeat after
+ * the URL has changed, and that message must still be forwarded.
+ */
 export function isPatentPageSender(sender) {
   const raw = sender && (sender.url || (sender.tab && sender.tab.url))
   if (typeof raw !== 'string') return false
   try {
     const u = new URL(raw)
-    return u.origin === CONTENT_ORIGIN && u.pathname.startsWith(CONTENT_PATH)
+    return u.origin === CONTENT_ORIGIN
   } catch {
     return false
   }
@@ -91,7 +94,7 @@ export function isPatentPageSender(sender) {
 
 /**
  * Register the onMessage listener. Only messages from this extension are answered, and of those only
- * the ones sent from a Google Patents patent page (the content script); any other sender of this
+ * the ones sent from a page of https://patents.google.com (the content script); any other sender of this
  * extension gets one fixed error and nothing is forwarded.
  */
 export function registerListener(chromeApi, handle) {

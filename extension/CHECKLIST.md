@@ -192,3 +192,4 @@ Heartbeats are sent by the service worker, so they appear in the worker's DevToo
 | J9 | The real backend accepts heartbeats (integers only; the schema was read, not called) | Heartbeats rejected with 422 | F1, F6 |
 | J10 | The 429 path and answer quality from the model | Not exercised | S9, B4 |
 | J11 | The database check command (the here-string piped to `python -` in PowerShell 5.1, under the Setup section) has never been run | The check fails or prints nothing; C4, D3 and F6 cannot be confirmed | C4, D3, F6 |
+| J12 | The service worker accepts any `patents.google.com` sender, so the final heartbeat of a patent view must still arrive when leaving for the search page, and `sender.url` after an SPA pushState must be the last committed URL | The quickest visits (bounces) are not recorded, or the worker answers 403 | F4, F6 |

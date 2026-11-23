@@ -188,7 +188,11 @@ describe('sender check (M8)', () => {
   it.each([
     [{ id: 'ext-id', url: 'https://patents.google.com/patent/US1B2/en' }],
     [{ id: 'ext-id', tab: { url: 'https://patents.google.com/patent/US1B2/en' } }],
-  ])('answers a content script on a patent page: %j', (sender) => {
+    // N1: the final flush of a patent view can arrive after the tab has moved on to another page of the site
+    [{ id: 'ext-id', url: 'https://patents.google.com/?q=x' }],
+    [{ id: 'ext-id', url: 'https://patents.google.com/' }],
+    [{ id: 'ext-id', tab: { url: 'https://patents.google.com/?q=widgets&oq=widgets' } }],
+  ])('answers the content script of this extension on any patents.google.com page: %j', (sender) => {
     const { ret, handle } = call(sender)
     expect(ret).toBe(true)
     expect(handle).toHaveBeenCalledTimes(1)
@@ -196,15 +200,33 @@ describe('sender check (M8)', () => {
   it.each([
     [{ id: 'ext-id' }],
     [{ id: 'ext-id', url: 'chrome-extension://ext-id/popup.html' }],
-    [{ id: 'ext-id', url: 'https://patents.google.com/?q=x' }],
     [{ id: 'ext-id', url: 'https://patents.google.com.evil.example/patent/US1B2/en' }],
     [{ id: 'ext-id', url: 'http://patents.google.com/patent/US1B2/en' }],
     [{ id: 'ext-id', url: 'https://example.com/patent/US1B2/en' }],
+    [{ id: 'ext-id', tab: {} }],
+    [{ id: 'ext-id', tab: { url: 'https://example.com/' } }],
     [{ id: 'ext-id', url: 'not a url' }],
   ])('rejects other senders of the extension with one fixed error and forwards nothing: %j', (sender) => {
     const { ret, handle, sendResponse } = call(sender)
     expect(ret).toBe(false)
     expect(handle).not.toHaveBeenCalled()
     expect(sendResponse).toHaveBeenCalledWith({ ok: false, status: 403, message: MESSAGES.badRequest })
+  })
+})
+
+describe('final flush from a non-patent page (N1)', () => {
+  it('is forwarded: a page_view message whose sender url is the search page reaches the backend', async () => {
+    const listeners = []
+    const chrome = { runtime: { id: 'ext-id', onMessage: { addListener: (fn) => listeners.push(fn) } } }
+    const fetchFn = vi.fn(async () => new Response(null, { status: 204 }))
+    registerListener(chrome, handler(fetchFn))
+    const sendResponse = vi.fn()
+    const payload = { session_id: 'sess-1234-abcd', patent_number: 'US10000000B2', dwell_ms: 4200, sections: {}, bounce: true }
+    const ret = listeners[0]({ type: 'page_view', payload }, { id: 'ext-id', url: 'https://patents.google.com/?q=widgets' }, sendResponse)
+    expect(ret).toBe(true)
+    await new Promise((r) => setTimeout(r, 0))
+    expect(fetchFn).toHaveBeenCalledTimes(1)
+    expect(JSON.parse(fetchFn.mock.calls[0][1].body)).toEqual(payload)
+    expect(sendResponse).toHaveBeenCalledWith({ ok: true })
   })
 })
