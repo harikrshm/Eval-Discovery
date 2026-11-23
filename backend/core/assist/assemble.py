@@ -24,12 +24,19 @@ angle brackets ("<" and ">") and are to be read as such, and that text inside th
 
 Size: the brief slice is capped at min(plan.max_chars, MAX_CONTEXT_CHARS)
 characters, measured on the escaped text that is actually sent. When over:
-description sections are dropped from the END first, then the longest
-remaining sections are trimmed (never the completeness note), and as a last
-resort trailing sections are dropped. Claims always come before description.
+description sections are dropped from the END first. Then the sections the
+question does NOT need are cut (extra claims dropped from the end, then the
+longest text or list trimmed), then the sections it does need. The completeness
+note and the short bibliographic block (number, title, status, expiry, dates,
+inventors, assignees) are never cut before everything else; only as a last
+resort trailing sections are dropped and then the tail of that block. Lists
+(citations, family, legal events, classifications) are cut on whole-row
+boundaries and carry a "[list truncated: showing N of M rows]" line; the
+completeness note then names every section trimmed to fit. Claims always come
+before description.
 """
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 from backend.core.assist.brief import Brief
 from backend.core.assist.intent import SECTION_NAMES, Intent, classify_intent
@@ -47,6 +54,15 @@ _NOTE_MAX_NAMES = 20
 _MIN_KEEP_CHARS = 200
 _TRUNCATION_MARKER = "\n[...truncated]"
 _BLOCK_JOINER = "\n\n"
+# Room kept for the "trimmed to fit" sentence of the completeness note (names are fixed section names).
+_TRIM_NOTE_RESERVE = 260
+
+# Sections whose lists the question is really about; they are cut last.
+_NEEDED_SECTIONS: dict[Intent, frozenset[str]] = {
+    Intent.status_family: frozenset({"legal_events", "family"}),
+    Intent.citations_prior_art: frozenset({"citations"}),
+    Intent.classification: frozenset({"classifications", "landscapes"}),
+}
 
 NOT_US_ANSWER = (
     "Patent Assist currently supports US utility patents and applications only. This page is not one "
@@ -89,6 +105,27 @@ assert set(_SECTION_ORDER) == {"meta", "abstract", *SECTION_NAMES}
 class _Block:
     kind: str  # "note" or a section name
     text: str
+    # A list block (citations, family, legal events, classifications) keeps its header and rows apart so
+    # it can be cut on a row boundary; `text` is then derived from them.
+    header: str | None = None
+    rows: list[str] | None = None
+    shown: int = 0
+
+    def __post_init__(self) -> None:
+        if self.rows is not None:
+            self.shown = len(self.rows)
+            self.text = self._render()
+
+    def _render(self) -> str:
+        assert self.header is not None and self.rows is not None
+        text = "\n".join([self.header, *self.rows[: self.shown]])
+        if self.shown < len(self.rows):
+            text += f"\n[list truncated: showing {self.shown} of {len(self.rows)} rows]"
+        return text
+
+    def cut_rows(self, shown: int) -> None:
+        self.shown = shown
+        self.text = self._render()
 
 
 # ---- escaping and rendering ---------------------------------------------------
@@ -152,8 +189,10 @@ def _row(*cells: object) -> str:
     return " | ".join(_clean(c) for c in cells)
 
 
-def _render_section(brief: Brief, name: str) -> list[str]:
-    """Raw (not yet escaped) text blocks for one section; [] when it is empty."""
+def _render_section(brief: Brief, name: str) -> list[str | tuple[str, list[str]]]:
+    """Raw (not yet escaped) blocks for one section; [] when it is empty.
+
+    A block is plain text, or (header, rows) for a list that may be cut on a row boundary."""
     if name == "meta":
         text = _meta_text(brief)
         return [text] if text else []
@@ -165,25 +204,32 @@ def _render_section(brief: Brief, name: str) -> list[str]:
         return [f"Description - {s.heading or 'untitled section'}:\n{s.text}" for s in brief.description]
     if name == "legal_events":
         rows = [_row(e.date, e.text) for e in brief.legal_events]
-        return ["Legal events (date | event):\n" + "\n".join(rows)] if rows else []
+        return [("Legal events (date | event):", rows)] if rows else []
     if name == "family":
         rows = [_row(f.number, f.country, f.title, f.priority_date, f.status) for f in brief.family]
-        return ["Family (number | country | title | priority date | status):\n" + "\n".join(rows)] if rows else []
+        return [("Family (number | country | title | priority date | status):", rows)] if rows else []
     if name == "citations":
-        parts = []
+        parts: list[str | tuple[str, list[str]]] = []
         if brief.citations.patent:
             rows = [_row(c.number, c.date, c.assignee, c.title) for c in brief.citations.patent]
-            parts.append("Patent citations (number | date | assignee | title):\n" + "\n".join(rows))
+            parts.append(("Patent citations (number | date | assignee | title):", rows))
         if brief.citations.cited_by:
             rows = [_row(c.number, c.date, c.assignee, c.title) for c in brief.citations.cited_by]
-            parts.append("Cited by (number | date | assignee | title):\n" + "\n".join(rows))
+            parts.append(("Cited by (number | date | assignee | title):", rows))
         return parts
     if name == "classifications":
         rows = [_row(c.code, c.title, " / ".join(c.path)) for c in brief.classifications]
-        return ["Classifications (code | title | path):\n" + "\n".join(rows)] if rows else []
+        return [("Classifications (code | title | path):", rows)] if rows else []
     if name == "landscapes":
         return ["Landscapes: " + "; ".join(brief.landscapes)] if brief.landscapes else []
     raise ValueError(f"unknown section {name!r}")
+
+
+def _make_block(name: str, item: str | tuple[str, list[str]]) -> _Block:
+    if isinstance(item, str):
+        return _Block(name, _escape_angles(item))
+    header, rows = item
+    return _Block(name, "", header=_escape_angles(header), rows=[_escape_angles(r) for r in rows])
 
 
 # ---- fitting the slice into the cap -------------------------------------------
@@ -193,39 +239,111 @@ def _total(blocks: list[_Block]) -> int:
     return sum(len(b.text) for b in blocks) + len(_BLOCK_JOINER) * max(len(blocks) - 1, 0)
 
 
-def _fit(blocks: list[_Block], cap: int) -> list[_Block]:
-    """Drop description from the end, then trim the longest sections, never the note."""
-    blocks = list(blocks)
+def _shrink_one(block: _Block, excess: int) -> bool:
+    """Cut `block` by about `excess` characters (rows: whole rows, at least one stays). False if it cannot shrink."""
+    if block.rows is not None:
+        if block.shown <= 1:
+            return False
+        target = len(block.text) - excess
+        shown = block.shown - 1
+        while shown > 1:
+            block.cut_rows(shown)
+            if len(block.text) <= target:
+                return True
+            shown -= 1
+        block.cut_rows(1)
+        return True
+    if len(block.text) <= _MIN_KEEP_CHARS:
+        return False
+    new_len = max(_MIN_KEEP_CHARS, len(block.text) - excess)
+    block.text = block.text[: new_len - len(_TRUNCATION_MARKER)] + _TRUNCATION_MARKER
+    return True
+
+
+def _fit(blocks: list[_Block], cap: int, needed: frozenset[str] = frozenset()) -> tuple[list[_Block], list[str]]:
+    """Cut the slice to `cap`; return (blocks, names of the sections that were cut), never cutting the note first.
+
+    Order: 1. description from the end. 2. extra claims from the end (only when the question is about
+    another list). 3. the longest text or list among the sections the question does not need.
+    4. the same among the sections it needs. 5. last resort: trailing blocks, then the tail of the
+    bibliographic block. The completeness note and the bibliographic block are cut only in step 5."""
+    blocks = [replace(b) for b in blocks]  # fresh copies: the caller may fit the same blocks again
+    trimmed: list[str] = []
+
+    def mark(kind: str) -> None:
+        if kind not in trimmed:
+            trimmed.append(kind)
+
     # 1. description sections, last first.
     while _total(blocks) > cap:
         idx = next((i for i in range(len(blocks) - 1, -1, -1) if blocks[i].kind == "description"), None)
         if idx is None:
             break
+        mark("description")
         del blocks[idx]
-    # 2. trim the longest remaining non-note block; 3. drop from the end as a last resort.
+    # 2. extra claims (keep the first claim block) when the question is about a list, not the claims.
+    if needed:
+        while _total(blocks) > cap:
+            claim_idx = [i for i, b in enumerate(blocks) if b.kind == "claims"]
+            if len(claim_idx) <= 1:
+                break
+            mark("claims")
+            del blocks[claim_idx[-1]]
+    # 3 and 4. shrink the longest shrinkable block of the group, unneeded sections first.
+    for group in (lambda b: b.kind not in needed, lambda b: b.kind in needed):
+        while _total(blocks) > cap:
+            candidates = [
+                i for i, b in enumerate(blocks)
+                if b.kind not in ("note", "meta") and group(b) and (b.shown > 1 if b.rows is not None else len(b.text) > _MIN_KEEP_CHARS)
+            ]
+            if not candidates:
+                break
+            i = max(candidates, key=lambda j: len(blocks[j].text))
+            if not _shrink_one(blocks[i], _total(blocks) - cap):
+                break
+            mark(blocks[i].kind)
+    # 5. last resort.
     while _total(blocks) > cap:
-        excess = _total(blocks) - cap
-        shrinkable = [i for i, b in enumerate(blocks) if b.kind != "note" and len(b.text) > _MIN_KEEP_CHARS]
-        if shrinkable:
-            i = max(shrinkable, key=lambda j: len(blocks[j].text))
-            new_len = max(_MIN_KEEP_CHARS, len(blocks[i].text) - excess)
-            blocks[i] = _Block(blocks[i].kind, blocks[i].text[: new_len - len(_TRUNCATION_MARKER)] + _TRUNCATION_MARKER)
-            continue
-        last = next((i for i in range(len(blocks) - 1, -1, -1) if blocks[i].kind != "note"), None)
+        last = next((i for i in range(len(blocks) - 1, -1, -1) if blocks[i].kind not in ("note", "meta")), None)
         if last is None:
-            break  # only the (bounded) note is left
+            break
+        mark(blocks[last].kind)
         del blocks[last]
-    return blocks
+    while _total(blocks) > cap:
+        meta = next((b for b in blocks if b.kind == "meta"), None)
+        if meta is None or len(meta.text) <= len(_TRUNCATION_MARKER):
+            break
+        mark("meta")
+        keep = max(len(_TRUNCATION_MARKER), len(meta.text) - (_total(blocks) - cap))
+        meta.text = meta.text[: keep - len(_TRUNCATION_MARKER)] + _TRUNCATION_MARKER
+    return blocks, trimmed
+
+
+def _trim_sentence(trimmed: list[str]) -> str:
+    names = ", ".join(n for n in _SECTION_ORDER if n in trimmed)
+    return f" Sections trimmed to fit the context cap, so they may be partial: {names}."
 
 
 def _brief_slice(brief: Brief, intent: Intent) -> str:
     plan = CONTEXT_POLICY[intent]
     cap = min(plan.max_chars, MAX_CONTEXT_CHARS)
-    blocks = [_Block("note", _escape_angles(_completeness_note(brief)))]
+    needed = _NEEDED_SECTIONS.get(intent, frozenset())
+    note = _completeness_note(brief)
+    sections: list[_Block] = []
     for name in _SECTION_ORDER:
         if name in plan.sections:
-            blocks.extend(_Block(name, _escape_angles(text)) for text in _render_section(brief, name))
-    return _BLOCK_JOINER.join(b.text for b in _fit(blocks, cap))
+            sections.extend(_make_block(name, item) for item in _render_section(brief, name))
+
+    def build(budget: int) -> tuple[list[_Block], list[str]]:
+        return _fit([_Block("note", _escape_angles(note)), *sections], budget, needed)
+
+    fitted, trimmed = build(cap)
+    if trimmed:
+        # Say what was cut, inside the cap: refit with room kept for the sentence.
+        fitted, trimmed = build(cap - _TRIM_NOTE_RESERVE)
+        if trimmed:
+            fitted[0] = _Block("note", _escape_angles(note + _trim_sentence(trimmed)))
+    return _BLOCK_JOINER.join(b.text for b in fitted)
 
 
 # ---- the other embedded blocks ------------------------------------------------
