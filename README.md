@@ -13,6 +13,7 @@ Helps voice-agent builders break out of the preview run loop by generating eval 
 7. **Test your fix** (Phase 2, see [below](#phase-2-tests)): discovered criteria become replayable tests, you edit the agent's prompt, and **Run all tests** shows whether the agent now passes.
 8. **Let the evaluator fix the prompt** (Phase 3, see [below](#phase-3-evolve)): from a failing test the app suggests a prompt change and explains why, you read the diff and approve, and the change goes live only after it passes the fix test, a held-out test and every previously passing test. Any version can be restored, and a chip says how many criteria pass.
 9. **Take the suite to CI** (Phase 4, see [below](#phase-4-ship)): export the saved tests, and a command-line gate replays them against your prompt file in your own pipeline and fails the check if a behavior you had fixed regresses.
+10. **Put the assistant inside a product's own page** (Patent Assist, see [below](#patent-assist)): a Chrome extension answers questions about the US patent page you are reading on Google Patents, signals about how the page is used reach a console, and flagged answers go through the same discover, test, fix, approve, verify loop, with the same human gate. The pipeline is built and tested; the result of a real run is reported separately (pending).
 
 Everything is saved server-side in an anonymous workspace, so a reload or a return visit picks up where you left off.
 
@@ -256,11 +257,94 @@ The stale-fix message now reads "That fix is based on an older prompt. Reject it
 
 A 401 mid-poll that can create an empty workspace, sliding expiry for workspace tokens, deleting a single agent, `passive_deletes` on the new relationships, picking a saved run for a manual criterion or writing a held-out test by hand, editing a candidate by hand (reject it and use the prompt editor), candidate replay jobs shown under per-test keys, queue fairness of the exempt verification fan-out, the UI poll horizon versus the server timeout, and the suite endpoint's many small queries.
 
+## Patent Assist
+
+Patent Assist applies the flywheel to an assistant that lives **inside a product's own page**, the way a built-in assistant lives inside the tool it explains. The demo target is Google Patents: a Chrome extension answers questions about the US patent page you are reading, in plain language, grounded in that page and a small law pack. Signals about how the page is used (not how the widget is used) feed a console for the product builder, and answers that went wrong are saved as conversations the existing loop can turn into a criterion, tests and a prompt fix, behind the same human approval. It is a portfolio demo of one workflow, not a product. The design is in [docs/superpowers/specs/2026-11-22-patent-assist-design.md](docs/superpowers/specs/2026-11-22-patent-assist-design.md); the architecture, the privacy rules and the decisions are in [docs/ARCHITECTURE.md, section 10](docs/ARCHITECTURE.md#10-patent-assist); the three-minute demo script is [docs/DEMO-ASSIST.md](docs/DEMO-ASSIST.md).
+
+**Read this first.**
+
+- **The law pack is a draft.** The 12 provisions in `backend/core/assist/lawpack/*.md` are short summaries written from general knowledge of 35 U.S.C. and the MPEP, each marked `status: draft`. They are not statute text, nobody with legal training has reviewed them, and **they stay a draft until the author reviews them**. Do not show answers that cite them as legal information.
+- **The extension checklist has not been run.** [extension/CHECKLIST.md](extension/CHECKLIST.md) is for the author to run in real Chrome, and its status line says NOT RUN. The extension's behaviour on live Google Patents pages is verified only against four saved, trimmed pages and in jsdom. Nothing has been loaded into real Chrome by the build.
+- **Imported page-view data is a demo dataset.** The example file and anything you import carry `source: "imported"`. The console labels it "demo dataset", and imported data is never counted as a measured effect of an evolved prompt: the version comparison uses live, non-imported questions only.
+- **Nothing is pushed or deployed.** The work is on the local branch `feat/patent-assist`.
+- **No claim that the flywheel improves Patent Assist answers.** The pipeline is built and tested with faked model calls. A real run with a real Groq key (three saved pages, two flagged conversations, then discover, tests, suggest, approve, verify and promote on the assistant agent) is **pending**, and its result will be reported separately, whatever it shows. The Phase 4 simulation, which did not show the loop reducing preview runs, is described above and is unchanged.
+
+### What it does
+
+1. **Ask.** On a US patent page (`https://patents.google.com/patent/...`) the extension adds a **Patent Assist** button. The panel has a text box and three chips that are simply pre-filled questions ("Explain claim 1", "What do these CPC codes mean?", "Is this still in force?"). Text you select on the page is written into the question ("Explain this passage: ..."), so a question is always one plain string. A non-US page gets "Patent Assist works on US patents only." and no request.
+2. **Answer.** The extension builds a **brief** from the page (number, title, dates, legal status, inventors and assignees, classifications, abstract, description sections, claims with a dependency tree, citations, family, legal events) and sends it with the question. The backend classifies the question's intent by keyword rules, picks the brief sections and law excerpts that intent needs, and makes one model call with the current system prompt version. A deterministic check then verifies that every claim number the answer cites exists in the brief and every `[usc-...]` or `[mpep-...]` id was among the excerpts provided; otherwise the answer carries "Some citations in this answer could not be verified against the page." A question that asks for a validity, infringement or freedom-to-operate conclusion is never answered with one: the answer explains what the claims say and ends with "This is not legal advice, and I can't judge validity or infringement." Keyword rules plus the system prompt are the safeguard, so a rephrasing the rules miss depends on the model following its prompt.
+3. **Rate.** Each answer has Helpful, Not helpful and Didn't answer my question buttons and an optional reason. Asking the same intent again within 90 seconds of an answer counts as a re-ask.
+4. **Signals.** While the tab is visible the extension sends a page-view heartbeat about every 15 seconds: dwell time and, for seven sections (claims, description, classifications, citations, family, legal events, landscapes), how long each was visible. A section counts as viewed after 3 seconds; a visit under 10 seconds with no viewed section is a bounce (computed by the server).
+5. **Console.** The **Assist console** button in the app header takes the demo workspace token and shows two tabs. **Adoption**: feature coverage, help demand per section, task mix, struggle signals (navigation questions, re-ask rate, refusals, unverified citations), an insights brief written by a model from those aggregates, a version comparison of re-ask and thumbs-down rates from live questions only, and the flagged conversations behind each hotspot. **Evolution**: the existing flywheel screens for the assistant agent (check flagged conversations for a pattern, Discover evals, tests, suggest fix, diff, approve, verify, version history).
+6. **Evolve.** A thumbs-down, a "didn't answer", a re-ask or a failed citation check saves the conversation, with a snapshot of its brief, as a flagged run. From there the Phase 1 to 3 loop runs on the assistant's **system prompt** only. The law pack, the code that extracts the page and the context policy (which brief sections each intent sees) do not evolve.
+
+### Setup
+
+The backend and database steps are the same as in [Setup](#setup) above; run them first (`alembic upgrade head` now also applies migrations `0004` and `0005`). Use one `DATABASE_URL` for every command below.
+
+1. **Create the demo workspace and the assistant agent** (one time, no model call):
+
+        python scripts/setup_assist.py
+
+   It prints the workspace token **once** (only its hash is stored), the agent id and the `.env` lines to add. The workspace is created with a 10-year expiry so the 30-day purge never reaches it. A second run refuses unless you pass `--force`.
+
+2. **Backend `.env`** (names as in `.env.example`; never commit the file):
+
+   | Variable | Meaning |
+   |----------|---------|
+   | `ASSIST_AGENT_ID` | The agent id the setup script printed |
+   | `ASSIST_KEY` | A long random secret you choose, with no surrounding whitespace. The extension sends it in the `X-Assist-Key` header; the backend compares it in constant time. Without it every `/assist` call from the extension returns 503 |
+   | `GROQ_API_KEY` | As before; answers need it |
+
+   Then start the backend as usual (`uvicorn backend.main:app --reload`).
+
+3. **Build the extension and load it unpacked.** The key and the backend origin are read at build time from the process environment, so set them in the shell that runs the build:
+
+        cd extension
+        npm install
+        # PowerShell: $env:VITE_ASSIST_KEY="<the same value as ASSIST_KEY>"; $env:VITE_BACKEND_ORIGIN="http://127.0.0.1:8000"
+        # bash:       export VITE_ASSIST_KEY=...; export VITE_BACKEND_ORIGIN=http://127.0.0.1:8000
+        npm run build
+
+   `VITE_BACKEND_ORIGIN` defaults to `http://127.0.0.1:8000` and must be a bare origin (scheme, host, optional port; a path or a wildcard fails the build). In Chrome open `chrome://extensions`, turn on Developer mode, click **Load unpacked** and choose `extension/dist`. After every rebuild, reload the extension and the patent tab. **The key is compiled into `dist/background.js`**, so anyone who has the built extension has the key: that is acceptable for a local, load-unpacked demo and not for distributing the extension (see the privacy section of the architecture document). A build without a key still succeeds, and the extension then answers "Assist is not configured.". The full manual procedure, with its checks, is [extension/CHECKLIST.md](extension/CHECKLIST.md).
+
+4. **Import the example data** into the demo workspace (12 page views, 17 questions, 5 flagged conversations over three US patents; the format is in [docs/assist-import-format.md](docs/assist-import-format.md)):
+
+        python scripts/import_page_views.py examples/assist/page_views.example.jsonl --dry-run
+        python scripts/import_page_views.py examples/assist/page_views.example.jsonl
+
+   The import is all-or-nothing, labels every row `imported`, and never calls a model. Re-importing the same file updates the same sessions.
+
+5. **Open the console.** Run the frontend (`cd frontend && npm run dev`), open http://localhost:5173, click **Assist console** in the header and paste the workspace token from step 1. While connected, the console replaces the chat app on that browser (it uses the demo workspace); **Disconnect** restores your own workspace.
+
+The assist routes have their own limits, in addition to the 30 LLM-backed calls per minute per client and the process-wide budget the chat route also spends: 30 questions per session per hour, 600 heartbeats per session per hour (and 300 per minute per client), 30 ratings and re-asks per minute per client, and 5 console insight requests per minute per client. Replies are capped at 3000 tokens (`CHAT_MAX_TOKENS`) and 16000 characters. The assistant answers with `openai/gpt-oss-20b` (`ASSIST_MODEL`, which is `MODEL_CHAT`; switching to the 120B model is a one-line change in `backend/core/assist/__init__.py`, not yet judged on real answers). The console's insights brief uses `openai/gpt-oss-120b`. On Groq's free tier the 120B model is limited to about 8000 tokens per minute (see [Phase 3](#phase-3-evolve)); wait between questions, or set `GROQ_TPM_LIMIT` (for example `7000`) so the backend paces itself.
+
+### What was verified, and what was not
+
+**Verified (run in the development environment, on this branch):**
+
+- `python -m pytest -q`: 2239 passed, 24 skipped in 3 minutes 17 seconds. Every model call in these tests is faked. The 24 skipped tests are the real-Postgres suite (`tests/pg`), which is skipped without `TEST_DATABASE_URL`; it passed (24 tests, including migrations `0004` and `0005`) on a local Docker Postgres when the migrations were added, and was not re-run for the documentation commit.
+- Extension: `npx vitest run` in `extension/`: 312 tests in 12 files passed (the extractor against four saved pages, the session and route handling, the tracker, the widget, the service worker, the build and key-placement checks, all in jsdom); `npm run build` succeeds.
+- Frontend: `npm test` 506 tests in 29 files passed, `npm run lint` reports no problems, `npm run build` succeeds.
+- The importer's `--dry-run` on the example file reports 12 page views, 17 questions and 5 flagged conversations.
+
+**Not verified:**
+
+- **A real Groq run for Patent Assist is pending.** No answer quality, intent accuracy, grounding or refusal behaviour has been measured with a real model, and no flagged conversation has gone through discover, tests, suggest, approve, verify and promote with a real model. Do not read the passing tests as evidence that answers improve.
+- **Real Chrome.** The extension has not been loaded into Chrome by the build. [extension/CHECKLIST.md](extension/CHECKLIST.md) lists the likeliest failures (messaging between the content script and the service worker, the closed shadow root's focus handling, the `?raw` CSS import, a host permission with a port, section timing with `IntersectionObserver`, the final heartbeat on `pagehide`); the author runs it and records the results.
+- **Google Patents may have changed.** The extractor was written against four pages saved from the author's browser (EP4517554A1, US12401720B1, US20250119367A1, US6756997B1; the checklist records the build as 2026-11-06). If the live layout has changed since, the brief can come back incomplete, and the completeness map then tells the assistant which parts are missing. The selectors were not rechecked against live pages afterwards.
+- **The law pack's legal accuracy.** It is an unreviewed draft (above). A reviewer pass during the build corrected some wording, and that is not a substitute for the author's review.
+- **Frontend focus behaviour and cross-tab `storage` events** (the console's focus handling, and the way a second tab follows connect and disconnect) are verified only in jsdom, not in a real browser. Nobody has looked at the console rendered.
+- Everything Phase 4 already lists as not verified (the Action and workflows on GitHub, a Render deploy, several worker processes) still applies.
+
+**Known limitations.** The test builder judges a flagged conversation without the page text when it decides which saved runs fail, while replays are judged with the page, so a baseline verdict and a replay verdict for the same test can disagree. The brief is extracted once when a page view starts; sections that load later are not re-read. A live heartbeat that reuses an imported session id would flip that row's source to live (session ids are random and imported ones start with `demo-`, so this needs a deliberate collision). The insights brief's check that every figure matches the aggregates is best effort, not proof, and the redaction of question samples is regex-based only. The console's adoption numbers include imported rows (labelled), so help demand (questions about a section per 100 non-bounce views in which that section was visible) is computed over live plus imported data, and it can exceed 100.
+
 ## Tests
 
     python -m pytest -q                # backend (SQLite, Groq is mocked; tests/pg skips without TEST_DATABASE_URL)
     cd frontend && npm test            # frontend (Vitest)
     cd frontend && npm run lint && npm run build
+    cd extension && npx vitest run && npm run build    # Patent Assist extension (Vitest, jsdom)
 
 ## Key design notes
 

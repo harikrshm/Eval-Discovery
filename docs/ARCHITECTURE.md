@@ -19,6 +19,7 @@ Today that process is manual and slow. Eval Discovery automates it:
 - (Phase 2) A background job turns the criterion into replayable tests from the developer's own failing runs. The developer edits the agent's prompt, replays the tests against it, and an LLM judge says pass or fail with a rationale
 - (Phase 3) From a failing test the system suggests a prompt fix and explains why. The developer reads the diff and approves, and the candidate goes live only if it passes the fix test, a held-out test and every previously passing test, by a rule written in code. A model-written report explains the result, any version can be restored, and a chip says how many criteria pass
 - (Phase 4) The saved suite can be exported as a versioned JSON file, and a command-line gate (`evalgate`) replays it against a prompt file in the team's own CI and fails the check when a behavior that passed at export starts failing. A simulation harness compares "preview runs until the first judged pass" with and without the loop (its first real-model results, which did not show the loop reducing preview runs, are in [simulation-results.md](simulation-results.md) and summarised in [6.14](#614-phase-4-decisions) and [6.15](#615-verified-and-not-verified-phase-4)), verification now fails as soon as the stored verdicts decide it, and an events script reports acceptance and conversion counts
+- (Patent Assist) The same loop is pointed at an assistant that lives inside a product's own page: a Chrome extension answers questions about a Google Patents page, usage signals reach a console, and flagged answers go through discover, tests, fix, approve and verify. It is built and tested with faked model calls; a real run is pending, and its law pack is a draft. See [10](#10-patent-assist)
 
 **Business Value:**
 - Reduces time-to-rubric from hours of manual analysis to minutes
@@ -1082,4 +1083,216 @@ The first real runs have been made (see [6.15](#615-verified-and-not-verified-ph
 
 ---
 
-*Updated November 2026 for the persisted, agent-ready architecture with saved tests, replay and judging, the evaluator-driven fix loop, and the CI gate, simulation harness and fail-fast verification (Phases 1 to 4). For questions, see the project README or open an issue.*
+## 10. Patent Assist
+
+Patent Assist applies the flywheel to an assistant that lives inside a product's own page. The demo target is Google Patents (US patent pages on `patents.google.com`): a Chrome extension answers questions about the page in front of the reader, signals about how the page is used feed a console for the product builder, and answers that went wrong become conversations the existing loop (discover, test, suggest, approve, verify, promote) works on. The versioned artifact is the assistant's **system prompt**, exactly as for any other agent. The design is in [the Patent Assist spec](superpowers/specs/2026-11-22-patent-assist-design.md) and the task plan in [the plan](superpowers/plans/2026-11-22-patent-assist.md); this section describes what the code on branch `feat/patent-assist` does.
+
+> **Status, stated plainly.**
+> - The law pack (12 provisions in `backend/core/assist/lawpack/*.md`, each `status: draft`) is a **draft until the author reviews it**. It is hand-written summary text, not statute text, and has had no legal review.
+> - [extension/CHECKLIST.md](../extension/CHECKLIST.md) is for the author to run in real Chrome and **has not been run**. The extension's behaviour on live Google Patents pages is verified only against saved fixtures and in jsdom.
+> - Imported page-view data is a **demo dataset**, labelled so in the console, and is never counted as a measured effect of an evolved prompt.
+> - Nothing is pushed or deployed. A real Groq run for Patent Assist is **pending**; this section makes no claim that the flywheel improves Patent Assist answers (see [10.9](#109-verified-and-not-verified-patent-assist)).
+
+### 10.1 Components
+
+```mermaid
+flowchart LR
+    subgraph Chrome["Chrome extension (Manifest V3, load unpacked)"]
+        direction TB
+        CS["Content script (content.js)<br/>session and route handling, brief extractor,<br/>page-view tracker, Shadow DOM widget"]
+        SW["Service worker (background.js)<br/>the only code that calls the backend,<br/>holds the assist key"]
+        CS -->|"chrome.runtime messages"| SW
+    end
+
+    subgraph Backend["FastAPI backend"]
+        direction TB
+        AssistApi["api/assist.py (X-Assist-Key)<br/>POST /assist/chat, /assist/page-views,<br/>/assist/ratings, /assist/reasks"]
+        ConsoleApi["api/assist_console.py (X-Workspace-Token)<br/>GET /assist/console/status, /metrics, /flagged<br/>POST /assist/console/insights"]
+        AssistCore["core/assist/<br/>intent, assemble, lawpack, answer, citations,<br/>evidence, adoption, insights, importing, brief"]
+        Flywheel["Existing flywheel<br/>check-pattern, discover, build tests, replay,<br/>suggest fix, approve, verify, reconcile"]
+    end
+
+    DB[("Database<br/>assist_page_view, assist_question,<br/>run (source assist or imported),<br/>test_case.brief_snapshot")]
+    Groq["Groq API<br/>gpt-oss-20b answers and replays,<br/>gpt-oss-120b judge, suggester, insights"]
+    ConsoleUi["Assist console (React)<br/>Adoption and Evolution tabs"]
+    Importer["scripts/import_page_views.py<br/>examples/assist/page_views.example.jsonl"]
+    Setup["scripts/setup_assist.py<br/>creates the demo workspace and agent"]
+
+    SW -->|"HTTP, X-Assist-Key"| AssistApi
+    AssistApi --> AssistCore
+    AssistApi --> DB
+    AssistApi -->|"one model call per question"| Groq
+    ConsoleUi -->|"HTTP, workspace token"| ConsoleApi
+    ConsoleApi --> AssistCore
+    ConsoleApi --> DB
+    ConsoleApi -->|"insights brief"| Groq
+    ConsoleUi -->|"existing routes"| Flywheel
+    Flywheel --> AssistCore
+    Flywheel --> DB
+    Flywheel --> Groq
+    Importer -->|"source imported"| DB
+    Setup --> DB
+```
+
+| Part | Where | Notes |
+|------|-------|-------|
+| Extractor and session | `extension/src/extractor.js`, `session.js`, `claimrefs.js` | A pure function over the DOM builds the brief (every field optional; a `completeness` map says what was found). Google Patents is a single-page app, so `session.js` starts a **new session** (fresh random id, empty history, freshly extracted brief) on each patent route and starts nothing off `/patent/` routes. It waits until the page's number, title and claims match the URL. The brief is extracted once per session |
+| Widget | `extension/src/widget/` | Shadow DOM overlay; chips are pre-filled questions; a text selection is written into the question text; rating buttons and an optional reason; a re-ask is the same intent within 90 s of the previous answer; a non-US page gets a notice and no request |
+| Tracker | `extension/src/signals.js` | Per-section visible time (a section counts when about 40% of it is visible, or when it fills the middle band of the window), a heartbeat about every 15 s while the tab is visible, whole-number milliseconds only |
+| Service worker | `extension/src/background.js` | Four routes only (chat, rating, reask, page-view); answers with the parsed JSON or a **fixed** error message, never provider or backend text and never the key; 60 s timeout |
+| Assist API | `backend/api/assist.py` | Key check (503 when `ASSIST_KEY` is unset, 401 when wrong, constant-time compare), strict request schemas, rate limits, then the pipeline in 10.2 |
+| Pure core | `backend/core/assist/` | No web, DB or jobs imports. The one answer pipeline is `answer.py` (`build_answer_request`, `finalize_answer`), shared by the chat route and by test replay |
+| Console API | `backend/api/assist_console.py` | Workspace-token auth; responses carry counts, rates, ids and labels, never question or answer text (the insights brief is the one place question samples reach a model) |
+| Console UI | `frontend/src/components/assist/` | `AssistConsole` (connect, two tabs), `AdoptionPanel` (with `InsightsBrief`, `VersionComparison`, `FlaggedList`), `EvolutionPanel` (reuses the existing criteria, tests and change-review components, with explicit "Check flagged conversations for a pattern" and "Discover evals" buttons) |
+| Setup and import | `scripts/setup_assist.py`, `scripts/import_page_views.py`, [assist-import-format.md](assist-import-format.md) | The setup script creates one assistant agent (kind `assist`) in a dedicated workspace that expires in 10 years (`WORKSPACE_TTL`); the importer validates every line before writing anything, in one transaction |
+
+### 10.2 One question: the three knowledge channels
+
+```mermaid
+sequenceDiagram
+    actor User as Reader (Chrome)
+    participant CS as Content script
+    participant SW as Service worker
+    participant API as POST /assist/chat
+    participant Core as core/assist
+    participant DB as Database
+    participant M as Groq (gpt-oss-20b)
+
+    User->>CS: a question, a chip, or selected text plus a question
+    CS->>SW: chat message with session id, brief, history and question
+    SW->>API: HTTP with the X-Assist-Key header
+    API->>API: key check, schema caps, per-client and per-session limits
+    API->>DB: the assist agent and its current prompt version
+    API->>Core: classify_intent, excerpts_for_question, assemble
+    Core-->>API: system prompt plus one tagged user turn
+    API->>M: one model call, at most 3000 tokens
+    M-->>API: raw reply
+    API->>Core: finalize_answer (length cap, not-legal-advice sentence, citation check)
+    API->>DB: assist_question row, and a flagged run when the citation check failed
+    API-->>SW: answer, question_id, intent, assist_version, citation_check
+    SW-->>CS: the answer
+    CS-->>User: the answer with rating buttons
+```
+
+Three channels feed **one model call per question**:
+
+| Channel | What | Changes when |
+|---------|------|--------------|
+| System prompt | Role, answer format, citation rules, the legal-opinion rule (`backend/core/assist/system_prompt.md`, at most 4000 characters like any prompt) | A fix is approved and promoted (the evolving artifact), or the author edits it |
+| Page context, per question | A **slice** of the brief, inside `<page_brief>` in the final user turn | Every question |
+| Law pack, per question | The provisions mapped to the question, inside `<law_excerpts>`, each labelled `[id]` | A human edits the pack |
+
+The order in `/assist/chat`: key check, request validation, the per-client and process-wide LLM limits and the per-session limit, then the agent lookup, then a US-patent check (a non-US number gets the fixed "Patent Assist currently supports US patents only..." answer, stored, with no model call), then **intent** (keyword rules, no model call, first match wins: `legal_opinion_request`, `claim_scope`, `claim_explain`, `status_family`, `citations_prior_art`, `classification`, `law_concept`, `navigation_help`, else `other`), the **slice** (`CONTEXT_POLICY` in `assemble.py`, a fixed table in code, not versioned and not evolved), the **law excerpts**, the model call, and the answer checks.
+
+| Intent | Brief sections in the slice besides `meta`, `abstract` and `claims` | Cap (characters) |
+|--------|--------------------------------------------------------------------|------------------|
+| `claim_explain`, `claim_scope` | description | 12,000 |
+| `other` | description | 8,000 |
+| `status_family` | legal events, family | 8,000 |
+| `citations_prior_art` | citations | 8,000 |
+| `classification` | classifications, landscapes | 6,000 |
+| `law_concept` | none | 6,000 |
+| `navigation_help` | none | 3,000 |
+| `legal_opinion_request` | description, legal events | 12,000 |
+
+When a slice is over its cap (measured on the escaped text actually sent, and never above 14,000), description sections are dropped from the end first, then the longest remaining sections are trimmed, claims come before description, and the completeness note is never cut. The note tells the model which sections were missing from the page so it says so instead of guessing.
+
+**Law pack.** `lawpack.py` loads 12 provisions, each a front-matter file (`id`, `title`, `source`, `status`) plus a plain-language summary of under 1500 characters (a test checks it): `usc-101`, `usc-102`, `usc-103`, `usc-112a`, `usc-112b`, `usc-112f`, `usc-154`, `usc-271`, `mpep-2111`, `mpep-2111-03`, `mpep-2141`, `mpep-2173`. All 12 say `status: draft`. A fixed `INTENT_PROVISIONS` map gives each intent at most 4 ids (for example `claim_scope`: `mpep-2111`, `mpep-2111-03`, `usc-112f`, `usc-112b`; `status_family`: `usc-154`; `law_concept` and `legal_opinion_request` four each; `classification`, `navigation_help` and `other` none), and `excerpts_for_question` puts first the provisions that fixed keyword rules find in the question (indefinite, means for, infringe, comprising, expire, obvious, novel, 101 and so on), then the intent's defaults, at most 4 in all. The question can choose **which** provisions are shown but never what they say. There is no search engine.
+
+**Answer checks** (`answer.py`, `citations.py`, deterministic code). The reply is cut to leave room for two suffixes. For a `legal_opinion_request` the sentence "This is not legal advice, and I can't judge validity or infringement." is appended if the model left it out. The citation check then verifies that every claim number the answer cites ("claim 3", "claims 1-4") exists in the brief and every `[usc-...]` or `[mpep-...]` id was among the excerpts provided; a failure appends "Some citations in this answer could not be verified against the page.", stores `citation_ok = false` and saves the conversation as a flagged run. The check does not judge whether a cited claim supports the point made.
+
+**Trust boundary.** The brief, the question, the history, the law text and the completeness keys are untrusted. `assemble.py` escapes **every** `<` and `>` in them (not only known tags) before placing them in a block, so no tag can form even across two adjacent fields, and the system prompt tells the model that `&lt;` and `&gt;` are escaped angle brackets and that block text is data, never instructions. History is capped at 20 turns (user turns 2000 characters, assistant turns 16,000, 120,000 characters in all).
+
+### 10.3 Data
+
+Migration `0004_assist` adds `agent.kind` (default `general`; `assist` for the assistant), `run.source` (`manual`, `assist` or `imported`), `run.session_id` and `run.brief_snapshot` with a unique `(agent_id, session_id)` (one flagged run per session), `test_case.brief_snapshot`, and two tables that hang off `workspace` with `ON DELETE CASCADE`: `assist_page_view` (one row per session: patent number, dwell, per-section visible milliseconds, bounce, `source`, `assist_version`, upserted by heartbeats with monotonic maximum merging) and `assist_question` (one row per question: text, intent, section focus, answer, rating and reason, re-asked, citation check, `source`, `assist_version`). Migration `0005_pattern_run_ids` adds the nullable `agent.pattern_run_ids`, the runs the stored pattern was found in. Both were written by hand with server defaults so they apply over populated Phase 1 to 4 rows. The rating and re-ask routes stop saving a flagged run for a **new** session once the workspace holds 1000 runs (`MAX_ASSIST_RUNS`; the signal itself is still stored); the importer applies the same cap to a file, and the citation-failure path inside `/assist/chat` does not check it. Neither writes through the run API, so the 50-run cap for manual runs does not apply to them.
+
+### 10.4 Signals and metrics
+
+Signals are about **Google Patents**, not the widget: widget opens and click-through are not measured.
+
+- **Captured, patent pages only, per page view:** a heartbeat (`session_id`, `patent_number`, `dwell_ms`, `sections` for seven names, `bounce`; the server ignores the client's bounce and recomputes it); question events (intent, section focus, text, answer, citation check); rating events (up, down, no answer, with an optional reason of at most 500 characters) and re-asks.
+- **Rules:** a section counts as *viewed* in the metrics after 3 s visible; a bounce is dwell under 10 s with no section at 3 s or more (`core/assist/bounce.py` is the one function the server and the importer use; the extension tracker mirrors the same two thresholds).
+- **Not captured:** search queries, anything outside `/patent/` routes, links that leave the page, scroll depth, copy counts, any identity, any persistent install id.
+- **Metrics** (`core/assist/adoption.py`, pure, a zero denominator gives `null`, never `0`): feature coverage (share of non-bounce views with a section visible for 3 s or more), views by section, help demand (questions about a section per 100 non-bounce views in which it was visible; it counts all questions, including from bounced and imported sessions, so it can exceed 100), task mix (intents), struggle signals (navigation questions, re-ask rate and thumbs-down rate by intent, refusal count which is the count of `legal_opinion_request` questions, unverified-citation rate) and `sources` (live versus imported counts). The adoption numbers **include imported rows**; when any exist the console shows "Data source: demo dataset" with the counts.
+- **Version comparison** (`compute_version_comparison`): re-ask and thumbs-down rates per assistant version and intent, from questions whose `source` is not `imported` only. A version needs at least 10 such questions, and at least two versions must qualify, otherwise the console shows one sentence saying why. This is the only signal-based before/after, and it is not the headline.
+- **Insights brief** (`POST /assist/console/insights`, `core/assist/insights.py`): the 120B model writes a short summary from the aggregates plus at most 3 question samples per hotspot (the top 2 sections by help demand and top 2 intents by re-ask rate, each strictly positive). The route returns the figures it was given (`counts_used`). A best-effort check flags any figure it cannot explain from them (`grounded: false`, shown as "Check these figures..."). The check does not verify that a figure is attached to the right metric, trends or causes, and the redaction of question samples (email addresses, phone-like digit runs) is regex only.
+
+### 10.5 Flagged runs and what each flywheel stage sees
+
+A conversation is **flagged** when a question gets a thumbs-down or "didn't answer" rating, is re-asked, or fails the citation check (a thumbs-up does not flag). The conversation, with a snapshot of its brief, is saved as the session's run (`source` `assist`, or `imported` for the importer). For the assistant agent kind the rest of the loop differs from the general agent in these ways: `check_due` counts only assistant-sourced runs and uses **no keyword prefilter**; pattern detection accepts conversations of **2 turns** (one question and one answer); the Evolution tab has explicit buttons to run the pattern check and Discover, because the console has no chat to trigger them.
+
+| Stage | Sees | Does not see |
+|-------|------|--------------|
+| Pattern check (`check-pattern`) | Transcripts of the newest unchecked runs (at most 10), plus an **evidence summary** per assistant-sourced run | Brief text |
+| Criterion generation (`discover`) | The stored pattern summary plus the evidence summaries of exactly the runs the pattern was found in (`agent.pattern_run_ids`) | Brief text |
+| Test building (`build_tests`) | The most recent saved runs, judged against the criterion; each test stores its source run's **brief snapshot** beside its scripted questions | The page, in this first judging (see the limitations in 10.9) |
+| Replay | The test's questions asked one by one through the same `build_answer_request` and `finalize_answer` as the chat route, with the frozen snapshot, the same law pack and the version's system prompt, at temperature 0 | Anything the live route would not have |
+| Judge (replays, held-out, verification) | The criterion and the transcript, plus the page as plain text: title, number, abstract, **claims first**, then description, at most 9000 characters, angle brackets escaped | The system prompt |
+| Suggester | The current prompt, the criterion, the failing result's rationale and transcript, and the evidence summary of the failing test's source run. It may add a "possible law-pack gap" note to the change report for the author to act on | The held-out test, brief text |
+
+An **evidence summary** (`evidence.py`, at most 1500 characters per question block, at most 2 blocks and 1500 characters per run, at most 10 runs per call) lists the intent, the section focus, which brief sections the intent's slice included, which sections the page reported missing, the citation-check result, the signal reasons, the rating, the assist version and the turn count. It contains no brief, question or answer text, and every name that came from a request is checked against a fixed allowlist (anything else is written as "other"), so no free text passes through it. The transcripts themselves (the questions and answers) do go to the pattern, criterion, judge and suggester models: that is the conversation being analysed.
+
+The headline evidence of improvement is the existing **replay before/after table** (the same tests under the old and the new version), which is measured, and the promotion rule is the same code as before: the fix test, the held-out test and every previously passing test must pass, and a human approves the candidate first. A promoted version is used by the next `/assist/chat` call. What the table can show is limited by the usual caveats: a model judges it, and a replay of a handful of tests is a signal, not proof.
+
+### 10.6 Privacy rules
+
+1. The content script acts only on `https://patents.google.com/patent/<number>`. On any other route it reads, records and sends nothing, and the extension never fetches another page. Its manifest requests host access to `patents.google.com` and the backend origin only (no `tabs` or `storage` permission, and the code uses no extension storage). Whether this holds in real Chrome is on the unrun checklist (D1, F5).
+2. A session is one patent page view: a random id (`crypto.randomUUID`, with a `getRandomValues` fallback), no persistent install id, history kept in the page and sent each turn, nothing carried to the next page.
+3. What the backend stores: the question text and the answer, a rating and its optional reason, the patent number, the session id, per-section visible times, and for flagged conversations the page text of a public patent document as the brief snapshot. Question text is free text, so a reader can type something personal; it is **not redacted at write time**.
+4. Console responses (`status`, `metrics`, `flagged`) contain counts, rates, ids and labels, never question or answer text. The exception is the insights route, which sends up to 3 regex-redacted question samples per hotspot to the model.
+5. The assist key is compared in constant time, never logged and never returned. It is compiled into `dist/background.js` only; a build check (`extension/scripts/check-build-secret.js`, also run by `extension/src/build.test.js`) asserts that it is absent from `content.js` and `manifest.json`. **Anyone who holds the built extension holds the key**, so a key in a distributed extension is not a secret. The mitigations are per-client, per-session and process-wide rate limits, and fixed error text; that is acceptable for a local, load-unpacked demo and would not be for a published extension.
+6. The demo workspace expires after 10 years, and the 30-day purge does not reach it. While the console is connected the chat app, with its "delete my data" control, is unmounted, and the console refuses to delete workspace data.
+7. Imported rows are tagged `source: "imported"`, labelled in the console and never counted as a measured effect.
+
+### 10.7 The console
+
+The **Assist console** button in the app header opens a box for the demo workspace token (the one `scripts/setup_assist.py` printed once). The console first validates the token with `GET /assist/console/status`, then swaps the browser's stored workspace token and agent id for the demo workspace's and backs up the real ones; **Disconnect** restores them. A reload mid-connect restores an interrupted swap, and another tab follows the connected state through the `storage` event. **Adoption** shows the metrics of 10.4, the insights brief, the version comparison and the flagged conversations behind each hotspot; **Evolution** reuses the existing flywheel screens. Imported data carries the "demo dataset" note on every view. Focus handling and the cross-tab behaviour are tested in jsdom only.
+
+### 10.8 Decisions
+
+The task plan records seven decisions of its own (D1 to D7) on top of the decisions in the spec (Google Patents with US pages only; the extension plus new assist endpoints on the current backend; evolution covers the system prompt only, with the context policy a documented stretch goal and the law pack human-curated; signals measure Google Patents, not the widget; patent pages only, one session per page view; no simulation, the author populates demo data; plain HTML charts; no automated browser end-to-end test).
+
+| ID | Decision | Where in the code |
+|----|----------|-------------------|
+| D1 | Dedicated tables `assist_page_view` and `assist_question` instead of the generic event table, because the metrics need per-section and per-intent queries; both carry `source` and `assist_version` | migration `0004`, `backend/db/assist.py` |
+| D2 | Flagged conversations are `run` rows with new columns `source` (`manual`, `assist`, `imported`), `session_id` and `brief_snapshot`, one run per session, upserted | `save_flagged_run` |
+| D3 | The service worker calls the backend with `host_permissions`, so no CORS change is needed; the backend still rate-limits `/assist/*` per session and per client | `extension/manifest.json`, `backend/api/limits.py` |
+| D4 | `ASSIST_MODEL` is a single constant defaulting to `MODEL_CHAT` (`openai/gpt-oss-20b`); switching to the 120B model is a one-line change the author judges on real answers | `backend/core/assist/__init__.py` |
+| D5 | The law pack is drafted from public sources it names and carries `status: draft` until the author reviews it; the assistant claims no more than "summary of" | `backend/core/assist/lawpack/*.md` |
+| D6 | Console access: the author pastes the demo workspace token into a Connect box; the Assist area renders only when connected | `frontend/src/components/assist/ConnectBox.jsx`, `frontend/src/lib/workspace.js` |
+| D7 | The test fixtures are real patent pages saved by the author from their own browser, then trimmed by a script (raw saves are git-ignored; four trimmed fixtures are committed) | `extension/fixtures/`, `extension/scripts/trim-fixture.js` |
+
+### 10.9 Verified and not verified (Patent Assist)
+
+**Verified (run in the development environment):**
+
+- `python -m pytest -q`: 2239 passed, 24 skipped. Every model call is faked. The 24 skipped are the real-Postgres suite; it passed on a local Postgres (including migrations `0004` and `0005`) when the migrations were added and was not re-run for the documentation commit.
+- Extension: 312 tests in 12 files passed under Vitest and jsdom (extractor against four saved pages, session and route handling, tracker, widget, service worker, build and key-placement checks); `npm run build` succeeds.
+- Frontend: 506 tests in 29 files passed, lint reports no problems, the build succeeds.
+- The example import validates (`--dry-run`: 12 page views, 17 questions, 5 flagged conversations).
+
+**Not verified:**
+
+- **A real Groq run for Patent Assist: pending.** No answer quality, intent accuracy or refusal behaviour has been measured with a real model, and no flagged conversation has gone through the loop with a real model. **No claim is made that the flywheel improves answers on Patent Assist.** The Phase 4 simulation, which did not show the loop reducing preview runs (see [3.8](#38-the-simulation-phase-4) and [6.15](#615-verified-and-not-verified-phase-4)), is unchanged and is not evidence about this product either way.
+- **Real Chrome.** `extension/CHECKLIST.md` has not been run. Its section J lists the likeliest failures: messaging between the content script and the service worker, the closed shadow root's focus handling, the `?raw` CSS import, the host permission with a port, `IntersectionObserver` timing and the final heartbeat on `pagehide`.
+- **Google Patents layout changes** after the fixtures were saved (the checklist notes the build as 2026-11-06). The selectors were not re-verified against live pages.
+- **The law pack's legal accuracy.** Draft, unreviewed by the author.
+- **Frontend focus behaviour and cross-tab `storage` events** are verified only in jsdom, not in a real browser.
+
+**Known limitations at this commit:**
+
+- `build_tests` judges the saved runs without the page text, while replays are judged with it, so a baseline verdict and a replay verdict for the same test can disagree.
+- The brief is extracted once per session; sections that load later are not re-read.
+- A live heartbeat that reuses an imported session id would flip that row's source to live (`upsert_page_view` sets `source`); imported ids start with `demo-` and live ids are random UUIDs, so this needs a deliberate collision.
+- Intent and the legal-opinion refusal rest on keyword rules plus the system prompt's backstop, so a phrasing neither catches depends on the model following its prompt.
+- The per-session limiter can be sidestepped by rotating session ids; the per-client and process-wide limiters are the backstop.
+- The unverified-citation check cannot tell whether a correctly cited claim supports the point.
+
+### 10.10 Deferred
+
+Evolving the context policy (which slices per intent; a documented stretch goal), non-US patents, search-results pages, memory across pages, streaming answers, `evalgate` gating of the assistant, Chrome Web Store publication and an automated browser end-to-end test.
+
+---
+
+*Updated November 2026 for the persisted, agent-ready architecture with saved tests, replay and judging, the evaluator-driven fix loop, and the CI gate, simulation harness and fail-fast verification (Phases 1 to 4), and the Patent Assist extension, console and assistant agent (section 10, built and tested with faked model calls; a real run is pending). For questions, see the project README or open an issue.*
