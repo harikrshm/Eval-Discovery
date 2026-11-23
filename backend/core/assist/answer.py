@@ -87,13 +87,108 @@ def finalize_answer(
     return answer, check
 
 
+# The short facts (status, expiry, dates, assignees) and each list the judge may need get a reserved share
+# of the cap, so a long claim set can never push them out. Together they take at most half of the cap.
+_FACT_CAPS = {"bibliographic": 800, "classifications": 1200, "legal_events": 800, "family": 600, "citations": 1000}
+_FACT_CUT = "[truncated]"
+_ROWS_PER_CITATION_LIST = 10
+
+
+def _cut_whole_entities(text: str, limit: int) -> str:
+    """`text` cut to at most `limit` characters without splitting a "&lt;" or "&gt;" entity."""
+    head = text[:limit]
+    amp = head.rfind("&")
+    if amp >= len(head) - 3 and ";" not in head[amp:]:
+        head = head[:amp]
+    return head
+
+
+def _rows_section(header: str, rows: list[str], budget: int) -> str:
+    """`header` plus whole rows that fit in `budget` (rows are already escaped); "[truncated]" when some do not."""
+    if not rows:
+        return ""
+    full = "\n".join([header, *rows])
+    if len(full) <= budget:
+        return full
+    kept: list[str] = []
+    used = len(header) + 1 + len(_FACT_CUT)  # the marker is always there once rows are left out
+    for row in rows:
+        if used + 1 + len(row) > budget:
+            break
+        kept.append(row)
+        used += 1 + len(row)
+    text = "\n".join([header, *kept, _FACT_CUT])
+    return text if len(text) <= budget else ""
+
+
+def _fact_sections(brief: Brief, total_budget: int) -> list[str]:
+    """Escaped fact blocks in priority order: status and dates, classifications, events, family, citations."""
+    esc = _escape_angles
+    out: list[str] = []
+    remaining = total_budget
+
+    def add(text: str) -> None:
+        nonlocal remaining
+        if text and len(text) + 2 <= remaining:
+            out.append(text)
+            remaining -= len(text) + 2
+
+    lines = [
+        f"Status: {brief.status}" if brief.status else "",
+        f"Expiry: {brief.expiry}" if brief.expiry else "",
+        "Dates: " + "; ".join(f"{k}={v}" for k, v in brief.dates.items()) if brief.dates else "",
+        "Assignees: " + "; ".join(brief.assignees) if brief.assignees else "",
+    ]
+    lines = [esc(line) for line in lines if line]
+    if lines:
+        text = "\n".join(lines)
+        if len(text) > min(_FACT_CAPS["bibliographic"], remaining):
+            limit = min(_FACT_CAPS["bibliographic"], remaining) - len(_FACT_CUT) - 1
+            text = _cut_whole_entities(text, max(limit, 0)) + "\n" + _FACT_CUT
+        add(text)
+
+    def section(name: str, header: str, rows: list[str]) -> None:
+        add(_rows_section(esc(header), [esc(r) for r in rows], min(_FACT_CAPS[name], remaining - 2)))
+
+    section("classifications", "Classifications (code | title):",
+            [" | ".join(x for x in (c.code, c.title or "") if x) for c in brief.classifications])
+    section("legal_events", "Legal events (date | event):", [f"{e.date or ''} | {e.text or ''}" for e in brief.legal_events])
+    section("family", "Family (number | country | title | priority date | status):",
+            [" | ".join(f or "" for f in (r.number, r.country, r.title, r.priority_date, r.status)) for r in brief.family])
+    cite_parts: list[str] = []
+    for label, rows in (("Patent citations", brief.citations.patent), ("Cited by", brief.citations.cited_by)):
+        if rows:
+            rendered = [" | ".join(f or "" for f in (c.number, c.date, c.assignee, c.title)) for c in rows]
+            cite_parts.append((label, rendered))
+    if cite_parts:
+        share = max(min(_FACT_CAPS["citations"], remaining - 2) // len(cite_parts), 0)
+        texts = [
+            _rows_section(esc(f"{label}: {len(rows)}"), [esc(r) for r in rows[:_ROWS_PER_CITATION_LIST]], share)
+            for label, rows in cite_parts
+        ]
+        # fewer rows shown than exist is a cut as well, even when every shown row fit
+        texts = [
+            t if len(rows) <= _ROWS_PER_CITATION_LIST or t.endswith(_FACT_CUT) or not t else t + "\n" + _FACT_CUT
+            for t, (_, rows) in zip(texts, cite_parts)
+        ]
+        add("\n".join(t for t in texts if t))
+    return out
+
+
 def judge_brief_text(brief: Brief) -> str:
-    """The brief as plain text for the judge: title, number, abstract, claims, then the description.
+    """The brief as plain text for the judge: title, number, abstract, claims, then the description, then facts.
+
+    The facts a grounded answer can rest on are kept in a reserved share of the cap (at most half), in
+    this priority order: status, expiry, dates and assignees; classifications (code and title); legal
+    events; family; citations (counts and the first rows). A fact section that does not fit ends with
+    "[truncated]" and is cut on whole rows. The rest (claims first) gets the remaining space.
 
     Every "<" and ">" is escaped here (the judge prompt builder escapes again, which changes nothing), and
     the cap applies to the ESCAPED text: at most JUDGE_BRIEF_CHARS characters as the judge will receive
-    them, cut so that no "&lt;" or "&gt;" is split. When cut, the text ends with a marker.
+    them, cut so that no "&lt;" or "&gt;" is split. When the main text is cut, it ends with a marker.
     """
+    facts = _fact_sections(brief, JUDGE_BRIEF_CHARS // 2)
+    facts_text = "\n\n".join(facts)
     parts = []
     if brief.title:
         parts.append(f"Title: {brief.title}")
@@ -103,10 +198,7 @@ def judge_brief_text(brief: Brief) -> str:
     parts.extend(f"Claim {claim.number}: {claim.text}" for claim in brief.claims)
     parts.extend(f"Description - {section.heading or 'untitled section'}:\n{section.text}" for section in brief.description)
     text = _escape_angles("\n\n".join(parts))
-    if len(text) <= JUDGE_BRIEF_CHARS:
-        return text
-    head = text[: JUDGE_BRIEF_CHARS - len(_TRUNCATION_MARKER)]
-    amp = head.rfind("&")
-    if amp >= len(head) - 3 and ";" not in head[amp:]:  # the cut fell inside an entity: drop the partial one
-        head = head[:amp]
-    return head + _TRUNCATION_MARKER
+    budget = JUDGE_BRIEF_CHARS - (len(facts_text) + 2 if facts_text else 0)
+    if len(text) > budget:
+        text = _cut_whole_entities(text, budget - len(_TRUNCATION_MARKER)) + _TRUNCATION_MARKER
+    return text + ("\n\n" + facts_text if facts_text else "")

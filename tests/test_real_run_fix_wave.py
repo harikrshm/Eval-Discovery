@@ -198,3 +198,82 @@ def test_r3_system_prompt_tells_the_model_not_to_name_its_tags():
         encoding="utf-8"
     )
     assert "Never mention these block names" in prompt
+
+
+# ---- R4: the judge sees the facts the answer was built from -----------------------------------------
+
+from backend.core.assist.answer import JUDGE_BRIEF_CHARS, judge_brief_text  # noqa: E402
+
+
+def _judge_brief(**extra) -> Brief:
+    data = {
+        "patent_number": "US20250119367A1",
+        "title": "Unique id generation for sensors",
+        "abstract": "Systems and methods.",
+        "status": "Pending",
+        "expiry": "2040-01-01",
+        "assignees": ["Cisco Technology Inc"],
+        "claims": [{"number": 1, "text": "A method comprising a hypervisor.", "depends_on": [], "independent": True}],
+        "classifications": [
+            {"code": "G06F9/45558", "title": "Hypervisor-specific management and integration aspects", "path": ["G", "G06F"]},
+            {"code": "H04L9/32", "title": "Authentication"},
+        ],
+        "legal_events": [{"date": "2025-04-10", "text": "Publication of US20250119367A1"}],
+        "family": [{"number": "US20250119367A1", "country": "US", "status": "Pending"}],
+        "citations": {
+            "patent": [{"number": "US111", "title": "Older hypervisor"}],
+            "cited_by": [{"number": f"US9{n:06d}", "title": f"Newer {n}"} for n in range(5)],
+        },
+        "completeness": {"claims": True},
+    }
+    data.update(extra)
+    return Brief.model_validate(data)
+
+
+def test_r4_judge_text_carries_classifications_status_events_family_and_citations():
+    text = judge_brief_text(_judge_brief())
+    assert "G06F9/45558" in text and "Hypervisor-specific management and integration aspects" in text
+    assert "Status: Pending" in text and "Expiry: 2040-01-01" in text
+    assert "Publication of US20250119367A1" in text
+    assert "US20250119367A1 | US" in text  # a family row
+    assert "Cited by: 5" in text and "Patent citations: 1" in text  # counts
+    assert "US9000000" in text and "Older hypervisor" in text  # the first rows
+
+
+def test_r4_a_correct_cpc_answer_can_be_checked_against_the_judge_input():
+    # the false failure of the real run: a long claim set used to leave no room for the classifications
+    claims = [{"number": n, "text": f"C{n} " + "w" * 3000, "depends_on": [], "independent": True} for n in range(1, 8)]
+    text = judge_brief_text(_judge_brief(claims=claims))
+    assert "G06F9/45558" in text and "Hypervisor-specific management" in text
+    assert "Claim 1:" in text  # claims still come first
+    assert len(text) <= JUDGE_BRIEF_CHARS
+
+
+def test_r4_hostile_input_stays_under_the_cap_with_no_angle_brackets_or_half_entities():
+    evil = "<>" * 25
+    big = lambda n: [{"number": f"US{n}{i}", "date": evil, "assignee": evil, "title": evil} for i in range(300)]  # noqa: E731
+    brief = _judge_brief(
+        title="<>" * 250, abstract=evil * 20,
+        classifications=[{"code": f"G06F{i}", "title": evil, "path": [evil] * 5} for i in range(300)],
+        legal_events=[{"date": evil, "text": evil} for _ in range(300)],
+        family=[{"number": evil, "country": evil, "title": evil, "priority_date": evil, "status": evil} for _ in range(300)],
+        citations={"patent": big(1), "cited_by": big(2)},
+        claims=[{"number": n, "text": evil * 40, "depends_on": [], "independent": True} for n in range(1, 60)],
+        description=[{"heading": evil, "text": evil * 100} for _ in range(10)],
+    )
+    text = judge_brief_text(brief)
+    assert len(text) <= JUDGE_BRIEF_CHARS
+    assert "<" not in text and ">" not in text
+    # no entity is split anywhere: every "&" opens a whole &lt; or &gt;
+    assert re.sub(r"&(?:lt|gt);", "", text).count("&") == 0
+    assert "[truncated]" in text  # a cut section says so
+    assert "Claim 1:" in text and "G06F0" in text
+
+
+def test_r4_each_cut_fact_section_carries_its_own_marker():
+    rows = [{"date": "2020-01-01", "text": "event " + "e" * 200} for _ in range(100)]
+    text = judge_brief_text(_judge_brief(legal_events=rows))
+    legal = text[text.index("Legal events"):]
+    legal = legal.split("\n\n")[0]
+    assert legal.rstrip().endswith("[truncated]")
+    assert "Classifications" in text and "[truncated]" not in text.split("Legal events")[0]
