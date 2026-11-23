@@ -271,6 +271,14 @@ _LAW_PACK_GAP_SENTENCE = (
 )
 
 
+_ASSISTANT_PROMPT_SENTENCE = (
+    "The assistant receives the patent page as plain text lines inside a <page_brief> block, short law "
+    "summaries inside a <law_excerpts> block and the visitor's text inside a <question> block; there are no "
+    "other tags (no classifications block, for example). Name only those blocks in the prompt. Return the "
+    "prompt text itself, without wrapping it in <agent_prompt> tags.\n\n"
+)
+
+
 def build_suggest_messages(
     config: AgentConfig,
     criterion: CriterionSpec,
@@ -298,7 +306,7 @@ def build_suggest_messages(
         f"<transcripts>\n{_neutralize(failing_transcripts_text)}\n</transcripts>\n\n"
     )
     tail = "Write the complete replacement prompt. Return JSON only."
-    user = _user_with_evidence(head, tail, evidence, _LAW_PACK_GAP_SENTENCE)
+    user = _user_with_evidence(head, tail, evidence, _ASSISTANT_PROMPT_SENTENCE + _LAW_PACK_GAP_SENTENCE)
     return SUGGEST_SYSTEM, [{"role": "user", "content": user}]
 
 

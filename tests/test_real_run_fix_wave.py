@@ -363,3 +363,55 @@ def test_r5_more_than_eight_live_runs_judge_the_newest_eight_live_runs(db_sessio
     _add_runs(db_session, agent, ["assist"] * 10 + ["imported"] * 2)
     seen, _ = _run_build(db_session, workspace, crit, monkeypatch, ["pass"] * 8)
     assert seen == [f"assist-{n}" for n in range(10, 2, -1)]
+
+
+# ---- R6: the suggester's prompt hygiene ---------------------------------------------------------------
+
+import json  # noqa: E402
+from unittest.mock import patch  # noqa: E402
+
+from backend.core.config import AgentConfig, CriterionSpec  # noqa: E402
+from backend.core.suggest import SuggestFailed, suggest_fix  # noqa: E402
+
+_SUGGEST_CONFIG = AgentConfig(name="Assist", system_prompt="Be kind.", user_role_label="Visitor")
+_SUGGEST_CRITERION = CriterionSpec(name="n", definition="d", good_example="g", bad_example="b")
+_TURNS = [{"role": "user", "content": "hi"}, {"role": "assistant", "content": "yo"}]
+
+
+def _suggest(prompt_text, **kwargs):
+    reply = {
+        "prompt_text": prompt_text, "failing_turn_index": 1, "change_summary": "c", "touched_section": "t",
+        "expected_effect": "e", "risk": "r",
+    }
+    with patch("backend.core.suggest.groq_chat", return_value=json.dumps(reply)) as mock:
+        fix = suggest_fix(_SUGGEST_CONFIG, _SUGGEST_CRITERION, "why", _TURNS, **kwargs)
+    return fix, mock
+
+
+def test_r6_a_wrapping_agent_prompt_pair_is_stripped_from_the_stored_prompt():
+    fix, _ = _suggest("<agent_prompt>\nBe very kind.\nRule 7.\n</agent_prompt>")
+    assert fix.prompt_text == "Be very kind.\nRule 7."
+
+
+def test_r6_only_a_single_wrapping_pair_is_stripped():
+    fix, _ = _suggest("  <agent_prompt>\nKeep <agent_prompt> as a word.\n</agent_prompt>\n")
+    assert fix.prompt_text == "Keep <agent_prompt> as a word."
+    fix2, _ = _suggest("Say <agent_prompt> only inside text.")
+    assert fix2.prompt_text == "Say <agent_prompt> only inside text."
+    fix3, _ = _suggest("<agent_prompt>\nopen only")
+    assert fix3.prompt_text == "<agent_prompt>\nopen only"  # not a wrapping pair: left as written
+
+
+def test_r6_a_wrapped_copy_of_the_current_prompt_counts_as_identical():
+    with pytest.raises(SuggestFailed, match="identical"):
+        _suggest("<agent_prompt>\nBe kind.\n</agent_prompt>")
+
+
+def test_r6_the_assistant_message_names_only_the_blocks_that_exist():
+    _, mock = _suggest("Be very kind.", evidence=["Intent: classification"])
+    user = mock.call_args.args[1][0]["content"]
+    assert "<page_brief>" in user and "<law_excerpts>" in user and "<question>" in user
+    assert "no other tags" in user and "<classifications>" not in user
+    assert "without wrapping it in <agent_prompt>" in user
+    _, plain = _suggest("Be very kind.")
+    assert "page_brief" not in plain.call_args.args[1][0]["content"]  # general agents: message unchanged

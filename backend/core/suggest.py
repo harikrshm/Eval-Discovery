@@ -15,6 +15,8 @@ from backend.utils import extract_json
 
 _TEXT_FIELDS = ("change_summary", "touched_section", "expected_effect", "risk")
 MAX_LAW_PACK_GAP_CHARS = 300
+_WRAPPER_OPEN = "<agent_prompt>"
+_WRAPPER_CLOSE = "</agent_prompt>"
 
 
 @dataclass(frozen=True)
@@ -55,6 +57,15 @@ def _law_pack_gap(data: dict) -> str | None:
     return value
 
 
+def _unwrap(prompt: str) -> str:
+    """The prompt without ONE wrapping <agent_prompt> ... </agent_prompt> pair (the model copies our wrapper)."""
+    prompt = prompt.strip()
+    if prompt.startswith(_WRAPPER_OPEN) and prompt.endswith(_WRAPPER_CLOSE):
+        inner = prompt[len(_WRAPPER_OPEN): -len(_WRAPPER_CLOSE)]
+        return inner.strip()
+    return prompt
+
+
 def _parse(raw: str, config: AgentConfig, turn_count: int) -> SuggestedFix:
     try:
         data = json.loads(extract_json(raw))
@@ -66,7 +77,9 @@ def _parse(raw: str, config: AgentConfig, turn_count: int) -> SuggestedFix:
     prompt = data.get("prompt_text")
     if not isinstance(prompt, str) or not prompt.strip():
         raise SuggestFailed("suggester output is missing a prompt")
-    prompt = prompt.strip()
+    prompt = _unwrap(prompt)
+    if not prompt:
+        raise SuggestFailed("suggester output is missing a prompt")
     if len(prompt) > MAX_PROMPT_CHARS:
         raise SuggestTooLong("suggested prompt is too long")
     if prompt == config.system_prompt.strip():
