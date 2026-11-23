@@ -46,7 +46,8 @@ from backend.core.assist.intent import SECTION_NAMES, Intent
 from backend.db.assist import EVIDENCE_SOURCES
 from backend.db.models import Agent, AssistPageView, AssistQuestion, PromptVersion, Run, Workspace
 from backend.db.session import get_db
-from backend.groq_client import MODEL_JUDGE, groq_chat, last_finish_reason, request_retries
+from backend import groq_client
+from backend.groq_client import MODEL_JUDGE, groq_chat, request_retries
 
 logger = logging.getLogger(__name__)
 
@@ -205,7 +206,7 @@ def console_insights(
     rate_limit_assist_insights(request)
     samples = _hotspot_samples(db, workspace, adoption)
     system, messages = build_insights_messages(adoption, samples)
-    last_finish_reason.set(None)
+    groq_client.last_finish_reason.set(None)  # read through the module: a reload makes a new variable
     try:
         with request_retries(2):
             reply = groq_chat(
@@ -219,7 +220,7 @@ def console_insights(
     if not brief:
         raise HTTPException(status_code=502, detail=INSIGHTS_FAILED)
     grounded, warnings = check_grounded(brief, adoption, samples)
-    if last_finish_reason.get() == "length" or looks_cut_off(brief):
+    if groq_client.last_finish_reason.get() == "length" or looks_cut_off(brief):
         # Never present a cut-off brief as complete: the page shows its warning box only when not grounded.
         grounded = False
         warnings = [*warnings, TRUNCATED_WARNING]
