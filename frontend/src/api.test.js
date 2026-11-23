@@ -411,5 +411,48 @@ describe("fix-loop api", () => {
     expect(err.status).toBe(409);
     expect(err.message).toBe("This fix can't be approved in its current state.");
   });
+  describe("assist console", () => {
+    it("reads status, metrics and flagged conversations with the workspace token", async () => {
+      const { workspace, api } = await load();
+      workspace.setToken("demo-tok");
+      fetchMock.mockResolvedValue(jsonResponse(200, {}));
+
+      await api.assistStatus();
+      await api.assistMetrics();
+      await api.assistFlagged();
+
+      const urls = fetchMock.mock.calls.map((c) => c[0].replace(/^.*?(\/assist)/, "$1"));
+      expect(urls).toEqual(["/assist/console/status", "/assist/console/metrics", "/assist/console/flagged"]);
+      for (const call of fetchMock.mock.calls) {
+        expect(headerOf(call, "X-Workspace-Token")).toBe("demo-tok");
+        expect(call[1].method).toBe("GET");
+      }
+    });
+
+    it("sends only the flagged filters that are set, and never puts the token in a URL", async () => {
+      const { workspace, api } = await load();
+      workspace.setToken("demo-tok");
+      fetchMock.mockResolvedValue(jsonResponse(200, []));
+
+      await api.assistFlagged({ intent: "claim_explain", limit: 50 });
+      await api.assistFlagged({ section: "legal_events", intent: null });
+
+      const urls = fetchMock.mock.calls.map((c) => c[0]);
+      expect(urls[0]).toMatch(/\/assist\/console\/flagged\?intent=claim_explain&limit=50$/);
+      expect(urls[1]).toMatch(/\/assist\/console\/flagged\?section=legal_events$/);
+      expect(urls.join(" ")).not.toContain("demo-tok");
+    });
+
+    it("posts for the insights brief and surfaces the server's error text", async () => {
+      const { workspace, api } = await load();
+      workspace.setToken("demo-tok");
+      fetchMock.mockResolvedValueOnce(jsonResponse(409, { detail: "Not enough data yet." }));
+
+      await expect(api.assistInsights()).rejects.toMatchObject({ message: "Not enough data yet.", status: 409 });
+      const [url, init] = fetchMock.mock.calls[0];
+      expect(url).toMatch(/\/assist\/console\/insights$/);
+      expect(init.method).toBe("POST");
+    });
+  });
 });
 

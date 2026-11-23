@@ -19,7 +19,7 @@ function messageOf(err, fallback) {
   return err instanceof Error && err.message ? err.message : fallback;
 }
 
-export default function AgentSetup({ onCreated, onCancel, onDeleted, notice }) {
+export default function AgentSetup({ onCreated, onCancel, onDeleted, notice, headerAction = null }) {
   const [presets, setPresets] = useState([]);
   const [presetsState, setPresetsState] = useState("loading"); // loading | ready | error
   const [preset, setPreset] = useState(null);
@@ -124,7 +124,10 @@ export default function AgentSetup({ onCreated, onCancel, onDeleted, notice }) {
   return (
     <div className="h-dvh overflow-y-auto bg-background">
       <main className="mx-auto w-full max-w-xl px-4 py-8 sm:px-6 sm:py-12">
-        <h1 className="text-base font-semibold tracking-wide text-foreground">Eval Discovery</h1>
+        <div className="flex items-center justify-between gap-3">
+          <h1 className="text-base font-semibold tracking-wide text-foreground">Eval Discovery</h1>
+          {headerAction}
+        </div>
         <h2 className="mt-6 text-lg font-semibold text-foreground">Set up the agent you want to test</h2>
         <p className="mt-2 text-muted-foreground">
           Start from an example or write your own system prompt. You chat with the agent, and

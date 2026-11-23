@@ -109,4 +109,64 @@ describe("workspace storage", () => {
     expect(ws.getAgentId()).toBeNull();
     expect(ws.getToken()).toBe("mem-token");
   });
+  describe("assist connection", () => {
+    it("backs up the identity, swaps in the demo token and restores it", async () => {
+      const ws = await load();
+      ws.setToken("mine");
+      ws.setAgentId("a1");
+
+      ws.beginAssistSwap("demo");
+      expect(ws.getToken()).toBe("demo");
+      expect(ws.getAgentId()).toBeNull();
+      expect(localStorage.getItem("ed_token_backup")).toBe("mine");
+      expect(localStorage.getItem("ed_agent_id_backup")).toBe("a1");
+      expect(ws.isAssistConnected()).toBe(false);
+
+      ws.completeAssistSwap("assist-1");
+      expect(ws.getAgentId()).toBe("assist-1");
+      expect(ws.isAssistConnected()).toBe(true);
+
+      ws.restoreAssistBackup();
+      expect(ws.getToken()).toBe("mine");
+      expect(ws.getAgentId()).toBe("a1");
+      expect(ws.isAssistConnected()).toBe(false);
+      expect(localStorage.getItem("ed_token_backup")).toBeNull();
+      expect(localStorage.getItem("ed_agent_id_backup")).toBeNull();
+    });
+
+    it("clears the workspace on restore when there was nothing before", async () => {
+      const ws = await load();
+      ws.beginAssistSwap("demo");
+      ws.completeAssistSwap("assist-1");
+      ws.restoreAssistBackup();
+      expect(ws.getToken()).toBeNull();
+      expect(ws.getAgentId()).toBeNull();
+    });
+
+    it("keeps the first backup when a swap begins while already connected", async () => {
+      const ws = await load();
+      ws.setToken("mine");
+      ws.beginAssistSwap("demo");
+      ws.completeAssistSwap("assist-1");
+      ws.beginAssistSwap("other-demo");
+      ws.restoreAssistBackup();
+      expect(ws.getToken()).toBe("mine");
+    });
+
+    it("works from memory when storage is unavailable", async () => {
+      const ws = await load();
+      vi.spyOn(Storage.prototype, "setItem").mockImplementation(() => {
+        throw new Error("blocked");
+      });
+      vi.spyOn(Storage.prototype, "getItem").mockImplementation(() => {
+        throw new Error("blocked");
+      });
+      ws.setToken("mine");
+      ws.beginAssistSwap("demo");
+      ws.completeAssistSwap("assist-1");
+      expect(ws.isAssistConnected()).toBe(true);
+      ws.restoreAssistBackup();
+      expect(ws.getToken()).toBe("mine");
+    });
+  });
 });

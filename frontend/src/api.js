@@ -172,6 +172,31 @@ export function updatePrompt(agentId, text, baseVersionId) {
   });
 }
 
+// ---- Assist console (builder side). Counts, rates, ids and labels only; the pattern check and the
+// eval discovery for the assistant agent reuse checkPattern and discoverCriterion above. ----
+
+export function assistStatus() {
+  return request("/assist/console/status");
+}
+
+export function assistMetrics() {
+  return request("/assist/console/metrics");
+}
+
+// Flagged conversations, newest first. Empty filters are left out of the query.
+export function assistFlagged({ intent, section, limit } = {}) {
+  const params = new URLSearchParams();
+  if (intent) params.set("intent", intent);
+  if (section) params.set("section", section);
+  if (limit) params.set("limit", String(limit));
+  const query = params.toString();
+  return request(`/assist/console/flagged${query ? `?${query}` : ""}`);
+}
+
+export function assistInsights() {
+  return request("/assist/console/insights", { method: "POST" });
+}
+
 // Deletes the stored workspace. With no stored token there is nothing to delete (and
 // request() would create a workspace just to delete it), so do nothing. A 401 means the
 // workspace is already gone or expired, so its data is unreachable: that counts as success.

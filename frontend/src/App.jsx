@@ -1,9 +1,7 @@
 import { useState, useEffect, useRef } from "react";
-import { Bot, History, ListChecks } from "lucide-react";
-import { useSession } from "./hooks/useSession";
-import { useTests } from "./hooks/useTests";
-import { exportSuite } from "./api";
-import { getAgentId } from "./lib/workspace";
+import { Bot, History, ListChecks, Gauge } from "lucide-react";
+import { useEvalLoop } from "./hooks/useEvalLoop";
+import { getAgentId, isAssistConnected } from "./lib/workspace";
 import { readiness } from "./lib/readiness";
 import { cn } from "./lib/utils";
 import AgentSetup from "./components/AgentSetup";
@@ -14,6 +12,8 @@ import HistoryPanel from "./components/HistoryPanel";
 import ReadinessChip from "./components/ReadinessChip";
 import { Badge } from "./components/ui/badge";
 import { Button } from "./components/ui/button";
+import AssistConsole from "./components/assist/AssistConsole";
+import ConnectBox from "./components/assist/ConnectBox";
 
 const PANEL_WIDTH = "min(24rem, 100vw)";
 const isNarrow = () => window.matchMedia("(max-width: 1279px)").matches;
@@ -56,12 +56,23 @@ function PatternBadge({ patternState, criteriaError, evalCriteriaCount }) {
   return null;
 }
 
-export default function App() {
+function MainApp({ headerAction = null }) {
   // Read once at startup; after that it only changes when an agent is created.
   // A deleted agent is cleared from storage by the hook, so re-reading storage
   // here would retrigger the load.
   const [agentId, setActiveAgentId] = useState(() => getAgentId());
   const [changingAgent, setChangingAgent] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [panelVisible, setPanelVisible] = useState(false);
+  const [historyVisible, setHistoryVisible] = useState(false);
+
+  function openEvalPanel() {
+    if (isNarrow()) setHistoryVisible(false);
+    setPanelVisible(true);
+  }
+
+  const loop = useEvalLoop(agentId, { onOpenPanel: openEvalPanel });
+  const { tests, criteriaError, setCriteriaError, panelProps } = loop;
   const {
     loading,
     loadError,
@@ -72,55 +83,15 @@ export default function App() {
     currentTranscript,
     evalCriteria,
     patternState,
-    patternSummary,
-    criteriaSaveError,
     runSaveFailed,
     runSaveMessage,
     addMessage,
     discardDraft,
     saveRun,
-    discover,
-    addCriteria,
-    updateCriteria,
-    savePrompt,
-    refreshAgent,
-  } = useSession(agentId);
-  const tests = useTests(agentId);
-
-  const [criteriaError, setCriteriaError] = useState(null);
-  const [saving, setSaving] = useState(false);
-  const [panelVisible, setPanelVisible] = useState(false);
-  const [historyVisible, setHistoryVisible] = useState(false);
+  } = loop.session;
 
   const historyOpen = historyVisible && transcripts.length > 0;
   const evalOpen = panelVisible && evalCriteria.length > 0;
-
-  // After a promotion or a restore the suite is on a newer prompt version than the agent the chat
-  // screen loaded. Reload the agent's prompt fields once per difference; a failed reload is not
-  // retried until the suite reports another version (the editor also reloads before it opens).
-  const suiteVersionId = tests.suite?.prompt_version_id ?? null;
-  const agentVersionId = agent?.prompt_version_id ?? null;
-  const agentRefreshing = useRef(false);
-  const agentRefreshFailedFor = useRef(null);
-  useEffect(() => {
-    if (!suiteVersionId || !agentVersionId || suiteVersionId === agentVersionId) {
-      agentRefreshFailedFor.current = null;
-      return;
-    }
-    if (agentRefreshing.current || agentRefreshFailedFor.current === suiteVersionId) return;
-    agentRefreshing.current = true;
-    refreshAgent().then((ok) => {
-      agentRefreshing.current = false;
-      if (!ok) agentRefreshFailedFor.current = suiteVersionId;
-    });
-  }, [suiteVersionId, agentVersionId, refreshAgent]);
-
-  // Reset criteriaError whenever a new pattern check starts
-  useEffect(() => {
-    if (patternState === "checking") {
-      setCriteriaError(null);
-    }
-  }, [patternState]);
 
   // Below the xl breakpoint panels are overlay drawers, so Escape closes them.
   useEffect(() => {
@@ -140,11 +111,6 @@ export default function App() {
     setHistoryVisible(true);
   }
 
-  function openEvalPanel() {
-    if (isNarrow()) setHistoryVisible(false);
-    setPanelVisible(true);
-  }
-
   async function handleSaveRun() {
     if (saving) return;
     setSaving(true);
@@ -153,85 +119,6 @@ export default function App() {
     } finally {
       setSaving(false);
     }
-  }
-
-  async function handleDiscoverEvals() {
-    if (!patternSummary) return;
-    setCriteriaError(null);
-    try {
-      await discover();
-      // The server starts building tests for the new criterion; the refresh picks that job up.
-      tests.refresh();
-      openEvalPanel();
-    } catch (err) {
-      setCriteriaError(err.message);
-    }
-  }
-
-  function downloadJson(data, filename) {
-    const blob = new Blob([JSON.stringify(data, null, 2)], {
-      type: "application/json",
-    });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = filename;
-    document.body.appendChild(a);
-    try {
-      a.click();
-    } finally {
-      document.body.removeChild(a);
-      URL.revokeObjectURL(url);
-    }
-  }
-
-  function handleExportAll() {
-    downloadJson(evalCriteria, "eval-criteria.json");
-  }
-
-  // A failure rejects, so the panel can show the server's message beside the button.
-  async function handleExportSuite() {
-    downloadJson(await exportSuite(agentId), "eval-suite.json");
-  }
-
-  async function handleAddCriteria() {
-    openEvalPanel();
-    const created = await addCriteria({
-      name: "New criterion",
-      definition: "",
-      good_example: "",
-      bad_example: "",
-    });
-    // The suite learns about the new criterion so it can offer "Build tests".
-    if (created) tests.refresh();
-  }
-
-  async function handleUpdateCriteria(id, fields) {
-    await updateCriteria(id, fields);
-    // Editing what a criterion means makes its test results out of date.
-    if ("definition" in fields || "good_example" in fields || "bad_example" in fields) {
-      tests.refresh();
-    }
-  }
-
-  async function handleSavePrompt(text, baseVersionId) {
-    try {
-      await savePrompt(text, baseVersionId);
-    } catch (err) {
-      // A refusal because the prompt moved on (or any failure): learn the live version so the
-      // editor can flag the draft as based on an older one.
-      refreshAgent();
-      throw err;
-    }
-    tests.refresh();
-  }
-
-  // A restore changes the live prompt: load it into the chat screen too. A failed reload never
-  // hides the restore (the editor flags a draft based on the old version by itself).
-  async function handleRestoreVersion(versionId) {
-    const ok = await tests.restore(versionId);
-    if (ok) await refreshAgent();
-    return ok;
   }
 
   function handleDataDeleted() {
@@ -255,7 +142,7 @@ export default function App() {
   }
 
   if (agentId == null) {
-    return <AgentSetup onCreated={handleAgentCreated} onDeleted={handleDataDeleted} />;
+    return <AgentSetup onCreated={handleAgentCreated} onDeleted={handleDataDeleted} headerAction={headerAction} />;
   }
 
   if (loadError && loadErrorGone) {
@@ -289,6 +176,7 @@ export default function App() {
         onCreated={handleAgentCreated}
         onDeleted={handleDataDeleted}
         onCancel={() => setChangingAgent(false)}
+        headerAction={headerAction}
       />
     );
   }
@@ -337,6 +225,7 @@ export default function App() {
         </Button>
 
         <div className="ml-auto flex flex-wrap items-center justify-end gap-2">
+          {headerAction}
           <div role="status">
             <PatternBadge patternState={patternState} criteriaError={criteriaError} evalCriteriaCount={evalCriteria.length} />
             {runSaveFailed && (
@@ -350,7 +239,7 @@ export default function App() {
             <Button
               variant="accent"
               size="sm"
-              onClick={handleDiscoverEvals}
+              onClick={() => loop.discoverEvals()}
               disabled={isGenerating}
             >
               Discover evals
@@ -444,39 +333,9 @@ export default function App() {
             <div className="h-full" style={{ width: PANEL_WIDTH }}>
               <EvalCriteriaPanel
                 key={agentId}
-                evalCriteria={evalCriteria}
-                patternState={patternState}
+                {...panelProps}
                 discoverPending={showDiscoverButton}
                 onDismiss={() => setPanelVisible(false)}
-                onUpdate={handleUpdateCriteria}
-                onAdd={handleAddCriteria}
-                saveError={criteriaSaveError}
-                onExportAll={handleExportAll}
-                onExportSuite={handleExportSuite}
-                suite={tests.suite}
-                jobs={tests.jobs}
-                testsError={tests.error}
-                testsLoading={tests.loading}
-                onRetryTests={tests.refresh}
-                agentName={agent.name}
-                userRoleLabel={agent.user_role_label}
-                onReplay={tests.replay}
-                onBuildTests={tests.buildTests}
-                onRunAll={tests.runAll}
-                onSuggestFix={tests.suggestFix}
-                onGenerateHeldout={tests.generateHeldout}
-                onApprove={tests.approve}
-                onReject={tests.reject}
-                versionHistory={{ agentId, onRestore: handleRestoreVersion }}
-                promptEditor={{
-                  promptText: agent.system_prompt,
-                  versionNumber: agent.prompt_version_number,
-                  versionId: agent.prompt_version_id,
-                  verifyingNumber:
-                    tests.suite?.candidate?.status === "approved_verifying" ? tests.suite.candidate.number : null,
-                  onSave: handleSavePrompt,
-                  onBeforeEdit: refreshAgent,
-                }}
               />
             </div>
           )}
@@ -491,5 +350,49 @@ export default function App() {
         primary={endIsPrimary}
       />
     </div>
+  );
+}
+
+// Connecting to the Assist console swaps the app over to the demo workspace, so while connected
+// the console is the whole screen (the chat app, with its "delete my data" control, is not
+// reachable against the demo workspace). Disconnecting restores the stored workspace and agent,
+// and the app mounts fresh against them.
+export default function App() {
+  const [connected, setConnected] = useState(() => isAssistConnected());
+  const [connectOpen, setConnectOpen] = useState(false);
+  const entryRef = useRef(null);
+
+  if (connected) {
+    return <AssistConsole onDisconnect={() => setConnected(false)} />;
+  }
+
+  const entry = (
+    <Button
+      ref={entryRef}
+      variant="outline"
+      size="sm"
+      onClick={() => setConnectOpen((open) => !open)}
+      aria-haspopup="dialog"
+      aria-expanded={connectOpen}
+    >
+      <Gauge className="h-4 w-4" aria-hidden="true" />
+      <span>Assist console</span>
+    </Button>
+  );
+
+  return (
+    <>
+      <MainApp headerAction={entry} />
+      {connectOpen && (
+        <ConnectBox
+          returnFocusRef={entryRef}
+          onClose={() => setConnectOpen(false)}
+          onConnected={() => {
+            setConnectOpen(false);
+            setConnected(true);
+          }}
+        />
+      )}
+    </>
   );
 }

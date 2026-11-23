@@ -284,15 +284,18 @@ export default function EvalCriteriaPanel({
           >
             Eval criteria
           </h2>
-          <Button
-            variant="ghost"
-            size="icon"
-            onClick={onDismiss}
-            className="h-8 w-8 text-muted-foreground"
-            aria-label="Close eval criteria panel"
-          >
-            <X className="h-4 w-4" aria-hidden="true" />
-          </Button>
+          {/* A panel that is always on screen (the Assist console) has nothing to close. */}
+          {onDismiss && (
+            <Button
+              variant="ghost"
+              size="icon"
+              onClick={onDismiss}
+              className="h-8 w-8 text-muted-foreground"
+              aria-label="Close eval criteria panel"
+            >
+              <X className="h-4 w-4" aria-hidden="true" />
+            </Button>
+          )}
         </div>
         {/* Plain text: this panel is inert while closed, so the live chip is the one in the app
             header (outside the panel), and a change is announced once. */}
