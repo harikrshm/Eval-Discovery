@@ -30,6 +30,7 @@ account numbers such as IBANs, or names and postal addresses.
 
 import json
 import re
+import unicodedata
 
 from backend.core.assist.assemble import escape_angles
 
@@ -73,13 +74,32 @@ SYSTEM_PROMPT = (
     "- Where a value is null, say it is not available.\n"
     "- Never state a cause as certain; say what the data suggests.\n"
     "- If any imported count under sources is above 0, mention that part of the data is a demo dataset.\n"
-    "- Write 120-220 words in plain language.\n"
+    "- Write 120-220 words in plain language. Hard limit: never more than 220 words in total. Finish every "
+    "bullet and the next step; if space is short, write fewer bullets rather than leave one unfinished.\n"
     "- Give 3-5 short bullet findings, then one suggested next step for the product.\n"
     "- Do not give legal advice."
 )
 
 _EMAIL_RE = re.compile(r"[\w.+-]+@[\w-]+(?:\.[\w-]+)+")
 _PHONE_RE = re.compile(r"(?<!\w)\+?\(?\d[\d\s().-]{7,}\d")
+
+
+TRUNCATED_WARNING = "The brief was cut off before it finished, so treat it as incomplete."
+_DANGLING_END = ",;:(-–—/"
+_EMPTY_BULLET_RE = re.compile(r"^(?:[-*•>]+|\d{1,2}[.)])$")
+
+
+def looks_cut_off(text: str) -> bool:
+    """True when the last line is an empty bullet, ends on a dangling mark or leaves a bracket open.
+
+    A heuristic for a reply the model stopped mid-sentence (the route also reads finish_reason)."""
+    lines = [line.strip() for line in text.strip().splitlines() if line.strip()]
+    if not lines:
+        return False
+    last = lines[-1]
+    return bool(
+        _EMPTY_BULLET_RE.match(last) or last[-1] in _DANGLING_END or last.count("(") > last.count(")")
+    )
 
 
 def metrics_for_prompt(adoption: dict) -> dict:
@@ -260,7 +280,7 @@ def _strip_list_numbers(text: str) -> str:
 def _strip_quoted_samples(text: str, shown: list[list[str]]) -> str:
     """Blank out verbatim quotes of a shown sample, so numbers inside the quote are not read as figures."""
     for sample in {s for texts in shown for s in texts if s != REDACTED}:
-        for variant in {sample, escape_angles(sample)}:
+        for variant in {sample, escape_angles(sample), unicodedata.normalize("NFKC", sample)}:
             for opening, closing in _QUOTE_PAIRS:
                 quoted = f"{opening}{variant}{closing}"
                 if quoted in text:
@@ -296,11 +316,19 @@ def _noun_bound(number: float, text: str, end: int, nouns: dict[str, set[int]]) 
     return any(int(number) in nouns.get(word.lower(), ()) for word in words)
 
 
-def _explains(number: float, decimals: int, percent: bool, values: list, rates: list) -> bool:
-    """Is `number` (as written, with that many decimals) one of the aggregate values?"""
+_RATE_KEY_RE = re.compile(r"rate|share|coverage|pct|percent", re.IGNORECASE)
+
+
+def _explains(number: float, decimals: int, percent: bool, values: list, rates: list, pct_values: list = ()) -> bool:
+    """Is `number` (as written, with that many decimals) one of the aggregate values?
+
+    A percentage matches a rate stored as a fraction (0.2 is 20%) or a rate-like figure already stored as a
+    percentage (20 or 20.0 under a key such as bounce_rate)."""
     tolerance = 0.5 * 10 ** -decimals + _EPS
     if percent:
-        return any(abs(rate * 100 - number) <= tolerance for rate in rates)
+        return any(abs(rate * 100 - number) <= tolerance for rate in rates) or any(
+            abs(value - number) <= tolerance for value in pct_values
+        )
     for value in values:
         if abs(value - number) <= _EPS:
             return True
@@ -338,16 +366,22 @@ def check_grounded(brief_text: str, adoption: dict, samples: dict) -> tuple[bool
     flat = flatten_metrics(metrics_for_prompt(adoption))
     values = [v for v in flat.values() if _is_number(v)]
     rates = [v for v in values if isinstance(v, float) and 0 <= v <= 1]
+    # Rate-like figures already stored on a 0-100 scale (a count such as page_views never qualifies).
+    pct_values = [
+        v for k, v in flat.items() if _is_number(v) and 1 < v <= 100 and _RATE_KEY_RE.search(k.rsplit(".", 1)[-1])
+    ]
     shown = [select_texts(texts) for texts in samples.values()]
     nouns = _noun_counts(adoption, shown, brief_text)
     noun_numbers = {n for counts in nouns.values() for n in counts}
 
-    text = _strip_list_numbers(brief_text)
+    # NFKC reads no-break and thin spaces (U+00A0, U+202F, U+2009) as plain spaces and fullwidth digits and
+    # percent signs as ASCII, so "20" + narrow no-break space + "%" is one percentage, not a bare 20.
+    text = _strip_list_numbers(unicodedata.normalize("NFKC", brief_text))
     text = _strip_quoted_samples(text, shown)
     text = _SAFE_TOKEN_RE.sub(" ", text)
 
     def plain(number: float) -> bool:
-        return _explains(number, 0, False, values, rates)
+        return _explains(number, 0, False, values, rates, pct_values)
 
     def near_rate(ratio: float) -> bool:
         return any(abs(rate - ratio) <= _RATIO_TOLERANCE for rate in rates)
@@ -382,7 +416,7 @@ def check_grounded(brief_text: str, adoption: dict, samples: dict) -> tuple[bool
                 continue
             key = (number, decimals, percent)
             if key not in verdicts:
-                verdicts[key] = _explains(number, decimals, percent, values, rates)
+                verdicts[key] = _explains(number, decimals, percent, values, rates, pct_values)
             if decimals == 0 and not percent and not match.group("ord"):
                 noun_number = number
         else:
@@ -393,7 +427,7 @@ def check_grounded(brief_text: str, adoption: dict, samples: dict) -> tuple[bool
             number = _word_value(word)
             key = (number, 0, percent)
             if key not in verdicts:
-                verdicts[key] = _explains(number, 0, percent, values, rates)
+                verdicts[key] = _explains(number, 0, percent, values, rates, pct_values)
             if not percent:
                 noun_number = number
         ok = verdicts[key]

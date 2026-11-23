@@ -415,3 +415,84 @@ def test_r6_the_assistant_message_names_only_the_blocks_that_exist():
     assert "without wrapping it in <agent_prompt>" in user
     _, plain = _suggest("Be very kind.")
     assert "page_brief" not in plain.call_args.args[1][0]["content"]  # general agents: message unchanged
+
+
+# ---- R7: insights grounding of percentages and a brief that was cut off ---------------------------------
+
+from types import SimpleNamespace  # noqa: E402
+
+from backend import groq_client  # noqa: E402
+from backend.core.assist import insights  # noqa: E402
+from tests.test_assist_insights import FakeClient, URL as INSIGHTS_URL, seeded  # noqa: E402,F401
+
+
+def _bounce(value):
+    return {"totals": {"page_views": 15, "questions": 31}, "bounce_rate": value}
+
+
+@pytest.mark.parametrize("space", ["", " ", "\u202f", "\u00a0", "\u2009"])
+def test_r7_a_percentage_with_any_space_before_the_sign_matches_a_stored_fraction(space):
+    # the real run: the model wrote "20" + U+202F + "%"; the old scan read a bare 20 and flagged it
+    grounded, warnings = insights.check_grounded(f"- 20{space}% of views bounced.", _bounce(0.2), {})
+    assert grounded, warnings
+
+
+@pytest.mark.parametrize("stored", [0.2, 20, 20.0])
+def test_r7_a_percentage_matches_the_stored_figure_as_a_fraction_or_a_percent(stored):
+    grounded, warnings = insights.check_grounded("- Bounce rate is 20% of views.", _bounce(stored), {})
+    assert grounded, warnings
+    assert insights.check_grounded("- Bounce rate is 20 percent.", _bounce(stored), {})[0]
+
+
+def test_r7_a_percentage_that_matches_nothing_rate_like_is_still_flagged():
+    # 20 is the page-view count here, not a rate: "20%" must not ride on it
+    adoption = {"totals": {"page_views": 20, "questions": 31}, "bounce_rate": 0.5}
+    grounded, warnings = insights.check_grounded("- 20% of views bounced.", adoption, {})
+    assert not grounded and "20%" in warnings[0]
+    assert not insights.check_grounded("- 21% bounced.", _bounce(20), {})[0]
+    assert not insights.check_grounded("- 4821 users left.", _bounce(0.2), {})[0]
+
+
+@pytest.fixture
+def _swap_client(monkeypatch):
+    def install(reply, finish_reason=None):
+        class _Fake(FakeClient):
+            def _create(self, **kwargs):
+                response = super()._create(**kwargs)
+                response.choices[0].finish_reason = finish_reason
+                return response
+
+        fake = _Fake(reply=reply)
+        monkeypatch.setattr(groq_client, "client", fake)
+        return fake
+
+    return install
+
+
+def test_r7_the_call_gets_a_bigger_budget_and_a_hard_length_in_the_prompt(client, seeded, _swap_client):
+    fake = _swap_client("- 6 page views.")
+    assert client.post(INSIGHTS_URL, headers=seeded["headers"]).status_code == 200
+    assert fake.calls[0]["max_tokens"] == 1500
+    assert "never more than 220 words" in insights.SYSTEM_PROMPT
+
+
+def test_r7_finish_reason_length_marks_the_brief_as_cut_off(client, seeded, _swap_client):
+    _swap_client("- 6 page views.", finish_reason="length")
+    body = client.post(INSIGHTS_URL, headers=seeded["headers"]).json()
+    assert body["grounded"] is False
+    assert insights.TRUNCATED_WARNING in body["warnings"]
+    assert body["brief"] == "- 6 page views."
+
+
+@pytest.mark.parametrize("reply", ["- 6 page views.\n-", "- 6 page views.\n- Questions rose,", "- 6 page views.\n- Asked about (claims"])
+def test_r7_an_unterminated_last_bullet_marks_the_brief_as_cut_off(client, seeded, _swap_client, reply):
+    _swap_client(reply, finish_reason="stop")
+    body = client.post(INSIGHTS_URL, headers=seeded["headers"]).json()
+    assert body["grounded"] is False and insights.TRUNCATED_WARNING in body["warnings"]
+
+
+def test_r7_a_finished_brief_is_not_marked(client, seeded, _swap_client):
+    _swap_client("- 6 page views.\n- Next step: add more data.", finish_reason="stop")
+    body = client.post(INSIGHTS_URL, headers=seeded["headers"]).json()
+    assert insights.TRUNCATED_WARNING not in body["warnings"]
+    assert body["grounded"] is True

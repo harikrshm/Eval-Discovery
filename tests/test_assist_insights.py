@@ -373,7 +373,7 @@ def test_prompt_has_the_metrics_and_samples_and_nothing_else(client, seeded, fak
     assert fake.retries == [2]
     call = fake.calls[0]
     assert call["model"] == groq_client.MODEL_JUDGE
-    assert call["max_tokens"] == 700 and call["temperature"] == 0.2
+    assert call["max_tokens"] == 1500 and call["temperature"] == 0.2
 
 
 def test_at_most_three_samples_per_hotspot(client, seeded, fake):

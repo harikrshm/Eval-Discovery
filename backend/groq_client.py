@@ -46,6 +46,10 @@ def request_retries(n: int):
         request_retry_limit.reset(token)
 
 
+# The finish_reason of the last groq_chat call made in this context ("length" = the reply hit max_tokens).
+last_finish_reason: ContextVar[str | None] = ContextVar("groq_last_finish_reason", default=None)
+
+
 class TokenPacer:
     """Optional per-model sliding-window token pacing. A call waits at most max_wait_seconds, then proceeds."""
 
@@ -146,4 +150,6 @@ def groq_chat(
     if pacer is not None:
         total = getattr(getattr(response, "usage", None), "total_tokens", None)
         pacer.record(model, total if isinstance(total, int) and not isinstance(total, bool) else estimate)
+    reason = getattr(response.choices[0], "finish_reason", None)
+    last_finish_reason.set(reason if isinstance(reason, str) else None)
     return _strip_thinking(response.choices[0].message.content)

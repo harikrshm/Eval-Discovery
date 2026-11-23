@@ -32,11 +32,13 @@ from backend.core.assist.adoption import (
     flag_reasons,
 )
 from backend.core.assist.insights import (
+    TRUNCATED_WARNING,
     build_insights_messages,
     check_grounded,
     flatten_metrics,
     hotspots,
     imported_total,
+    looks_cut_off,
     metrics_for_prompt,
     select_texts,
 )
@@ -44,7 +46,7 @@ from backend.core.assist.intent import SECTION_NAMES, Intent
 from backend.db.assist import EVIDENCE_SOURCES
 from backend.db.models import Agent, AssistPageView, AssistQuestion, PromptVersion, Run, Workspace
 from backend.db.session import get_db
-from backend.groq_client import MODEL_JUDGE, groq_chat, request_retries
+from backend.groq_client import MODEL_JUDGE, groq_chat, last_finish_reason, request_retries
 
 logger = logging.getLogger(__name__)
 
@@ -54,7 +56,8 @@ NO_ASSIST_AGENT = "No assistant agent in this workspace."
 DEMO_LABEL = "demo dataset"
 NO_INSIGHT_DATA = "Not enough data yet."
 INSIGHTS_FAILED = "The insights could not be generated right now. Please try again."
-INSIGHTS_MAX_TOKENS = 700
+# The 120B model spends part of this on hidden reasoning, so 700 cut a brief off mid-bullet in the real run.
+INSIGHTS_MAX_TOKENS = 1500
 INSIGHTS_TEMPERATURE = 0.2
 MAX_BRIEF_CHARS = 2500
 SAMPLE_SCAN_ROWS = 40  # newest rows scanned per hotspot to find up to 3 distinct texts
@@ -202,6 +205,7 @@ def console_insights(
     rate_limit_assist_insights(request)
     samples = _hotspot_samples(db, workspace, adoption)
     system, messages = build_insights_messages(adoption, samples)
+    last_finish_reason.set(None)
     try:
         with request_retries(2):
             reply = groq_chat(
@@ -215,6 +219,10 @@ def console_insights(
     if not brief:
         raise HTTPException(status_code=502, detail=INSIGHTS_FAILED)
     grounded, warnings = check_grounded(brief, adoption, samples)
+    if last_finish_reason.get() == "length" or looks_cut_off(brief):
+        # Never present a cut-off brief as complete: the page shows its warning box only when not grounded.
+        grounded = False
+        warnings = [*warnings, TRUNCATED_WARNING]
     return AssistInsightsOut(
         brief=brief,
         counts_used=flatten_metrics(metrics_for_prompt(adoption)),
