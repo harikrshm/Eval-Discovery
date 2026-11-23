@@ -22,7 +22,15 @@ from backend.api.schemas import (
     FlaggedQuestionOut,
     FlaggedRunOut,
 )
-from backend.core.assist.adoption import IMPORTED_SOURCE, PV, Q, compute_adoption, compute_version_comparison
+from backend.core.assist.adoption import (
+    FLAG_REASONS,
+    IMPORTED_SOURCE,
+    PV,
+    Q,
+    compute_adoption,
+    compute_version_comparison,
+    flag_reasons,
+)
 from backend.core.assist.insights import (
     build_insights_messages,
     check_grounded,
@@ -92,26 +100,32 @@ def console_status(
     )
 
 
-def _load_questions(db: Session, workspace_id: str) -> list:
-    """Label columns only (never text, answer or rating_reason), oldest first."""
-    return list(
-        db.execute(
-            select(
-                AssistQuestion.id,
-                AssistQuestion.session_id,
-                AssistQuestion.patent_number,
-                AssistQuestion.intent,
-                AssistQuestion.section_focus,
-                AssistQuestion.rating,
-                AssistQuestion.reasked,
-                AssistQuestion.citation_ok,
-                AssistQuestion.source,
-                AssistQuestion.assist_version,
-            )
-            .where(AssistQuestion.workspace_id == workspace_id)
-            .order_by(AssistQuestion.created_at, AssistQuestion.id)
+def _load_questions(db: Session, workspace_id: str, session_ids: list[str] | None = None) -> list:
+    """Label columns only (never text, answer or rating_reason), oldest first.
+
+    ``session_ids`` restricts the rows to those sessions (an empty list loads nothing).
+    """
+    if session_ids is not None and not session_ids:
+        return []
+    query = (
+        select(
+            AssistQuestion.id,
+            AssistQuestion.session_id,
+            AssistQuestion.patent_number,
+            AssistQuestion.intent,
+            AssistQuestion.section_focus,
+            AssistQuestion.rating,
+            AssistQuestion.reasked,
+            AssistQuestion.citation_ok,
+            AssistQuestion.source,
+            AssistQuestion.assist_version,
         )
+        .where(AssistQuestion.workspace_id == workspace_id)
+        .order_by(AssistQuestion.created_at, AssistQuestion.id)
     )
+    if session_ids is not None:
+        query = query.where(AssistQuestion.session_id.in_(session_ids))
+    return list(db.execute(query))
 
 
 def _compute_adoption(db: Session, workspace: Workspace) -> tuple[dict, list]:
@@ -211,17 +225,8 @@ def console_insights(
 
 
 def _reasons(rows: list) -> list[str]:
-    found = set()
-    for q in rows:
-        if q.rating == "down":
-            found.add("rated_down")
-        if q.rating == "no_answer":
-            found.add("no_answer")
-        if q.reasked:
-            found.add("reasked")
-        if not q.citation_ok:
-            found.add("citation_unverified")
-    return [r for r in ("rated_down", "no_answer", "reasked", "citation_unverified") if r in found]
+    found = {reason for q in rows for reason in flag_reasons(q.rating, q.reasked, q.citation_ok)}
+    return [reason for reason in FLAG_REASONS if reason in found]
 
 
 @router.get("/flagged", response_model=list[FlaggedRunOut])
@@ -234,7 +239,8 @@ def console_flagged(
 ) -> list[FlaggedRunOut]:
     """Flagged runs (source assist or imported), newest first; `limit` is capped at 200.
 
-    A run matches the filters when any question of its session has that intent / section focus.
+    A run matches the filters when a flagged question of its session has that intent / section focus
+    (or any question of it, for a session without a flagged one).
     """
     if intent is not None and intent not in _INTENTS:
         raise HTTPException(status_code=422, detail="Unknown intent.")
@@ -243,22 +249,28 @@ def console_flagged(
     limit = min(limit, MAX_FLAGGED_LIMIT)
     agent = _assist_agent(db, workspace)
 
+    # Columns only: the run's messages and brief snapshot are never loaded.
+    runs = list(
+        db.execute(
+            select(Run.id, Run.position, Run.source, Run.session_id, Run.created_at)
+            .where(Run.agent_id == agent.id, Run.source.in_(EVIDENCE_SOURCES))
+            .order_by(Run.created_at.desc(), Run.position.desc())
+        )
+    )
+    session_ids = sorted({run.session_id for run in runs if run.session_id})
     by_session = defaultdict(list)
-    for row in _load_questions(db, workspace.id):
+    for row in _load_questions(db, workspace.id, session_ids):
         by_session[row.session_id].append(row)
 
-    # Columns only: the run's messages and brief snapshot are never loaded.
-    runs = db.execute(
-        select(Run.id, Run.position, Run.source, Run.session_id, Run.created_at)
-        .where(Run.agent_id == agent.id, Run.source.in_(EVIDENCE_SOURCES))
-        .order_by(Run.created_at.desc(), Run.position.desc())
-    )
     out = []
     for run in runs:
         rows = by_session.get(run.session_id, [])
-        if intent is not None and not any(q.intent == intent for q in rows):
+        # A filter looks at the session's flagged questions (the reason the run exists); only a session
+        # without any falls back to all of its questions.
+        pool = [q for q in rows if flag_reasons(q.rating, q.reasked, q.citation_ok)] or rows
+        if intent is not None and not any(q.intent == intent for q in pool):
             continue
-        if section is not None and not any(q.section_focus == section for q in rows):
+        if section is not None and not any(q.section_focus == section for q in pool):
             continue
         out.append(
             FlaggedRunOut(

@@ -48,6 +48,7 @@ from backend.db.assist import (
     mark_reasked,
     save_flagged_run,
     set_rating,
+    session_is_imported,
     upsert_page_view,
 )
 from backend.db.models import Agent, AssistQuestion
@@ -108,6 +109,9 @@ def chat(body: AssistChatRequest, request: Request, db: Session = Depends(get_db
         raise HTTPException(status_code=503, detail=ASSIST_UNAVAILABLE) from None
     brief = body.brief
     question = body.question
+    # Imported sessions stay imported: refuse before spending a model call on a question that cannot be stored.
+    if session_is_imported(db, body.session_id):
+        raise HTTPException(status_code=409, detail=SESSION_CONFLICT)
 
     if not is_us_patent(brief.patent_number):
         row = add_question(
@@ -130,21 +134,19 @@ def chat(body: AssistChatRequest, request: Request, db: Session = Depends(get_db
 
     answer, check = finalize_answer(reply, intent, brief, req.provided_law_ids)
 
-    row = add_question(
-        db, workspace.id, body.session_id, brief.patent_number, question, intent.value,
-        primary_section(intent), answer, check.ok, "live", version.number,
-    )
+    try:
+        row = add_question(
+            db, workspace.id, body.session_id, brief.patent_number, question, intent.value,
+            primary_section(intent), answer, check.ok, "live", version.number,
+        )
+    except SessionConflict:  # the session was imported while the model was answering
+        raise HTTPException(status_code=409, detail=SESSION_CONFLICT) from None
     if not check.ok:
-        try:
-            save_flagged_run(
-                db, agent, body.session_id,
-                messages=[*history, {"role": "user", "content": question}, {"role": "assistant", "content": answer}],
-                brief=brief, source=FLAGGED_SOURCE,
-            )
-        except Exception:
-            # The question row is already stored; losing the flagged copy must not fail the user's answer.
-            db.rollback()
-            logger.warning("Saving the flagged assist run failed", exc_info=True)
+        # The question row is already stored; losing the flagged copy must not fail the user's answer.
+        _save_flagged(
+            db, agent, body.session_id,
+            [*history, {"role": "user", "content": question}, {"role": "assistant", "content": answer}], brief,
+        )
     return _response(row.id, answer, intent, version.number, check)
 
 
@@ -210,20 +212,21 @@ def _check_brief_matches(question: AssistQuestion, body) -> None:
 
 
 def _flag_conversation(db: Session, agent: Agent, question: AssistQuestion, body) -> None:
-    """Save the conversation as the question's session run. The run belongs to the STORED session.
+    """Save the conversation as the question's session run. The run belongs to the STORED session."""
+    _save_flagged(db, agent, question.session_id, [turn.model_dump() for turn in body.conversation], body.brief)
+
+
+def _save_flagged(db: Session, agent: Agent, session_id: str, messages: list[dict], brief) -> None:
+    """Save a flagged conversation as the session's run (rating, re-ask and citation-failure paths alike).
 
     A new session is skipped once the workspace holds MAX_ASSIST_RUNS runs; the signal is still recorded.
-    A failed save never fails the call (the rating or re-ask is already stored).
+    A failed save never fails the call (the signal or answer is already stored).
     """
     try:
-        if count_runs(db, agent) >= MAX_ASSIST_RUNS and not has_run_for_session(db, agent, question.session_id):
+        if count_runs(db, agent) >= MAX_ASSIST_RUNS and not has_run_for_session(db, agent, session_id):
             logger.warning("Assist flagged-run cap reached; conversation not saved")
             return
-        save_flagged_run(
-            db, agent, question.session_id,
-            messages=[turn.model_dump() for turn in body.conversation],
-            brief=body.brief, source=FLAGGED_SOURCE,
-        )
+        save_flagged_run(db, agent, session_id, messages=messages, brief=brief, source=FLAGGED_SOURCE)
     except Exception:
         db.rollback()
         logger.warning("Saving the flagged assist run failed", exc_info=True)

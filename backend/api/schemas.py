@@ -2,7 +2,7 @@
 
 import re
 from datetime import datetime
-from typing import Annotated, Literal
+from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
@@ -15,6 +15,15 @@ from backend.api.limits import (
 )
 from backend.core.assist.brief import Brief, is_us_patent
 from backend.core.assist.intent import SECTION_NAMES
+from backend.core.config import (  # noqa: F401  (single source in core.config; names kept here)
+    ASSIST_MAX_CONVERSATION_TURNS,
+    ASSIST_MAX_HISTORY_TURNS,
+    ASSIST_MAX_REASON_CHARS,
+    ASSIST_MAX_TURN_CHARS,
+    ASSIST_SESSION_ID_RE,
+    MAX_DURATION_MS,
+    DurationMs,
+)
 
 MAX_NAME_CHARS = 60
 MAX_ROLE_LABEL_CHARS = 40
@@ -392,9 +401,6 @@ class SuiteExportOut(BaseModel):
 
 # ---- Patent Assist -------------------------------------------------------------
 
-ASSIST_MAX_TURN_CHARS = 2000
-ASSIST_MAX_HISTORY_TURNS = 20
-_SESSION_ID_RE = re.compile(r"[A-Za-z0-9-]{8,64}", re.ASCII)
 
 
 class AssistTurn(_Strict):
@@ -423,7 +429,7 @@ class AssistChatRequest(_Strict):
     @field_validator("session_id")
     @classmethod
     def _session_id_shape(cls, value: str) -> str:
-        if _SESSION_ID_RE.fullmatch(value) is None:
+        if ASSIST_SESSION_ID_RE.fullmatch(value) is None:
             raise ValueError("must be 8-64 characters: letters, digits and hyphens")
         return value
 
@@ -443,12 +449,7 @@ class AssistChatRequest(_Strict):
         return self
 
 
-ASSIST_MAX_CONVERSATION_TURNS = 2 * ASSIST_MAX_HISTORY_TURNS + 2  # a full history plus the last question and answer
-ASSIST_MAX_REASON_CHARS = 500
-MAX_DURATION_MS = 86_400_000  # one day
 _QUESTION_ID_RE = re.compile(r"[A-Za-z0-9-]{1,36}", re.ASCII)
-
-DurationMs = Annotated[int, Field(strict=True, ge=0, le=MAX_DURATION_MS)]
 
 
 class AssistPageViewRequest(_Strict):
@@ -463,7 +464,7 @@ class AssistPageViewRequest(_Strict):
     @field_validator("session_id")
     @classmethod
     def _session_id_shape(cls, value: str) -> str:
-        if _SESSION_ID_RE.fullmatch(value) is None:
+        if ASSIST_SESSION_ID_RE.fullmatch(value) is None:
             raise ValueError("must be 8-64 characters: letters, digits and hyphens")
         return value
 

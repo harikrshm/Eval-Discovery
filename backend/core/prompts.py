@@ -18,7 +18,6 @@ _DELIMITER_TAGS = (
     "prompt_diff",
     "report_data",
     "scenario_source",
-    "page_evidence",
 )
 _DELIMITER_RE = re.compile(
     r"<\s*/?\s*(?:" + "|".join(_DELIMITER_TAGS) + r")(?!\w)[^>]*>", re.IGNORECASE
@@ -58,6 +57,14 @@ MAX_EVIDENCE_ITEMS = 10
 def _escape_angles(text: str) -> str:
     """Replace EVERY "<" and ">" (used for the evidence block, whose text comes from request data)."""
     return text.replace("<", "&lt;").replace(">", "&gt;")
+
+
+_PAGE_EVIDENCE_TAG_RE = re.compile(r"<\s*/?\s*page_evidence(?!\w)[^>]*>", re.IGNORECASE)
+
+
+def _neutralize_with_page_tag(text: str) -> str:
+    """``_neutralize`` plus the judge's page_evidence tag, so no other field can open or close that block."""
+    return _PAGE_EVIDENCE_TAG_RE.sub(lambda m: _escape_angles(m.group(0)), _neutralize(text))
 
 
 def _evidence_block(evidence: list[str]) -> str:
@@ -217,16 +224,19 @@ def build_judge_messages(
         if evidence is None
         else f"{JUDGE_EVIDENCE_NOTE}\n<page_evidence>\n{_escape_angles(evidence)}\n</page_evidence>\n\n"
     )
+    # The page_evidence tag is local to this builder: it is escaped in the other fields only when a page
+    # block is attached, so every other prompt (and a general agent's judge prompt) is exactly as before.
+    fence = _neutralize if evidence is None else _neutralize_with_page_tag
     user = (
         "Evaluation criterion:\n"
         "<criterion>\n"
-        f"Name: {_neutralize(criterion.name)}\n"
-        f"Definition: {_neutralize(criterion.definition)}\n"
-        f"Good example: {_neutralize(criterion.good_example)}\n"
-        f"Bad example: {_neutralize(criterion.bad_example)}\n"
+        f"Name: {fence(criterion.name)}\n"
+        f"Definition: {fence(criterion.definition)}\n"
+        f"Good example: {fence(criterion.good_example)}\n"
+        f"Bad example: {fence(criterion.bad_example)}\n"
         "</criterion>\n\n"
         "Transcript to judge:\n"
-        f"<transcripts>\n{_neutralize(transcripts_text)}\n</transcripts>\n\n"
+        f"<transcripts>\n{fence(transcripts_text)}\n</transcripts>\n\n"
         f"{page}"
         "Does the agent satisfy the criterion? Return JSON only."
     )

@@ -19,6 +19,7 @@ from backend.core.assist.citations import CitationCheck, check_citations
 from backend.core.assist.intent import Intent, classify_intent
 from backend.core.assist.lawpack import NOT_LEGAL_ADVICE, excerpts_for_question
 from backend.core.config import MAX_ASSISTANT_MESSAGE_CHARS
+from backend.core.prompts import _escape_angles
 
 CITATION_NOTE = "Some citations in this answer could not be verified against the page."
 # Replies come back as history turns later, so the FINAL answer must fit the message cap: leave room for
@@ -62,8 +63,9 @@ def finalize_answer(
 def judge_brief_text(brief: Brief) -> str:
     """The brief as plain text for the judge: title, number, abstract, claims, then the description.
 
-    At most JUDGE_BRIEF_CHARS characters; when cut, the text ends with a marker. Not escaped here:
-    the judge prompt builder escapes every angle bracket when it embeds the text.
+    Every "<" and ">" is escaped here (the judge prompt builder escapes again, which changes nothing), and
+    the cap applies to the ESCAPED text: at most JUDGE_BRIEF_CHARS characters as the judge will receive
+    them, cut so that no "&lt;" or "&gt;" is split. When cut, the text ends with a marker.
     """
     parts = []
     if brief.title:
@@ -73,7 +75,11 @@ def judge_brief_text(brief: Brief) -> str:
         parts.append(f"Abstract: {brief.abstract}")
     parts.extend(f"Claim {claim.number}: {claim.text}" for claim in brief.claims)
     parts.extend(f"Description - {section.heading or 'untitled section'}:\n{section.text}" for section in brief.description)
-    text = "\n\n".join(parts)
+    text = _escape_angles("\n\n".join(parts))
     if len(text) <= JUDGE_BRIEF_CHARS:
         return text
-    return text[: JUDGE_BRIEF_CHARS - len(_TRUNCATION_MARKER)] + _TRUNCATION_MARKER
+    head = text[: JUDGE_BRIEF_CHARS - len(_TRUNCATION_MARKER)]
+    amp = head.rfind("&")
+    if amp >= len(head) - 3 and ";" not in head[amp:]:  # the cut fell inside an entity: drop the partial one
+        head = head[:amp]
+    return head + _TRUNCATION_MARKER

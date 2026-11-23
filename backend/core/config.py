@@ -3,12 +3,27 @@
 Pure data: this package must never import a persona or any web/DB code.
 """
 
+import re
 from dataclasses import dataclass
+from typing import Annotated
+
+from pydantic import Field
 
 MAX_PROMPT_CHARS = 4000
 MAX_AGENTS_PER_WORKSPACE = 5
 MAX_ASSISTANT_MESSAGE_CHARS = 16000  # model replies, which the user cannot shorten
 CHAT_MAX_TOKENS = 3000  # keeps replies (~4 chars/token) under the assistant message cap
+
+# Request caps shared by the live Patent Assist API (backend/api/schemas.py) and the page-view importer
+# (backend/core/assist/importing.py), so an imported row could always have been written by the live server.
+MAX_REQUEST_CHARS = 120000  # sum over all messages in one request
+ASSIST_MAX_TURN_CHARS = 2000
+ASSIST_MAX_HISTORY_TURNS = 20
+ASSIST_MAX_CONVERSATION_TURNS = 2 * ASSIST_MAX_HISTORY_TURNS + 2  # a full history plus the last question and answer
+ASSIST_MAX_REASON_CHARS = 500
+MAX_DURATION_MS = 86_400_000  # one day
+ASSIST_SESSION_ID_RE = re.compile(r"[A-Za-z0-9-]{8,64}", re.ASCII)
+DurationMs = Annotated[int, Field(strict=True, ge=0, le=MAX_DURATION_MS)]
 
 
 @dataclass(frozen=True)

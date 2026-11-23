@@ -46,6 +46,7 @@ from backend.db.session import DEFAULT_DATABASE_URL, make_engine  # noqa: E402
 from scripts.metrics import mask_url  # noqa: E402
 
 EXIT_OK, EXIT_INVALID, EXIT_DATABASE = 0, 2, 3
+MAX_FILE_BYTES = 20 * 1024 * 1024  # 20 MiB; documented in docs/assist-import-format.md
 CHUNK = 400  # session ids per IN (...) query, under SQLite's variable limit
 REQUIRED_TABLES = ("agent", "assist_page_view", "assist_question", "run")
 NO_AGENT = (
@@ -237,12 +238,21 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     try:
-        text = Path(args.file).read_text(encoding="utf-8-sig")  # a BOM is tolerated
+        size = Path(args.file).stat().st_size
+    except OSError as exc:
+        _error(f"could not read {args.file} as UTF-8 text ({type(exc).__name__}); nothing was imported")
+        return EXIT_INVALID
+    if size > MAX_FILE_BYTES:
+        _error(f"{args.file} is larger than the {MAX_FILE_BYTES}-byte limit; nothing was imported")
+        return EXIT_INVALID
+
+    try:
+        # Streamed line by line (newline="\n": only a line feed ends a line; a BOM is tolerated).
+        with open(args.file, encoding="utf-8-sig", newline="\n") as handle:
+            parsed = parse_lines(line.rstrip("\r\n") for line in handle)
     except (OSError, UnicodeDecodeError) as exc:
         _error(f"could not read {args.file} as UTF-8 text ({type(exc).__name__}); nothing was imported")
         return EXIT_INVALID
-
-    parsed = parse_lines(line.rstrip("\r") for line in text.split("\n"))
     if parsed.errors:
         for message in parsed.errors:
             print(message, file=sys.stderr)

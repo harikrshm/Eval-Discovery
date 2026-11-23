@@ -31,8 +31,13 @@ def cut_on_line(text: str, limit: int) -> str:
     return head[:newline].rstrip() if newline > 0 else head
 
 
+# The extractor's completeness key for the bibliographic data; the context slices call that section "meta".
+_SECTION_ALIASES = {"bibliographic": "meta"}
+
+
 def _known(name: object) -> str:
     """The section name when it is a known one, else "other"."""
+    name = _SECTION_ALIASES.get(name, name) if isinstance(name, str) else name
     return name if isinstance(name, str) and name in KNOWN_SECTIONS else _OTHER
 
 

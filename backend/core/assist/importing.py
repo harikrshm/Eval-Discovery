@@ -4,8 +4,7 @@ One record is one page view (one visitor session on one patent) plus the questio
 (scripts/import_page_views.py) validates every line with `validate_record`, then turns each record into the
 rows the console reads with `expand`. Nothing here calls a model.
 
-The caps are the live API's, taken from the same constants (backend/api/schemas.py and
-backend/core/config.py), so an imported row could always have been written by the live server:
+The caps are the live API's, taken from the same constants (backend/core/config.py), so an imported row could always have been written by the live server:
 a session id of 8-64 ASCII letters, digits and hyphens; durations of 0..86,400,000 ms; only the seven section
 names; questions of at most 2000 characters and answers of at most MAX_ASSISTANT_MESSAGE_CHARS; reasons of
 at most 500; US patent numbers only. Unknown keys are rejected at every level, and every error names its
@@ -18,7 +17,6 @@ caps (ASSIST_MAX_CONVERSATION_TURNS turns, MAX_REQUEST_CHARS characters).
 """
 
 import json
-import re
 from collections.abc import Iterable
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
@@ -36,22 +34,22 @@ from pydantic import (
     field_validator,
 )
 
-from backend.api.limits import MAX_REQUEST_CHARS
-from backend.api.schemas import (
-    ASSIST_MAX_CONVERSATION_TURNS,
-    ASSIST_MAX_REASON_CHARS,
-    ASSIST_MAX_TURN_CHARS,
-    DurationMs,
-)
 from backend.core.assist.bounce import is_bounce
 from backend.core.assist.brief import Brief, is_us_patent
 from backend.core.assist.intent import SECTION_NAMES, Intent, classify_intent, primary_section
-from backend.core.config import MAX_ASSISTANT_MESSAGE_CHARS
+from backend.core.config import (
+    ASSIST_MAX_CONVERSATION_TURNS,
+    ASSIST_MAX_REASON_CHARS,
+    ASSIST_MAX_TURN_CHARS,
+    ASSIST_SESSION_ID_RE,
+    MAX_ASSISTANT_MESSAGE_CHARS,
+    MAX_REQUEST_CHARS,
+    DurationMs,
+)
 
 IMPORTED_SOURCE = "imported"
 MAX_QUESTIONS_PER_RECORD = 40
 MAX_ASSIST_VERSION = 1_000_000
-_SESSION_ID_RE = re.compile(r"[A-Za-z0-9-]{8,64}", re.ASCII)  # the live pattern (a test pins the parity)
 
 
 # ---- the record format ------------------------------------------------------------------------------
@@ -124,7 +122,7 @@ class ImportRecord(_Strict):
     @field_validator("session_id")
     @classmethod
     def _session_id_shape(cls, value: str) -> str:
-        if _SESSION_ID_RE.fullmatch(value) is None:
+        if ASSIST_SESSION_ID_RE.fullmatch(value) is None:
             raise ValueError("must be 8-64 characters: letters, digits and hyphens")
         return value
 

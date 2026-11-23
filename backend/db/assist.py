@@ -8,6 +8,7 @@ from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
+from backend.core.assist.adoption import flag_reasons
 from backend.core.assist.bounce import is_bounce
 from backend.core.assist.brief import Brief
 from backend.core.assist.evidence import MAX_EVIDENCE_CHARS, cut_on_line, evidence_summary
@@ -44,6 +45,27 @@ def _same_patent(a: str, b: str) -> bool:
     return a.strip().upper() == b.strip().upper()
 
 
+IMPORTED = "imported"
+
+
+def session_is_imported(db: Session, session_id: str) -> bool:
+    """True when the session id belongs to imported data: its page view or any of its questions is imported."""
+    return (
+        db.scalar(
+            select(AssistPageView.session_id).where(
+                AssistPageView.session_id == session_id, AssistPageView.source == IMPORTED
+            )
+        )
+        is not None
+        or db.scalar(
+            select(AssistQuestion.id)
+            .where(AssistQuestion.session_id == session_id, AssistQuestion.source == IMPORTED)
+            .limit(1)
+        )
+        is not None
+    )
+
+
 def _load_view(db: Session, session_id: str) -> AssistPageView | None:
     """The session's page view, read with a row lock (a no-op on SQLite) so a merge cannot lose a concurrent one."""
     return db.scalar(select(AssistPageView).where(AssistPageView.session_id == session_id).with_for_update())
@@ -70,7 +92,7 @@ def upsert_page_view(
 
     A session id never moves between workspaces, and one session is one patent: the patent number stored
     on first sight is pinned (compared after strip + upper). Either mismatch raises `SessionConflict` and
-    changes nothing. `assist_version` is set on insert only, so it stays the version first seen.
+    changes nothing, and so does a non-imported heartbeat for a session whose stored source is `imported`. `assist_version` is set on insert only, so it stays the version first seen.
     """
     for attempt in (1, 2):
         try:
@@ -95,6 +117,8 @@ def upsert_page_view(
                     raise SessionConflict(session_id)
                 if not _same_patent(view.patent_number, patent_number):
                     raise SessionConflict(session_id)
+                if view.source == IMPORTED and source != IMPORTED:
+                    raise SessionConflict(session_id)  # a live heartbeat never turns imported data live
                 view.updated_at = now
                 merged_dwell = max(view.dwell_ms or 0, dwell_ms)
                 merged = dict(view.sections or {})
@@ -130,6 +154,9 @@ def add_question(
     reasked: bool = False,
     created_at: datetime | None = None,
 ) -> AssistQuestion:
+    """Store one question. A non-imported question for an imported session raises `SessionConflict`."""
+    if source != IMPORTED and session_is_imported(db, session_id):
+        raise SessionConflict(session_id)
     question = AssistQuestion(
         workspace_id=workspace_id,
         session_id=session_id,
@@ -240,7 +267,7 @@ _BLOCK_SEPARATOR = "\n---\n"
 
 
 def _is_flagged(question: AssistQuestion) -> bool:
-    return question.rating in ("down", "no_answer") or bool(question.reasked) or not question.citation_ok
+    return bool(flag_reasons(question.rating, question.reasked, question.citation_ok))
 
 
 def run_evidence(db: Session, run: Run) -> str:

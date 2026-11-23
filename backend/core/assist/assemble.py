@@ -49,9 +49,10 @@ _TRUNCATION_MARKER = "\n[...truncated]"
 _BLOCK_JOINER = "\n\n"
 
 NOT_US_ANSWER = (
-    "Patent Assist currently supports US patents only. This page is not a US patent "
-    "(US granted patents look like US10000000B2, applications like US20160266243A1), "
-    "so I cannot answer questions about it. Open a US patent page on Google Patents and ask again."
+    "Patent Assist currently supports US utility patents and applications only. This page is not one "
+    "(US granted patents look like US10000000B2, applications like US20160266243A1; design, reissue and plant "
+    "patents are not supported), so I cannot answer questions about it. Open a US patent or application page "
+    "on Google Patents and ask again."
 )
 
 

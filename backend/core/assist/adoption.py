@@ -8,6 +8,17 @@ Every ratio whose denominator is zero is None (never an exception, never NaN, ne
 to be a rate). Shares and rates are rounded to 4 decimals. Rows with source "imported" are demo data:
 they count in the adoption numbers (so the console can show a demo dataset) but never in the
 version comparison.
+
+Definitions (what each number counts):
+- coverage[section]: engaged (non-bounce) views where the section was visible at least COVERAGE_MIN_VISIBLE_MS
+  (3000 ms; 2999 does not count), over all engaged views. Bounced views are in neither numerator nor denominator.
+- views_by_section[section]: engaged views where the section's visible_ms is above 0.
+- help_demand[section]: ALL questions focused on the section (bounced and imported ones included) per 100
+  engaged views of it, so it can exceed 100. None when no engaged view showed the section.
+- thumbs_down_rate*: questions rated "down" over questions; a "no_answer" rating is not counted.
+- refusal_count: the number of questions with the legal_opinion_request intent. It is the count of questions
+  the assistant is expected to refuse, not of verified refusals.
+- sources "live" is every row whose source is not "imported"; the adoption numbers blend live and imported rows.
 """
 
 from collections import defaultdict
@@ -54,6 +65,22 @@ class Q:
     citation_ok: bool
     source: str
     assist_version: int | None
+
+
+# Why a question counts as flagged, in display order. The one definition: the console's reasons, the
+# flywheel's choice of evidence questions and the importer's flagged test all follow it.
+FLAG_REASONS = ("rated_down", "no_answer", "reasked", "citation_unverified")
+
+
+def flag_reasons(rating: str | None, reasked: bool, citation_ok: bool) -> list[str]:
+    """The flag reasons of one question, in FLAG_REASONS order; empty when it is not flagged."""
+    found = {
+        "rated_down": rating == "down",
+        "no_answer": rating == "no_answer",
+        "reasked": bool(reasked),
+        "citation_unverified": not citation_ok,
+    }
+    return [reason for reason in FLAG_REASONS if found[reason]]
 
 
 def _ratio(numerator: int, denominator: int, scale: int = 1) -> float | None:

@@ -103,6 +103,20 @@ def _snapshot_brief(snapshot: object) -> Brief | None:
         raise JobFailed(_BAD_SNAPSHOT) from exc
 
 
+def _page_evidence(agent: Agent, run: Run) -> dict:
+    """The judge's ``evidence`` keyword for a flagged assistant run: the page the answer was given against.
+
+    Empty (the plain judge call) for any other agent or run, and for a snapshot that is missing or no
+    longer validates: the run is then judged on the conversation alone, as a manual run is.
+    """
+    if agent.kind != "assist" or run.brief_snapshot is None:
+        return {}
+    try:
+        return {"evidence": judge_brief_text(Brief.model_validate(run.brief_snapshot))}
+    except ValueError:
+        return {}
+
+
 def _replay_and_judge(
     config: AgentConfig, judge_config: AgentConfig, spec: CriterionSpec, messages: list[str], brief: Brief | None
 ) -> tuple[list[dict], JudgeResult]:
@@ -181,7 +195,7 @@ def handle_build_tests(db: Session, job: Job) -> dict:
         for run in reversed(recent):  # oldest -> newest
             if not user_messages(run.messages):
                 continue  # nothing to replay, so it can never become a test
-            result = judge(config, spec, run.messages)
+            result = judge(config, spec, run.messages, **_page_evidence(agent, run))
             judged.append((run, result))
             if result.verdict == "fail":
                 failures += 1
