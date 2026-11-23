@@ -61,9 +61,15 @@ ALLOWED_ORIGINS = [
     if o.strip()
 ]
 
+# The Patent Assist extension's service worker calls /assist/* from a chrome-extension:// origin, and Chrome
+# sends a CORS preflight for it. Extension ids are 32 lower-case letters. This only lets the browser
+# read the response: every /assist route still needs X-Assist-Key and every other route its token.
+EXTENSION_ORIGIN_REGEX = r"^chrome-extension://[a-p]{32}$"
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=ALLOWED_ORIGINS,
+    allow_origin_regex=EXTENSION_ORIGIN_REGEX,
     allow_methods=["*"],
     allow_headers=["*"],
 )

@@ -46,6 +46,44 @@ def test_cors_preflight_allows_workspace_token_header(client):
     assert "x-workspace-token" in r.headers["access-control-allow-headers"].lower()
 
 
+_EXTENSION_ORIGIN = "chrome-extension://" + "a" * 32
+
+
+def _preflight(client, origin):
+    return client.options(
+        "/assist/chat",
+        headers={
+            "Origin": origin,
+            "Access-Control-Request-Method": "POST",
+            "Access-Control-Request-Headers": "content-type,x-assist-key",
+        },
+    )
+
+
+def test_cors_preflight_allows_an_extension_origin(client):
+    # Chrome sends a preflight for the extension's service worker requests (seen on a real run), so the
+    # origin of an unpacked extension must pass; the assist key is what actually authorises the call.
+    r = _preflight(client, _EXTENSION_ORIGIN)
+    assert r.status_code == 200
+    assert r.headers["access-control-allow-origin"] == _EXTENSION_ORIGIN
+    assert "x-assist-key" in r.headers["access-control-allow-headers"].lower()
+
+
+@pytest.mark.parametrize(
+    "origin",
+    [
+        "https://evil.example",
+        "http://127.0.0.1:9999",
+        "chrome-extension://" + "a" * 31,  # not a 32-letter extension id
+        "chrome-extension://" + "a" * 32 + ".evil.example",
+        "chrome-extension://" + "A" * 32,  # ids are lower case
+        "moz-extension://" + "a" * 32,
+    ],
+)
+def test_cors_preflight_still_rejects_other_origins(client, origin):
+    assert _preflight(client, origin).status_code == 400
+
+
 def _patch_lifespan(db_session, monkeypatch):
     """Point the startup purge at the test database and replace the worker loop with a recorder."""
     monkeypatch.setattr("backend.main.SessionLocal", sessionmaker(bind=db_session.get_bind()))
