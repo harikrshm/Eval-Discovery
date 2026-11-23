@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
-import { createMessageHandler, registerListener } from './background.js'
+import { MAX_PAYLOAD_CHARS, createMessageHandler, registerListener } from './background.js'
 import { MESSAGES, isFixedMessage } from './messages.js'
 
 const ORIGIN = 'https://assist.example.com'
@@ -110,6 +110,8 @@ describe('createMessageHandler', () => {
   })
 })
 
+const PAGE = 'https://patents.google.com/patent/US1B2/en'
+
 describe('registerListener', () => {
   function fakeChrome(id = 'ext-id') {
     const listeners = []
@@ -120,7 +122,7 @@ describe('registerListener', () => {
     const handle = vi.fn(async () => ({ ok: true }))
     registerListener(chrome, handle)
     const sendResponse = vi.fn()
-    const ret = chrome.listeners[0]({ type: 'rating', payload: {} }, { id: 'ext-id' }, sendResponse)
+    const ret = chrome.listeners[0]({ type: 'rating', payload: {} }, { id: 'ext-id', url: PAGE }, sendResponse)
     expect(ret).toBe(true)
     await Promise.resolve()
     await Promise.resolve()
@@ -144,8 +146,65 @@ describe('registerListener', () => {
       throw new Error('x')
     })
     const sendResponse = vi.fn()
-    chrome.listeners[0]({ type: 'chat', payload: {} }, { id: 'ext-id' }, sendResponse)
+    chrome.listeners[0]({ type: 'chat', payload: {} }, { id: 'ext-id', url: PAGE }, sendResponse)
     await new Promise((r) => setTimeout(r, 0))
     expect(sendResponse).toHaveBeenCalledWith({ ok: false, status: 0, message: MESSAGES.generic })
+  })
+})
+
+describe('payload size cap (M8)', () => {
+  it('forwards a payload at the cap and rejects one over it without a request', async () => {
+    const fetchFn = vi.fn(async () => new Response(null, { status: 204 }))
+    const h = handler(fetchFn)
+    const at = { s: 'x'.repeat(MAX_PAYLOAD_CHARS - JSON.stringify({ s: '' }).length) }
+    expect(JSON.stringify(at).length).toBe(MAX_PAYLOAD_CHARS)
+    expect(await h({ type: 'page_view', payload: at })).toEqual({ ok: true })
+    const over = { s: `${at.s}x` }
+    expect(await h({ type: 'page_view', payload: over })).toEqual({ ok: false, status: 400, message: MESSAGES.badRequest })
+    expect(fetchFn).toHaveBeenCalledTimes(1)
+  })
+  it('rejects a payload that cannot be serialised', async () => {
+    const fetchFn = vi.fn()
+    const cyclic = {}
+    cyclic.self = cyclic
+    expect(await handler(fetchFn)({ type: 'chat', payload: cyclic })).toEqual({ ok: false, status: 400, message: MESSAGES.badRequest })
+    expect(fetchFn).not.toHaveBeenCalled()
+  })
+})
+
+describe('sender check (M8)', () => {
+  function fakeChrome() {
+    const listeners = []
+    return { listeners, runtime: { id: 'ext-id', onMessage: { addListener: (fn) => listeners.push(fn) } } }
+  }
+  const call = (sender) => {
+    const chrome = fakeChrome()
+    const handle = vi.fn(async () => ({ ok: true }))
+    registerListener(chrome, handle)
+    const sendResponse = vi.fn()
+    const ret = chrome.listeners[0]({ type: 'chat', payload: {} }, sender, sendResponse)
+    return { ret, handle, sendResponse }
+  }
+  it.each([
+    [{ id: 'ext-id', url: 'https://patents.google.com/patent/US1B2/en' }],
+    [{ id: 'ext-id', tab: { url: 'https://patents.google.com/patent/US1B2/en' } }],
+  ])('answers a content script on a patent page: %j', (sender) => {
+    const { ret, handle } = call(sender)
+    expect(ret).toBe(true)
+    expect(handle).toHaveBeenCalledTimes(1)
+  })
+  it.each([
+    [{ id: 'ext-id' }],
+    [{ id: 'ext-id', url: 'chrome-extension://ext-id/popup.html' }],
+    [{ id: 'ext-id', url: 'https://patents.google.com/?q=x' }],
+    [{ id: 'ext-id', url: 'https://patents.google.com.evil.example/patent/US1B2/en' }],
+    [{ id: 'ext-id', url: 'http://patents.google.com/patent/US1B2/en' }],
+    [{ id: 'ext-id', url: 'https://example.com/patent/US1B2/en' }],
+    [{ id: 'ext-id', url: 'not a url' }],
+  ])('rejects other senders of the extension with one fixed error and forwards nothing: %j', (sender) => {
+    const { ret, handle, sendResponse } = call(sender)
+    expect(ret).toBe(false)
+    expect(handle).not.toHaveBeenCalled()
+    expect(sendResponse).toHaveBeenCalledWith({ ok: false, status: 403, message: MESSAGES.badRequest })
   })
 })

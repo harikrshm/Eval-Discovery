@@ -27,11 +27,13 @@ export const SECTION_SELECTORS = {
 
 export const MAX_DURATION_MS = 86_400_000 // the backend's per-value limit
 export const VISIBLE_RATIO = 0.4
+const RATIO_EPSILON = 1e-4 // an IntersectionObserver ratio of 0.39999999 is the 40% threshold, rounded
 export const BOUNCE_DWELL_MS = 10_000
 export const VIEWED_MS = 3_000
 const MIN_LIFETIME_MS = 1_000 // a session shorter than this sends nothing
 const MAX_GAP_MS = 60_000 // one clock step counts at most this long (a suspended machine must not add hours)
 const RESCAN_DELAY_MS = 500
+const IN_FLIGHT_TIMEOUT_MS = 30_000 // a heartbeat request that has not settled by then is treated as failed
 const THRESHOLDS = [0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1]
 // A section taller than 2.5 viewports can never reach 40% of its own height in view, so for those
 // the middle 40% band of the viewport stands in: it counts while the element overlaps that band.
@@ -90,6 +92,7 @@ export function createTracker(
   let dirty = false
   let intervalId = null
   let rescanTimer = null
+  let inFlightTimer = null
 
   // ---- time accounting -------------------------------------------------
 
@@ -97,7 +100,7 @@ export function createTracker(
     const viewport = win?.innerHeight ?? 0
     for (const state of tracked.values()) {
       if (state.name !== name) continue
-      if (state.ratio >= VISIBLE_RATIO) return true
+      if (state.ratio >= VISIBLE_RATIO - RATIO_EPSILON) return true
       if (state.band && state.height * VISIBLE_RATIO > viewport) return true
     }
     return false
@@ -107,7 +110,7 @@ export function createTracker(
   function accrue() {
     const t = now()
     const dt = Math.min(MAX_GAP_MS, Math.max(0, t - last))
-    last = Math.max(last, t)
+    last = t // also after a backwards step (rebase), so accrual carries on from the new reading
     if (!tabVisible || dt === 0) return
     dwell += dt
     for (const name of names) if (sectionVisible(name)) sectionMs[name] += dt
@@ -141,7 +144,12 @@ export function createTracker(
     inFlight = true
     const previous = sentSig
     sentSig = sig
+    let settled = false
     const settle = (failed) => {
+      if (settled) return // the timeout and the request itself can both report; the first one wins
+      settled = true
+      if (inFlightTimer !== null) clearTimeout(inFlightTimer)
+      inFlightTimer = null
       if (failed && sentSig === sig) sentSig = previous // not delivered: the next heartbeat may carry it again
       inFlight = false
       if (dirty) {
@@ -149,6 +157,7 @@ export function createTracker(
         push() // once more, with the totals as they are now
       }
     }
+    inFlightTimer = setTimeout(() => settle(true), IN_FLIGHT_TIMEOUT_MS)
     let result
     try {
       result = sendHeartbeat(payload)
@@ -270,6 +279,8 @@ export function createTracker(
       intervalId = null
       if (rescanTimer !== null) clearTimeout(rescanTimer)
       rescanTimer = null
+      if (inFlightTimer !== null) clearTimeout(inFlightTimer)
+      inFlightTimer = null
       mutationObserver?.disconnect()
       mainObserver?.disconnect()
       bandObserver?.disconnect()

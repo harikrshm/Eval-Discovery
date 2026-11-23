@@ -244,7 +244,7 @@ function readStatus(events) {
 
 // ---- classifications, landscapes -----------------------------------------
 
-function readClassifications(doc) {
+function readClassifications(doc, partial) {
   const out = []
   const seen = new Set()
   for (const tree of all(first(doc, 'classification-viewer'), 'classification-tree')) {
@@ -258,27 +258,33 @@ function readClassifications(doc) {
     const leaf = nodes[nodes.length - 1]
     if (seen.has(leaf.code)) continue
     seen.add(leaf.code)
+    if (out.length >= CAPS.listItems) {
+      partial.add('classifications')
+      break
+    }
     const item = { code: cut(leaf.code, CAPS.short) }
     const title = short(leaf.title)
     if (title) item.title = title
+    if (nodes.length - 1 > CAPS.listItems) partial.add('classifications')
     item.path = nodes.slice(0, -1).slice(0, CAPS.listItems).map((n) => cut(clean(`${n.code} ${n.title}`), CAPS.short))
     out.push(item)
-    if (out.length >= CAPS.listItems) break
   }
   return out
 }
 
-function readLandscapes(doc) {
-  const terms = all(doc, 'landscape-link [data-term]').map((e) => clean(e.getAttribute('data-term'))).filter(Boolean)
-  return uniq(terms).slice(0, CAPS.listItems).map((t) => cut(t, CAPS.short))
+function readLandscapes(doc, partial) {
+  const terms = uniq(all(doc, 'landscape-link [data-term]').map((e) => clean(e.getAttribute('data-term'))).filter(Boolean))
+  if (terms.length > CAPS.listItems) partial.add('landscapes')
+  return terms.slice(0, CAPS.listItems).map((t) => cut(t, CAPS.short))
 }
 
 // ---- text sections --------------------------------------------------------
 
-function readAbstract(doc) {
+function readAbstract(doc, partial) {
   const pt = patentText(doc, 'abstract')
   const sec = first(pt, 'section.flex') || pt
   const t = textOf(sec)
+  if (t.length > CAPS.abstract) partial.add('abstract')
   return t ? cut(t, CAPS.abstract) : ''
 }
 
@@ -338,7 +344,7 @@ function readDescription(doc) {
   return { sections: out.slice(0, keep), omitted: out.length - keep }
 }
 
-function readClaims(doc) {
+function readClaims(doc, partial) {
   const pt = patentText(doc, 'claims')
   const raw = []
   const seen = new Set()
@@ -351,12 +357,16 @@ function readClaims(doc) {
     // No usable num attribute: count on from the previous claim.
     if (Number.isNaN(number)) number = last + 1
     if (!Number.isSafeInteger(number) || number < 1 || seen.has(number)) continue
+    if (raw.length >= CAPS.claims) {
+      partial.add('claims')
+      break
+    }
     seen.add(number)
     last = Math.max(last, number)
     // The page prefixes the claim's own number ("1. A device ...", "00007. ..."); EP pages do not.
     const text = textOf(el).replace(new RegExp(`^0*${number}\\s*[.)]\\s*`), '')
+    if (text.length > CAPS.claimChars) partial.add('claims')
     raw.push({ number, text: cut(text, CAPS.claimChars) })
-    if (raw.length >= CAPS.claims) break
   }
   return buildClaimTree(raw)
 }
@@ -381,13 +391,14 @@ function cells(row) {
   return [...row.children].filter((c) => c.classList.contains('td'))
 }
 
-function readCitations(doc, headingId) {
+function readCitations(doc, headingId, partial) {
   const rows = []
   for (const row of rowsOf(tableAfter(doc, headingId))) {
     const c = cells(row)
     if (c.length < 3) continue
     const link = first(c[0], 'a')
     const item = {}
+    const capped = rows.length >= CAPS.listItems
     const number = short(link ? link.textContent : c[0].textContent.replace(/[*†‡]/g, ''))
     if (number) item.number = number
     const date = short(c[2].textContent)
@@ -400,13 +411,17 @@ function readCitations(doc, headingId) {
       const title = short(c[4].textContent)
       if (title) item.title = title
     }
-    if (Object.keys(item).length) rows.push(item)
-    if (rows.length >= CAPS.listItems) break
+    if (!Object.keys(item).length) continue
+    if (capped) {
+      partial.add('citations')
+      break
+    }
+    rows.push(item)
   }
   return rows
 }
 
-function readLegalEvents(doc, events) {
+function readLegalEvents(doc, events, partial) {
   const out = []
   for (const e of events) {
     // Status and expiry are separate fields; the rest of the timeline is the event list.
@@ -431,10 +446,11 @@ function readLegalEvents(doc, events) {
     if (text) item.text = text
     if (Object.keys(item).length) out.push(item)
   }
+  if (out.length > CAPS.listItems) partial.add('legal_events')
   return out.slice(0, CAPS.listItems)
 }
 
-function readFamily(doc) {
+function readFamily(doc, partial) {
   const out = []
   const tl = first(doc, 'application-timeline')
   for (const block of all(tl, '.block')) {
@@ -454,8 +470,12 @@ function readFamily(doc) {
       if (country) item.country = country
       const status = short(find('Legal status:'))
       if (status) item.status = status
-      if (Object.keys(item).length) out.push(item)
-      if (out.length >= CAPS.listItems) return out
+      if (!Object.keys(item).length) continue
+      if (out.length >= CAPS.listItems) {
+        partial.add('family')
+        return out
+      }
+      out.push(item)
     }
   }
   return out
@@ -507,7 +527,8 @@ function minimalBrief(brief) {
     completeness: Object.fromEntries(COMPLETENESS_KEYS.map((k) => [k, false])),
   }
   if (brief.title) out.title = brief.title
-  out.completeness.claims = out.claims.length > 0
+  // Nothing but a few claims survives, so only claims can be complete, and only if none were lost.
+  out.completeness.claims = out.claims.length > 0 && out.claims.length === brief.claims.length && out.claims.every((c, i) => c.text === brief.claims[i].text)
   return out
 }
 
@@ -516,6 +537,8 @@ function minimalBrief(brief) {
  * safety margin). Order: citation rows, description sections from the end (counted in a marker
  * section), classification paths, legal events, family, classifications, claims, then the people
  * and landscape lists; if even that is not enough, a minimal brief.
+ * `partial` names every section that lost content here (completeness keys), so the caller can
+ * report it as incomplete.
  */
 export function fitBrief(brief, omitted = 0, budget = CAPS.total) {
   const sections = brief.description
@@ -528,25 +551,40 @@ export function fitBrief(brief, omitted = 0, budget = CAPS.total) {
     render()
     return backendSize(brief) > budget
   }
-  const shrink = (list) => {
-    while (list.length && over()) list.length = Math.floor(list.length / 2)
+  const partial = new Set()
+  const shrink = (list, key) => {
+    while (list.length && over()) {
+      list.length = Math.floor(list.length / 2)
+      partial.add(key)
+    }
   }
-  shrink(brief.citations.patent)
-  shrink(brief.citations.cited_by)
+  shrink(brief.citations.patent, 'citations')
+  shrink(brief.citations.cited_by, 'citations')
   while (sections.length && over()) {
     sections.pop()
     dropped += 1
   }
-  if (over()) for (const c of brief.classifications) c.path = []
-  shrink(brief.legal_events)
-  shrink(brief.family)
-  shrink(brief.classifications)
-  while (brief.claims.length > 1 && over()) brief.claims.pop()
-  shrink(brief.inventors)
-  shrink(brief.assignees)
-  shrink(brief.landscapes)
-  if (over()) return { brief: minimalBrief({ ...brief, claims: allClaims }), omitted: 0 }
-  return { brief, omitted: dropped }
+  if (over()) {
+    for (const c of brief.classifications) c.path = []
+    partial.add('classifications')
+  }
+  shrink(brief.legal_events, 'legal_events')
+  shrink(brief.family, 'family')
+  shrink(brief.classifications, 'classifications')
+  while (brief.claims.length > 1 && over()) {
+    brief.claims.pop()
+    partial.add('claims')
+  }
+  shrink(brief.inventors, 'bibliographic')
+  shrink(brief.assignees, 'bibliographic')
+  shrink(brief.landscapes, 'landscapes')
+  if (over()) {
+    const minimal = minimalBrief({ ...brief, claims: allClaims })
+    const lost = new Set(COMPLETENESS_KEYS)
+    if (minimal.completeness.claims) lost.delete('claims')
+    return { brief: minimal, omitted: 0, partial: lost }
+  }
+  return { brief, omitted: dropped, partial }
 }
 
 /**
@@ -556,22 +594,23 @@ export function fitBrief(brief, omitted = 0, budget = CAPS.total) {
  */
 export function extractBrief(doc, url) {
   const number = safe(() => numberFromUrl(url), '') || safe(() => numberFromPage(doc), '')
+  const partial = new Set() // sections whose content was capped or shrunk
   const events = safe(() => readTimeline(doc), [])
   const title = safe(() => readTitle(doc), '')
   const people = safe(() => readPeople(doc), { inventors: [], assignees: [] })
   const dates = safe(() => readDates(doc, events, number), {})
   const { status, expiry } = safe(() => readStatus(events), {})
-  const abstract = safe(() => readAbstract(doc), '')
-  const classifications = safe(() => readClassifications(doc), [])
-  const landscapes = safe(() => readLandscapes(doc), [])
-  const claims = safe(() => readClaims(doc), [])
+  const abstract = safe(() => readAbstract(doc, partial), '')
+  const classifications = safe(() => readClassifications(doc, partial), [])
+  const landscapes = safe(() => readLandscapes(doc, partial), [])
+  const claims = safe(() => readClaims(doc, partial), [])
   const { sections, omitted } = safe(() => readDescription(doc), { sections: [], omitted: 0 })
   const citations = {
-    patent: safe(() => readCitations(doc, 'patentCitations'), []),
-    cited_by: safe(() => readCitations(doc, 'citedBy'), []),
+    patent: safe(() => readCitations(doc, 'patentCitations', partial), []),
+    cited_by: safe(() => readCitations(doc, 'citedBy', partial), []),
   }
-  const family = safe(() => readFamily(doc), [])
-  const legalEvents = safe(() => readLegalEvents(doc, events), [])
+  const family = safe(() => readFamily(doc, partial), [])
+  const legalEvents = safe(() => readLegalEvents(doc, events, partial), [])
 
   const draft = {
     patent_number: cut(number, 64),
@@ -594,19 +633,23 @@ export function extractBrief(doc, url) {
   const ex = short(expiry)
   if (ex) draft.expiry = ex
 
-  const { brief, omitted: dropped } = fitBrief(draft, omitted)
-  // Completeness describes what is in the final brief. A truncated description is reported as
-  // not complete; the marker section at the end of `description` says how much is missing.
+  if (people.inventors.length > CAPS.listItems || people.assignees.length > CAPS.listItems) partial.add('bibliographic')
+
+  const { brief, omitted: dropped, partial: shrunk } = fitBrief(draft, omitted)
+  for (const k of shrunk) partial.add(k)
+  // Completeness describes what is in the final brief. A section that was capped or shrunk (at
+  // read time or to fit the size budget) is reported as not complete; for the description, the
+  // marker section at the end says how much is missing.
   brief.completeness = {
-    bibliographic: Boolean(brief.title && (brief.inventors.length || brief.assignees.length || Object.keys(brief.dates).length)),
-    abstract: Boolean(brief.abstract),
-    claims: brief.claims.length > 0,
+    bibliographic: !partial.has('bibliographic') && Boolean(brief.title && (brief.inventors.length || brief.assignees.length || Object.keys(brief.dates).length)),
+    abstract: !partial.has('abstract') && Boolean(brief.abstract),
+    claims: !partial.has('claims') && brief.claims.length > 0,
     description: brief.description.length > 0 && dropped === 0,
-    classifications: brief.classifications.length > 0,
-    landscapes: brief.landscapes.length > 0,
-    citations: brief.citations.patent.length > 0 || brief.citations.cited_by.length > 0,
-    family: brief.family.length > 0,
-    legal_events: brief.legal_events.length > 0,
+    classifications: !partial.has('classifications') && brief.classifications.length > 0,
+    landscapes: !partial.has('landscapes') && brief.landscapes.length > 0,
+    citations: !partial.has('citations') && (brief.citations.patent.length > 0 || brief.citations.cited_by.length > 0),
+    family: !partial.has('family') && brief.family.length > 0,
+    legal_events: !partial.has('legal_events') && brief.legal_events.length > 0,
   }
   return brief
 }

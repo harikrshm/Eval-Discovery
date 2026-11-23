@@ -91,6 +91,17 @@ describe('checkReady', () => {
     // US100000 is a prefix of US1000000B2 but is a different number only when it has a kind code
     expect(checkReady(document, url('US100000B2')).ok).toBe(false)
   })
+  it('a kindless URL only accepts a page whose remainder is a kind code (no longer number)', () => {
+    render(document, { number: 'US6756997B1' })
+    // /patent/US675699 is a prefix of the previous page's number, but "7B1" is not a kind code
+    expect(checkReady(document, url('US675699')).ok).toBe(false)
+    expect(checkReady(document, url('US6756')).ok).toBe(false)
+    expect(checkReady(document, url('US6756997')).ok).toBe(true) // remainder "B1"
+    render(document, { number: 'US7629993A' })
+    expect(checkReady(document, url('US7629993')).ok).toBe(true) // remainder "A"
+    render(document, { number: 'US7629993' })
+    expect(checkReady(document, url('US7629993')).ok).toBe(true) // exact
+  })
   it('needs a title and claims', () => {
     render(document, { title: '   ' })
     expect(checkReady(document, url('US1000000B2'))).toMatchObject({ ok: false, onlyClaimsMissing: false })

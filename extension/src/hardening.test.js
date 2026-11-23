@@ -206,8 +206,8 @@ describe('size guarantee', () => {
     expect(brief.title).toBe(full.title)
     expect(brief.claims.length).toBe(5)
     expect(brief.description).toEqual([])
-    expect(Object.values({ ...brief.completeness, claims: false }).every((v) => v === false)).toBe(true)
-    expect(brief.completeness.claims).toBe(true)
+    // I1: only the first 5 of the claims survive, so claims are reported incomplete too
+    expect(Object.values(brief.completeness).every((v) => v === false)).toBe(true)
     // claims keep their dependency data
     expect(brief.claims[1]).toMatchObject({ number: 2, depends_on: [1], independent: false })
   })

@@ -16,6 +16,11 @@ const ROUTES = {
   page_view: '/assist/page-views',
 }
 const TIMEOUT_MS = 60000
+// A page-view or chat payload is a brief (at most about 540 KB from the extractor) plus a short history, so
+// nothing legitimate comes near this; a bigger one is not forwarded.
+export const MAX_PAYLOAD_CHARS = 1_000_000
+const CONTENT_ORIGIN = 'https://patents.google.com'
+const CONTENT_PATH = '/patent/'
 
 const isPlainObject = (v) => v !== null && typeof v === 'object' && !Array.isArray(v)
 
@@ -35,13 +40,20 @@ export function createMessageHandler({ key, origin, fetchFn = (...a) => fetch(..
       return failure(400, MESSAGES.badRequest)
     }
     if (!assistKey) return failure(503, MESSAGES.notConfigured)
+    let body
+    try {
+      body = JSON.stringify(message.payload)
+    } catch {
+      return failure(400, MESSAGES.badRequest)
+    }
+    if (typeof body !== 'string' || body.length > MAX_PAYLOAD_CHARS) return failure(400, MESSAGES.badRequest)
     const controller = new AbortController()
     const timer = setTimeout(() => controller.abort(), timeoutMs)
     try {
       const res = await fetchFn(`${origin}${ROUTES[type]}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'X-Assist-Key': assistKey },
-        body: JSON.stringify(message.payload),
+        body,
         credentials: 'omit',
         redirect: 'error',
         signal: controller.signal,
@@ -65,12 +77,32 @@ export function createMessageHandler({ key, origin, fetchFn = (...a) => fetch(..
   }
 }
 
-/** Register the onMessage listener. Only messages from this extension are answered. */
+/** True when the sender is a page of https://patents.google.com/patent/... (where the content script runs). */
+export function isPatentPageSender(sender) {
+  const raw = sender && (sender.url || (sender.tab && sender.tab.url))
+  if (typeof raw !== 'string') return false
+  try {
+    const u = new URL(raw)
+    return u.origin === CONTENT_ORIGIN && u.pathname.startsWith(CONTENT_PATH)
+  } catch {
+    return false
+  }
+}
+
+/**
+ * Register the onMessage listener. Only messages from this extension are answered, and of those only
+ * the ones sent from a Google Patents patent page (the content script); any other sender of this
+ * extension gets one fixed error and nothing is forwarded.
+ */
 export function registerListener(chromeApi, handle) {
   const runtime = chromeApi && chromeApi.runtime
   if (!runtime || !runtime.onMessage) return
   runtime.onMessage.addListener((message, sender, sendResponse) => {
     if (!sender || sender.id !== runtime.id) return false
+    if (!isPatentPageSender(sender)) {
+      sendResponse(failure(403, MESSAGES.badRequest))
+      return false
+    }
     handle(message).then(sendResponse, () => sendResponse(failure(0, MESSAGES.generic)))
     return true // the response is sent asynchronously
   })

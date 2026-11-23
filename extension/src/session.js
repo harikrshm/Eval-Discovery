@@ -37,6 +37,8 @@ export function patentKeyFromUrl(url) {
 }
 
 const HAS_KIND_CODE = /^[A-Z]{2}\d+[A-Z]\d?$/
+// What a kindless URL number may be extended by on the page: a kind code such as B2 or A (not more digits).
+const KIND_TAIL = /^[A-Z]\d?$/
 
 /**
  * Whether the DOM shows the patent of the URL (not a previous one) and is complete enough to read:
@@ -47,7 +49,8 @@ const HAS_KIND_CODE = /^[A-Z]{2}\d+[A-Z]\d?$/
 export function checkReady(doc, url) {
   const key = patentKeyFromUrl(url)
   const page = normalizePatentNumber(doc.querySelector('h2#pubnum')?.textContent ?? '')
-  const numberOk = Boolean(key) && Boolean(page) && (page === key || (!HAS_KIND_CODE.test(key) && page.startsWith(key)))
+  const numberOk =
+    Boolean(key) && Boolean(page) && (page === key || (!HAS_KIND_CODE.test(key) && page.startsWith(key) && KIND_TAIL.test(page.slice(key.length))))
   const titleOk = (doc.querySelector('h1#title')?.textContent ?? '').trim() !== ''
   const claimsOk = doc.querySelector('patent-text[name="claims"] [num]') !== null
   return {

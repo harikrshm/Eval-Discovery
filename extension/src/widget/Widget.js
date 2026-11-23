@@ -6,7 +6,7 @@ import { MESSAGES, isFixedMessage } from '../messages.js'
 import { CHIPS } from './chips.js'
 import STYLES from './styles.css?raw'
 
-export const NON_US_NOTICE = 'Patent Assist works on US patents only.'
+export const NON_US_NOTICE = 'Patent Assist works on US utility patents and applications only.'
 export const INCOMPLETE_NOTE = 'Some page sections could not be read.'
 export const FOOTER_TEXT = 'Not legal advice. Answers are based on the text of this page.'
 export const THINKING_TEXT = 'Thinking…'

@@ -712,3 +712,72 @@ describe('wired to the session controller', () => {
     expect(api.reask.mock.calls[0][0].question_id).toBe('q1')
   })
 })
+
+describe('final fix wave (M9)', () => {
+  it('a backwards clock step does not stop accrual: the clock is rebased on the new value', async () => {
+    const tracker = make()
+    await advance(2000)
+    expect(tracker.snapshot().dwell_ms).toBe(2000)
+    t = 500 // the wall clock stepped back 1500 ms
+    expect(tracker.snapshot().dwell_ms).toBe(2000) // nothing is added for the step itself
+    t = 3500 // three real seconds later
+    expect(tracker.snapshot().dwell_ms).toBe(5000)
+  })
+
+  it('every flush payload (pagehide, tab hidden, destroy, interval) has exactly the five keys', async () => {
+    const els = buildPage()
+    const tracker = make()
+    setRatio(els.claims, 0.9)
+    await advance(16000) // interval flush
+    window.dispatchEvent(new Event('pagehide'))
+    await advance(2000)
+    setVisibility('hidden')
+    await advance(2000)
+    setVisibility('visible')
+    await advance(2000)
+    tracker.destroy()
+    await flushMicrotasks()
+    expect(send.mock.calls.length).toBeGreaterThanOrEqual(3)
+    for (const [payload] of send.mock.calls) {
+      expect(Object.keys(payload).sort()).toEqual(KEYS)
+      expect(Object.keys(payload.sections).sort()).toEqual([...SECTION_NAMES].sort())
+    }
+  })
+
+  it('a request that never settles is given up after 30 s, so later heartbeats are sent again', async () => {
+    send = vi.fn(() => new Promise(() => {}))
+    make()
+    await advance(15000)
+    expect(send).toHaveBeenCalledTimes(1)
+    await advance(15000) // the first request is still pending: this heartbeat waits
+    expect(send).toHaveBeenCalledTimes(1)
+    await advance(15000) // 30 s after the first send: it times out and the waiting totals go out
+    expect(send).toHaveBeenCalledTimes(2)
+    expect(send.mock.calls[1][0].dwell_ms).toBe(45000)
+  })
+
+  it('a timed-out request that settles late changes nothing', async () => {
+    let resolveFirst
+    send = vi.fn()
+    send.mockImplementationOnce(() => new Promise((resolve) => { resolveFirst = resolve }))
+    send.mockImplementation(async () => ({ ok: true }))
+    make()
+    await advance(45000)
+    expect(send).toHaveBeenCalledTimes(2)
+    resolveFirst({ ok: true })
+    await flushMicrotasks()
+    await advance(15000)
+    expect(send).toHaveBeenCalledTimes(3) // one per interval, no duplicate from the late settle
+  })
+
+  it('a ratio a hair under 0.4 (float rounding) still counts as visible; clearly under does not', async () => {
+    const els = buildPage()
+    const tracker = make()
+    setRatio(els.claims, 0.39999999)
+    await advance(3000)
+    expect(tracker.snapshot().sections.claims).toBe(3000)
+    setRatio(els.claims, 0.399)
+    await advance(2000)
+    expect(tracker.snapshot().sections.claims).toBe(3000)
+  })
+})
