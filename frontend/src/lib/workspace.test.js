@@ -109,21 +109,19 @@ describe("workspace storage", () => {
     expect(ws.getAgentId()).toBeNull();
     expect(ws.getToken()).toBe("mem-token");
   });
+
   describe("assist connection", () => {
-    it("backs up the identity, swaps in the demo token and restores it", async () => {
+    it("commits in one step: backs up the identity, then restores it", async () => {
       const ws = await load();
       ws.setToken("mine");
       ws.setAgentId("a1");
-
-      ws.beginAssistSwap("demo");
-      expect(ws.getToken()).toBe("demo");
-      expect(ws.getAgentId()).toBeNull();
-      expect(localStorage.getItem("ed_token_backup")).toBe("mine");
-      expect(localStorage.getItem("ed_agent_id_backup")).toBe("a1");
       expect(ws.isAssistConnected()).toBe(false);
 
-      ws.completeAssistSwap("assist-1");
+      ws.commitAssistSwap("demo", "assist-1");
+      expect(ws.getToken()).toBe("demo");
       expect(ws.getAgentId()).toBe("assist-1");
+      expect(localStorage.getItem("ed_token_backup")).toBe("mine");
+      expect(localStorage.getItem("ed_agent_id_backup")).toBe("a1");
       expect(ws.isAssistConnected()).toBe(true);
 
       ws.restoreAssistBackup();
@@ -136,21 +134,72 @@ describe("workspace storage", () => {
 
     it("clears the workspace on restore when there was nothing before", async () => {
       const ws = await load();
-      ws.beginAssistSwap("demo");
-      ws.completeAssistSwap("assist-1");
+      ws.commitAssistSwap("demo", "assist-1");
       ws.restoreAssistBackup();
       expect(ws.getToken()).toBeNull();
       expect(ws.getAgentId()).toBeNull();
     });
 
-    it("keeps the first backup when a swap begins while already connected", async () => {
+    it("refuses a second swap and leaves the first backup and the connection untouched", async () => {
       const ws = await load();
       ws.setToken("mine");
-      ws.beginAssistSwap("demo");
-      ws.completeAssistSwap("assist-1");
-      ws.beginAssistSwap("other-demo");
+      ws.setAgentId("a1");
+      ws.commitAssistSwap("demo", "assist-1");
+      expect(() => ws.commitAssistSwap("other-demo", "assist-2")).toThrow(ws.ASSIST_SWAP_REFUSED);
+      expect(localStorage.getItem("ed_token_backup")).toBe("mine");
+      expect(localStorage.getItem("ed_agent_id_backup")).toBe("a1");
+      expect(ws.getToken()).toBe("demo");
+      expect(ws.getAgentId()).toBe("assist-1");
       ws.restoreAssistBackup();
       expect(ws.getToken()).toBe("mine");
+    });
+
+    it("refuses a swap while a backup exists even without the marker", async () => {
+      const ws = await load();
+      localStorage.setItem("ed_token_backup", "mine");
+      localStorage.setItem("ed_token", "demo");
+      expect(() => ws.commitAssistSwap("x", "y")).toThrow(ws.ASSIST_SWAP_REFUSED);
+      expect(localStorage.getItem("ed_token_backup")).toBe("mine");
+      expect(localStorage.getItem("ed_token")).toBe("demo");
+    });
+
+    it("recovers an interrupted swap (backup, no marker) from the backup", async () => {
+      localStorage.setItem("ed_token", "demo");
+      localStorage.setItem("ed_agent_id", "assist-1");
+      localStorage.setItem("ed_token_backup", "mine");
+      localStorage.setItem("ed_agent_id_backup", "a1");
+      const ws = await load();
+      ws.recoverInterruptedSwap();
+      expect(ws.getToken()).toBe("mine");
+      expect(ws.getAgentId()).toBe("a1");
+      expect(localStorage.getItem("ed_token_backup")).toBeNull();
+      expect(localStorage.getItem("ed_agent_id_backup")).toBeNull();
+    });
+
+    it("recovery leaves a connected state and a plain state alone", async () => {
+      const ws = await load();
+      ws.setToken("mine");
+      ws.recoverInterruptedSwap();
+      expect(ws.getToken()).toBe("mine");
+
+      ws.commitAssistSwap("demo", "assist-1");
+      ws.recoverInterruptedSwap();
+      expect(ws.getToken()).toBe("demo");
+      expect(ws.isAssistConnected()).toBe(true);
+    });
+
+    it("takes over another tab's change of the connected marker", async () => {
+      const ws = await load();
+      ws.commitAssistSwap("demo", "assist-1");
+      expect(ws.isAssistConnected()).toBe(true);
+      // Another tab disconnected: storage is cleared there, and the event reaches this tab.
+      localStorage.removeItem("ed_assist_connected");
+      expect(ws.isAssistConnected()).toBe(true); // still answered from this tab's memory
+      ws.applyStorageEvent({ key: "ed_assist_connected", newValue: null });
+      expect(ws.isAssistConnected()).toBe(false);
+      ws.applyStorageEvent({ key: null });
+      localStorage.clear();
+      expect(ws.getToken()).toBeNull();
     });
 
     it("works from memory when storage is unavailable", async () => {
@@ -162,8 +211,7 @@ describe("workspace storage", () => {
         throw new Error("blocked");
       });
       ws.setToken("mine");
-      ws.beginAssistSwap("demo");
-      ws.completeAssistSwap("assist-1");
+      ws.commitAssistSwap("demo", "assist-1");
       expect(ws.isAssistConnected()).toBe(true);
       ws.restoreAssistBackup();
       expect(ws.getToken()).toBe("mine");

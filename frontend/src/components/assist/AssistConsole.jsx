@@ -41,13 +41,19 @@ function useConsoleData(reloadKey) {
 // The builder-facing console for the Patent Assist agent: how Google Patents is used (Adoption)
 // and the improvement loop for the assistant (Evolution). Most of the data is an imported demo
 // dataset, and the header says so whenever the API does.
-export default function AssistConsole({ onDisconnect }) {
+export default function AssistConsole({ onDisconnect, autoFocus = false }) {
   const [reloadKey, setReloadKey] = useState(0);
   const [tab, setTab] = useState("adoption");
   const [evolutionOpened, setEvolutionOpened] = useState(false);
   const tabRefs = useRef({});
+  const headingRef = useRef(null);
   const data = useConsoleData(reloadKey);
   const { status, metrics } = data;
+
+  // After connecting, focus moves to the console heading (the connect box that had it is gone).
+  useEffect(() => {
+    if (autoFocus) headingRef.current?.focus();
+  }, [autoFocus]);
 
   function selectTab(id) {
     setTab(id);
@@ -78,7 +84,9 @@ export default function AssistConsole({ onDisconnect }) {
   return (
     <div className="min-h-dvh bg-background">
       <header className="flex flex-wrap items-center gap-x-4 gap-y-2 border-b border-border bg-white px-4 py-3 sm:px-6">
-        <h1 className="text-base font-semibold tracking-wide text-foreground">Assist console</h1>
+        <h1 ref={headingRef} tabIndex={-1} className="text-base font-semibold tracking-wide text-foreground focus:outline-none">
+          Assist console
+        </h1>
         {status && (
           <span className="text-xs text-muted-foreground">
             {status.agent_name}
@@ -100,8 +108,8 @@ export default function AssistConsole({ onDisconnect }) {
         {label && (
           <div role="note" className="mb-4 rounded-md border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-900">
             <p>
-              <span className="font-semibold">Data source: {label}.</span> Most of these figures come from an
-              imported dataset, not measured production usage.
+              <span className="font-semibold">Data source: {label}.</span> Includes imported demo data, which is
+              not measured production usage.
             </p>
           </div>
         )}

@@ -77,11 +77,20 @@ export function clearWorkspace() {
 // ---- Assist console connection ------------------------------------------------------------
 //
 // Connecting swaps the app's workspace for the demo workspace the pasted token belongs to. The
-// previous token and agent id are kept under their own keys so a failed connect, or a disconnect,
-// puts everything back. The token only ever lives in storage and in the request header.
+// demo token is validated first (api.js sends it per call without touching storage); only then does
+// commitAssistSwap write everything in one synchronous step: the previous token and agent id under
+// their own keys, the demo token, the assistant agent id and the connected marker. A reload or a
+// closed tab can therefore never leave the demo token active without the marker, and a backup is
+// never overwritten. The token only ever lives in storage and in the request header.
+
+export const ASSIST_SWAP_REFUSED = "Disconnect from the Assist console before connecting again.";
 
 export function isAssistConnected() {
   return read(CONNECTED_KEY) === "1";
+}
+
+export function hasAssistBackup() {
+  return read(TOKEN_BACKUP_KEY) != null || read(AGENT_BACKUP_KEY) != null;
 }
 
 function copyOrRemove(from, to) {
@@ -90,19 +99,14 @@ function copyOrRemove(from, to) {
   else write(to, value);
 }
 
-// Backs up the current identity and makes `token` the active one (with no agent yet).
-export function beginAssistSwap(token) {
-  // Already connected: the stored values are the demo ones, so the real backup must stay.
-  if (!isAssistConnected()) {
-    copyOrRemove(TOKEN_KEY, TOKEN_BACKUP_KEY);
-    copyOrRemove(AGENT_KEY, AGENT_BACKUP_KEY);
-  }
+// Backs up the current identity and makes the (already validated) demo token and assistant agent
+// the active ones. Refuses, changing nothing, while connected or while a backup exists: a backup
+// must never be replaced by the demo token.
+export function commitAssistSwap(token, agentId) {
+  if (isAssistConnected() || hasAssistBackup()) throw new Error(ASSIST_SWAP_REFUSED);
+  copyOrRemove(TOKEN_KEY, TOKEN_BACKUP_KEY);
+  copyOrRemove(AGENT_KEY, AGENT_BACKUP_KEY);
   write(TOKEN_KEY, token);
-  remove(AGENT_KEY);
-}
-
-// The token was accepted: the assistant agent becomes the app's agent.
-export function completeAssistSwap(agentId) {
   write(AGENT_KEY, agentId);
   write(CONNECTED_KEY, "1");
 }
@@ -114,4 +118,20 @@ export function restoreAssistBackup() {
   remove(TOKEN_BACKUP_KEY);
   remove(AGENT_BACKUP_KEY);
   remove(CONNECTED_KEY);
+}
+
+// Startup recovery: a backup without the connected marker is an interrupted swap (an older build
+// wrote the demo token before validating it). The user's own workspace comes back from the backup.
+export function recoverInterruptedSwap() {
+  if (!isAssistConnected() && hasAssistBackup()) restoreAssistBackup();
+}
+
+// Another tab changed storage: take its values over the in-memory mirror, which would otherwise
+// keep answering with what this tab last wrote.
+export function applyStorageEvent(event) {
+  if (event.key === null) {
+    for (const key of Object.keys(memory)) memory[key] = null;
+  } else if (event.key in memory) {
+    memory[event.key] = event.newValue;
+  }
 }

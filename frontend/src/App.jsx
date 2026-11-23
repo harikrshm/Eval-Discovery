@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from "react";
 import { Bot, History, ListChecks, Gauge } from "lucide-react";
 import { useEvalLoop } from "./hooks/useEvalLoop";
-import { getAgentId, isAssistConnected } from "./lib/workspace";
+import { applyStorageEvent, getAgentId, isAssistConnected, recoverInterruptedSwap } from "./lib/workspace";
 import { readiness } from "./lib/readiness";
 import { cn } from "./lib/utils";
 import AgentSetup from "./components/AgentSetup";
@@ -356,19 +356,61 @@ function MainApp({ headerAction = null }) {
 // Connecting to the Assist console swaps the app over to the demo workspace, so while connected
 // the console is the whole screen (the chat app, with its "delete my data" control, is not
 // reachable against the demo workspace). Disconnecting restores the stored workspace and agent,
-// and the app mounts fresh against them.
+// and the app mounts fresh against them. Storage is shared by every tab of the browser, so a
+// change of the connected state in another tab (the `storage` event) moves this tab with it.
 export default function App() {
-  const [connected, setConnected] = useState(() => isAssistConnected());
+  const [connected, setConnected] = useState(() => {
+    // An interrupted swap (a backup without the marker) is undone before anything reads the token.
+    recoverInterruptedSwap();
+    return isAssistConnected();
+  });
   const [connectOpen, setConnectOpen] = useState(false);
+  const [justConnected, setJustConnected] = useState(false);
   const entryRef = useRef(null);
+  const focusEntry = useRef(false);
+
+  const connectedRef = useRef(connected);
+  useEffect(() => {
+    connectedRef.current = connected;
+  }, [connected]);
+
+  useEffect(() => {
+    function onStorage(event) {
+      applyStorageEvent(event);
+      const now = isAssistConnected();
+      if (now === connectedRef.current) return;
+      connectedRef.current = now;
+      setConnectOpen(false);
+      setJustConnected(false);
+      setConnected(now);
+    }
+    window.addEventListener("storage", onStorage);
+    return () => window.removeEventListener("storage", onStorage);
+  }, []);
 
   if (connected) {
-    return <AssistConsole onDisconnect={() => setConnected(false)} />;
+    return (
+      <AssistConsole
+        autoFocus={justConnected}
+        onDisconnect={() => {
+          focusEntry.current = true;
+          setJustConnected(false);
+          setConnected(false);
+        }}
+      />
+    );
   }
 
   const entry = (
     <Button
-      ref={entryRef}
+      ref={(el) => {
+        entryRef.current = el;
+        // After a disconnect, focus lands on this button once the app has mounted its header.
+        if (el && focusEntry.current) {
+          focusEntry.current = false;
+          el.focus();
+        }
+      }}
       variant="outline"
       size="sm"
       onClick={() => setConnectOpen((open) => !open)}
@@ -389,6 +431,7 @@ export default function App() {
           onClose={() => setConnectOpen(false)}
           onConnected={() => {
             setConnectOpen(false);
+            setJustConnected(true);
             setConnected(true);
           }}
         />

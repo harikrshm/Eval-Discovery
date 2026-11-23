@@ -1,4 +1,4 @@
-import { clearWorkspace, getToken, setToken } from "./lib/workspace.js";
+import { clearWorkspace, getToken, isAssistConnected, setToken } from "./lib/workspace.js";
 
 const BASE_URL = import.meta.env.VITE_API_URL || "http://localhost:8000";
 
@@ -49,10 +49,13 @@ function ensureToken() {
   return workspacePromise;
 }
 
-async function request(path, { method = "GET", body, auth = true } = {}) {
+// `token` sends that token for this one call instead of the stored one, and never touches storage
+// (the Assist console validates a demo token with it before swapping workspaces).
+async function request(path, { method = "GET", body, auth = true, token } = {}) {
   const headers = {};
   if (body !== undefined) headers["Content-Type"] = "application/json";
-  if (auth) headers["X-Workspace-Token"] = await ensureToken();
+  const sent = auth ? (token ?? (await ensureToken())) : undefined;
+  if (auth) headers["X-Workspace-Token"] = sent;
 
   const res = await fetch(`${BASE_URL}${path}`, {
     method,
@@ -61,7 +64,9 @@ async function request(path, { method = "GET", body, auth = true } = {}) {
   });
 
   if (!res.ok) {
-    if (res.status === 401) clearWorkspace();
+    // Forget the workspace only when the token this request sent is still the current one: a slow
+    // request that fails after the workspace was swapped must not wipe the new one.
+    if (res.status === 401 && (!auth || (token === undefined && getToken() === sent))) clearWorkspace();
     throw await errorFromResponse(res);
   }
   if (res.status === 204) return null;
@@ -175,8 +180,9 @@ export function updatePrompt(agentId, text, baseVersionId) {
 // ---- Assist console (builder side). Counts, rates, ids and labels only; the pattern check and the
 // eval discovery for the assistant agent reuse checkPattern and discoverCriterion above. ----
 
-export function assistStatus() {
-  return request("/assist/console/status");
+// With `token`, checks that token (used before connecting) without touching stored credentials.
+export function assistStatus(token) {
+  return request("/assist/console/status", { token });
 }
 
 export function assistMetrics() {
@@ -200,7 +206,11 @@ export function assistInsights() {
 // Deletes the stored workspace. With no stored token there is nothing to delete (and
 // request() would create a workspace just to delete it), so do nothing. A 401 means the
 // workspace is already gone or expired, so its data is unreachable: that counts as success.
+export const DELETE_WHILE_CONNECTED = "Disconnect from the Assist console before deleting workspace data.";
+
 export async function deleteWorkspace() {
+  // While connected the stored token is the demo workspace's, and shared by every tab.
+  if (isAssistConnected()) throw new Error(DELETE_WHILE_CONNECTED);
   if (!getToken()) {
     clearWorkspace();
     return;

@@ -64,7 +64,9 @@ describe("console header", () => {
     await renderConsole();
     const note = container.querySelector('[role="note"]');
     expect(note.textContent).toContain("demo dataset");
+    expect(note.textContent).toContain("Includes imported demo data");
     expect(note.textContent).toContain("not measured production usage");
+    expect(note.textContent).not.toMatch(/most|majority|mostly/i);
     expect(container.textContent).toContain("Page views — Live: 0 · Imported: 20");
     expect(container.textContent).toContain("Questions — Live: 0 · Imported: 12");
     expect(container.textContent).toContain("Patent Assist · v2");
@@ -173,7 +175,7 @@ describe("adoption numbers", () => {
     await renderConsole();
     const text = container.querySelector('section[aria-labelledby="definitions-heading"]').textContent;
     expect(text).toContain("at least 3 seconds");
-    expect(text).toContain("per 100 views");
+    expect(text).toContain("per 100 non-bounce views in which that section was visible at all");
     expect(text).toContain("can exceed 100");
     expect(text).toContain('"down" ratings only');
     expect(text).toContain("legal-opinion questions");

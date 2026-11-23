@@ -443,6 +443,70 @@ describe("fix-loop api", () => {
       expect(urls.join(" ")).not.toContain("demo-tok");
     });
 
+    it("checks a token with a per-call override and never touches storage", async () => {
+      const { workspace, api } = await load();
+      workspace.setToken("mine");
+      workspace.setAgentId("a1");
+      fetchMock.mockResolvedValueOnce(jsonResponse(200, { agent_id: "assist-1" }));
+      const before = JSON.stringify({ ...localStorage });
+
+      await api.assistStatus("demo-tok");
+      expect(headerOf(fetchMock.mock.calls[0], "X-Workspace-Token")).toBe("demo-tok");
+      expect(JSON.stringify({ ...localStorage })).toBe(before);
+      expect(workspace.getToken()).toBe("mine");
+    });
+
+    it("leaves storage exactly as before when the overriding token is refused", async () => {
+      const { workspace, api } = await load();
+      workspace.setToken("mine");
+      workspace.setAgentId("a1");
+      const before = JSON.stringify({ ...localStorage });
+
+      fetchMock.mockResolvedValueOnce(jsonResponse(401, { detail: "Invalid" }));
+      await expect(api.assistStatus("bad")).rejects.toMatchObject({ status: 401 });
+      fetchMock.mockResolvedValueOnce(jsonResponse(404, { detail: "No assistant agent in this workspace." }));
+      await expect(api.assistStatus("bad")).rejects.toMatchObject({ status: 404 });
+
+      expect(JSON.stringify({ ...localStorage })).toBe(before);
+    });
+
+    it("does not create a workspace when a token is passed", async () => {
+      const { api } = await load();
+      fetchMock.mockResolvedValueOnce(jsonResponse(200, { agent_id: "assist-1" }));
+      await api.assistStatus("demo-tok");
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+      expect(fetchMock.mock.calls[0][0]).toMatch(/\/assist\/console\/status$/);
+    });
+
+    it("a slow request that fails with 401 after the workspace changed does not wipe the new one", async () => {
+      const { workspace, api } = await load();
+      workspace.setToken("demo-tok");
+      workspace.setAgentId("assist-1");
+      let reply;
+      fetchMock.mockReturnValueOnce(new Promise((resolve) => (reply = resolve)));
+      const pending = api.assistMetrics();
+      await Promise.resolve();
+
+      // Disconnect: the real workspace comes back while the request is still in flight.
+      workspace.setToken("mine");
+      workspace.setAgentId("a1");
+      reply(jsonResponse(401, { detail: "Invalid" }));
+      await expect(pending).rejects.toMatchObject({ status: 401 });
+
+      expect(workspace.getToken()).toBe("mine");
+      expect(workspace.getAgentId()).toBe("a1");
+    });
+
+    it("refuses to delete the workspace while connected to the console, without a request", async () => {
+      const { workspace, api } = await load();
+      workspace.setToken("mine");
+      workspace.commitAssistSwap("demo-tok", "assist-1");
+
+      await expect(api.deleteWorkspace()).rejects.toThrow(api.DELETE_WHILE_CONNECTED);
+      expect(fetchMock).not.toHaveBeenCalled();
+      expect(workspace.getToken()).toBe("demo-tok");
+    });
+
     it("posts for the insights brief and surfaces the server's error text", async () => {
       const { workspace, api } = await load();
       workspace.setToken("demo-tok");

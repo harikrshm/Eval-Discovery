@@ -1,6 +1,6 @@
 import { useEffect, useId, useRef, useState } from "react";
 import { ApiError, assistStatus } from "../../api";
-import { beginAssistSwap, completeAssistSwap, restoreAssistBackup } from "../../lib/workspace";
+import { ASSIST_SWAP_REFUSED, commitAssistSwap } from "../../lib/workspace";
 import { Button } from "../ui/button";
 import { Input } from "../ui/input";
 import { Label } from "../ui/label";
@@ -10,8 +10,7 @@ const UNREACHABLE = "Couldn't reach the server. Try again.";
 
 // Asks for the demo workspace token and swaps the app over to it. The token is only ever held in
 // this input (cleared as soon as it is used), in storage under the app's token key, and in the
-// request header: it is never rendered, logged or put in a URL. A refused token puts the previous
-// workspace and agent back untouched.
+// request header: it is never rendered, logged or put in a URL. A refused token changes nothing.
 export default function ConnectBox({ onConnected, onClose, returnFocusRef }) {
   const [token, setToken] = useState("");
   const [pending, setPending] = useState(false);
@@ -40,21 +39,27 @@ export default function ConnectBox({ onConnected, onClose, returnFocusRef }) {
     setPending(true);
     setError(null);
     setToken("");
-    beginAssistSwap(value);
+    // The token is checked with a per-call override: storage is not touched until it is valid, so a
+    // reload or a closed tab mid-request leaves the user's own workspace exactly as it was.
     let status;
     try {
-      status = await assistStatus();
+      status = await assistStatus(value);
       if (!status || typeof status.agent_id !== "string" || !status.agent_id) {
         throw new ApiError("Unexpected response", 404);
       }
     } catch (err) {
-      restoreAssistBackup();
       const refused = err instanceof ApiError && (err.status === 401 || err.status === 404);
       setError(refused ? NOT_ASSIST_WORKSPACE : UNREACHABLE);
       setPending(false);
       return;
     }
-    completeAssistSwap(status.agent_id);
+    try {
+      commitAssistSwap(value, status.agent_id);
+    } catch {
+      setError(ASSIST_SWAP_REFUSED);
+      setPending(false);
+      return;
+    }
     onConnected(status);
   }
 

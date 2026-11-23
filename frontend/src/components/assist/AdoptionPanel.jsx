@@ -12,7 +12,7 @@ const NO_FILTER = { intent: null, section: null };
 
 const DEFINITIONS = [
   "Coverage = share of non-bounce page views where the section was visible for at least 3 seconds.",
-  "Help demand = questions about a section per 100 views of it. It can exceed 100.",
+  "Help demand = questions about a section per 100 non-bounce views in which that section was visible at all. It can exceed 100.",
   'Thumbs-down = "down" ratings only.',
   "Refusals = legal-opinion questions.",
   "Widget usage is NOT measured.",
