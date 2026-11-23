@@ -11,11 +11,12 @@ against the page the assistant could see.
 Pure: no I/O, no DB or web imports.
 """
 
+import re
 from dataclasses import dataclass
 
 from backend.core.assist.assemble import assemble
 from backend.core.assist.brief import Brief
-from backend.core.assist.citations import CitationCheck, check_citations
+from backend.core.assist.citations import CitationCheck, check_citations, normalize_for_check
 from backend.core.assist.intent import Intent, classify_intent
 from backend.core.assist.lawpack import NOT_LEGAL_ADVICE, excerpts_for_question
 from backend.core.config import MAX_ASSISTANT_MESSAGE_CHARS
@@ -25,6 +26,31 @@ CITATION_NOTE = "Some citations in this answer could not be verified against the
 # Replies come back as history turns later, so the FINAL answer must fit the message cap: leave room for
 # the two suffixes (and their separators) that may be appended.
 REPLY_BUDGET = MAX_ASSISTANT_MESSAGE_CHARS - len(NOT_LEGAL_ADVICE) - len(CITATION_NOTE) - 4
+
+# The tags `assemble` puts around the data. The model sometimes cites them as if they were sources.
+_TAG_WORDING = {"page_brief": "the page", "law_excerpts": "the law excerpts", "question": "the question"}
+# <name>, </name>, &lt;name&gt; (optionally inside [ ] or fullwidth brackets), and the bare underscore names
+# (page_brief, law_excerpts, also inside [ ] or fullwidth brackets). Bounded whitespace keeps it linear.
+_TAG_RE = re.compile(
+    r"[\u3010\[]?[ \t]{0,3}(?P<close>(?:<|&lt;)[ \t]{0,3}/?[ \t]{0,3})(?P<tag>page_brief|law_excerpts|question)"
+    r"[ \t]{0,3}(?:>|&gt;)[ \t]{0,3}[\u3011\]]?"
+    r"|[\u3010\[][ \t]{0,3}(?P<tag2>page_brief|law_excerpts|question)[ \t]{0,3}[\u3011\]]"
+    r"|\b(?P<tag3>page_brief|law_excerpts)\b",
+    re.IGNORECASE,
+)
+
+
+def _tag_replacement(match: re.Match) -> str:
+    name = (match.group("tag") or match.group("tag2") or match.group("tag3")).lower()
+    if match.group("close") is not None and "/" in match.group("close"):
+        return ""  # a closing tag adds nothing: its opening tag already became plain wording
+    return _TAG_WORDING[name]
+
+
+def strip_internal_tags(text: str) -> str:
+    """Replace the prompt's own tag names (page_brief, law_excerpts, question) with plain wording."""
+    return _TAG_RE.sub(_tag_replacement, text)
+
 
 JUDGE_BRIEF_CHARS = 9_000
 _TRUNCATION_MARKER = "\n[...page text truncated]"
@@ -51,8 +77,9 @@ def finalize_answer(
     raw_reply: str, intent: Intent, brief: Brief, provided_law_ids: list[str]
 ) -> tuple[str, CitationCheck]:
     """The answer a user gets for a raw model reply, and its citation check. Never over the message cap."""
-    answer = raw_reply[:REPLY_BUDGET]
-    if intent is Intent.legal_opinion_request and NOT_LEGAL_ADVICE not in answer:
+    # Bound first (the strip only ever adds a few characters), strip the prompt's tag names, bound again.
+    answer = strip_internal_tags(raw_reply[: REPLY_BUDGET + 1000])[:REPLY_BUDGET]
+    if intent is Intent.legal_opinion_request and NOT_LEGAL_ADVICE not in normalize_for_check(answer):
         answer = f"{answer}\n{NOT_LEGAL_ADVICE}"
     check = check_citations(answer, brief, provided_law_ids)
     if not check.ok:

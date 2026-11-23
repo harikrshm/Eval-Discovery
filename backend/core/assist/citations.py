@@ -24,10 +24,26 @@ as soon as anything is unverified.
 """
 
 import re
+import unicodedata
 from bisect import bisect_left
 from dataclasses import dataclass, field
 
 from backend.core.assist.brief import Brief, iter_claim_ref_ranges
+
+# Look-alikes the model writes for ASCII: the dash family (U+2010..U+2015, minus sign) and curly quotes.
+_DASHES = dict.fromkeys(list(range(0x2010, 0x2016)) + [0x2212], "-")
+_QUOTES = {0x2018: "'", 0x2019: "'", 0x201B: "'", 0x201C: '"', 0x201D: '"', 0x201F: '"'}
+_LOOKALIKES = {**_DASHES, **_QUOTES}
+
+
+def normalize_for_check(text: str) -> str:
+    """The text with look-alike dashes and quotes mapped to ASCII, then NFKC. For CHECKING only.
+
+    The answer a user sees is never replaced by this; it only decides what the checks (law ids, the
+    not-legal-advice sentence) can read. Non-breaking hyphens, curly apostrophes, fullwidth letters and
+    narrow no-break spaces would otherwise slip past an exact or ASCII-only test."""
+    return unicodedata.normalize("NFKC", text.translate(_LOOKALIKES))
+
 
 MAX_REPORTED = 50
 _LAW_ID_MAX = 64
@@ -93,7 +109,10 @@ def _unverified_law(answer: str, provided_ids: list[str]) -> list[str]:
 
 
 def check_citations(answer: str, brief: Brief, provided_ids: list[str]) -> CitationCheck:
-    """Flag claim numbers not on the page and law ids that were not supplied."""
+    """Flag claim numbers not on the page and law ids that were not supplied.
+
+    Law ids are read from the normalised text (see `normalize_for_check`). Claim references are read from
+    the text as written: the claim grammar is ASCII-digit only (fullwidth digits are not a reference)."""
     claims = _unverified_claims(answer, brief)
-    law = _unverified_law(answer, provided_ids)
+    law = _unverified_law(normalize_for_check(answer), provided_ids)
     return CitationCheck(ok=not claims and not law, unverified_claims=claims, unverified_law=law)
