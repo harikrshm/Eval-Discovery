@@ -7,7 +7,9 @@ model and never reads any key.
 **Labelling rule.** Everything this importer writes carries `source: "imported"`. Imported data shows as
 **demo dataset** in the console and never counts as measured effect: before/after signals are computed only
 from rows whose source is not `imported`, and the replay before/after table stays the measured headline. The
-example file uses session ids that start with `demo-` so it can never be mistaken for real visitors.
+example file's session ids start with `demo-` so it cannot be mistaken for real visitors; the importer itself does not enforce a prefix. Imported answers are recorded against the agent's **current** prompt version, not against a record's `assist_version`, so a replay of an imported flagged conversation is not tied to the version that produced the imported answer. Timestamps are not sanity-checked (a date far in the past or future is accepted); the console labels the dataset as demo data.
+
+**File limit.** The importer reads the file line by line and refuses a file larger than 20 MiB (20 * 1024 * 1024 bytes) with the message `<file> is larger than the 20971520-byte limit; nothing was imported`. A live heartbeat or question for a session id that is stored as imported is refused (409), so a session id that was imported stays imported.
 
 Example file: [`examples/assist/page_views.example.jsonl`](../examples/assist/page_views.example.jsonl)
 (12 page views, 17 questions, 5 flagged conversations over three US patents).

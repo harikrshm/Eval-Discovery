@@ -137,7 +137,7 @@ Google Patents is a single-page app. Search results open patents without a page 
 
 | ID | Steps | Expected result | Result | Notes |
 |---|---|---|---|---|
-| E1 | Open `https://patents.google.com/patent/EP4517554A1/en` and open the panel | The notice "Patent Assist works on US patents only." shows. The text box and chips are disabled. The service worker's Network tab shows no `/assist/` requests. | | |
+| E1 | Open `https://patents.google.com/patent/EP4517554A1/en` and open the panel | The notice "Patent Assist works on US utility patents and applications only." shows. The text box and chips are disabled. The service worker's Network tab shows no `/assist/` requests. | | |
 
 ## F. Page-view tracker (NOT VERIFIED in real Chrome)
 

@@ -38,7 +38,7 @@ Opening line: "Products with rich pages are hard to learn. This is an assistant 
 ### 1. Ask on a real patent (0:00 to 0:45)
 
 - **Click:** on the US12401720B1 tab, the **Patent Assist** button, then the chip **Explain claim 1**. Wait for the answer. Then type `Can I sell a product like this without getting sued?` and send.
-- **Say:** "It reads the page I am on and answers from it, with the claim quoted. The legal question gets no verdict. It explains what the claims say and ends with a fixed sentence: this is not legal advice. That is a keyword rule plus the system prompt, so a phrasing it misses depends on the model following its prompt."
+- **Say:** "It reads the page I am on and answers from it; I would expect it to point at the claim text, but I am not promising a quote. The legal question gets no verdict. It explains what the claims say and ends with a fixed sentence: this is not legal advice. That is a keyword rule plus the system prompt, so a phrasing it misses depends on the model following its prompt."
 - **Expect, by the code and tests, not confirmed in real Chrome:** an answer that cites claim numbers that exist on the page; for the legal question, an answer without a yes or no that ends with "This is not legal advice, and I can't judge validity or infringement." If the answer cites a claim or law id it was not given, the extension shows "Some citations in this answer could not be verified against the page." Say that this check is deterministic code. If you chose a question that cites a law excerpt, say the law pack is a draft.
 
 ### 2. Rate (0:45 to 1:05)
@@ -50,7 +50,7 @@ Opening line: "Products with rich pages are hard to learn. This is an assistant 
 ### 3. The console shows the pattern (1:05 to 1:50)
 
 - **Click:** in the app at http://localhost:5173, **Assist console**, paste the demo workspace token, **Connect**. On **Adoption**, point at the amber note first, then at the help-demand table, the re-ask rates by task, a hotspot button, and the flagged conversations it filters.
-- **Say, about the label, before any number:** "This panel is a hand-written demo dataset, 12 page views. The UI says so, in this amber note and in the source counts. It is not measured usage, and the version comparison below it counts only live questions, so it will say that versions cannot be compared yet. I would not show you a made-up trend as a result."
+- **Say, about the label, before any number:** "This panel is a hand-written demo dataset (12 imported page views; any live rows from my own questions are counted with them, and the source counts show the split). The UI says so, in this amber note and in the source counts. It is not measured usage, and the version comparison below it counts only live questions, so it will say that versions cannot be compared yet. I would not show you a made-up trend as a result."
 - **Say, about the data:** "These are signals about Google Patents, not about my widget: which sections people actually look at, where they ask for help, which kinds of questions get re-asked. Click a hotspot and you see the conversations behind it." Optionally **Generate insights**: a model writes a short summary from the aggregates only, and the console shows the figures it used; if a number cannot be matched it says "Check these figures". Do not read the insights out as findings.
 - **Expect:** counts and rates, never question or answer text, in the metrics and the flagged list.
 
@@ -63,7 +63,7 @@ Opening line: "Products with rich pages are hard to learn. This is an assistant 
 
 ### 5. The next answer, and the close (2:35 to 3:00)
 
-- **Click:** back on the patent tab, ask the same question again, then in the console note the assistant's current version in the header.
+- **Click:** back on the patent tab, ask the same question again, then in the console note the assistant's current version in the header. Warning: asking the same kind of question again within 90 seconds of the previous answer counts as a **re-ask** and flags the conversation, so wait longer than that (or ask a different kind of question) unless a flag is what you want to show.
 - **Say:** "If the fix was promoted, the next answer is produced under the new prompt version. Whether it is better is something I judge by reading it and by the replay table, not something I will promise. I have not yet run this loop with a real model on Patent Assist; that run is separate and I will report it as it is. What exists today is the pipeline, tested with faked model calls, and the console that shows its evidence."
 - **Close, one honest sentence about limits:** "The law pack is a draft until I review it, the extension has not been through its real-Chrome checklist, and the example data is labelled as demo data."
 
@@ -89,7 +89,7 @@ On the free tier the 120B model allows about 8000 tokens per minute (the extensi
 ### The backend is down
 
 - The widget shows "The assistant could not answer right now. Please try again." with **Retry**; the page is unaffected. The console shows "Couldn't load the console: ...". Start the backend (`uvicorn backend.main:app`), click **Retry** in the widget and **Refresh data** in the console.
-- If it will not start, you can still show what runs offline: `python scripts/import_page_views.py examples/assist/page_views.example.jsonl --dry-run` (no database needed; it prints "12 page views, 17 questions, 5 flagged conversations"), `npx vitest run` in `extension/` (312 tests), and the architecture section [docs/ARCHITECTURE.md, section 10](ARCHITECTURE.md#10-patent-assist). Say plainly that the live demo was not available.
+- If it will not start, you can still show what runs offline: `python scripts/import_page_views.py examples/assist/page_views.example.jsonl --dry-run` (no database needed; it prints "12 page views, 17 questions, 5 flagged conversations"), `npx vitest run` in `extension/` (342 tests), and the architecture section [docs/ARCHITECTURE.md, section 10](ARCHITECTURE.md#10-patent-assist). Say plainly that the live demo was not available.
 
 ### Smaller problems
 
