@@ -277,3 +277,89 @@ def test_r4_each_cut_fact_section_carries_its_own_marker():
     legal = legal.split("\n\n")[0]
     assert legal.rstrip().endswith("[truncated]")
     assert "Classifications" in text and "[truncated]" not in text.split("Legal events")[0]
+
+
+# ---- R5: build_tests judges live flagged runs before imported ones --------------------------------------
+
+from unittest.mock import MagicMock  # noqa: E402
+
+from backend.core.judge import JudgeResult  # noqa: E402
+from backend.db.agents import create_agent  # noqa: E402
+from backend.db.models import Criterion, Run  # noqa: E402
+from backend.db.workspaces import create_workspace  # noqa: E402
+from backend.jobs import handlers  # noqa: E402
+from backend.jobs.handlers import handle_build_tests  # noqa: E402
+from backend.jobs.queue import enqueue  # noqa: E402
+from scripts import setup_assist  # noqa: E402
+
+
+def _assist_setup(db, kind="assist"):
+    workspace, _ = create_workspace(db)
+    agent = create_agent(db, workspace, setup_assist.ASSIST_CONFIG, setup_assist.ASSIST_ANALYSIS, kind=kind)
+    crit = Criterion(
+        agent_id=agent.id, position=1, name="Grounded", definition="d", good_example="g", bad_example="b",
+        why_discovered="w", source="discovered",
+    )
+    db.add(crit)
+    db.commit()
+    return workspace, agent, crit
+
+
+def _add_runs(db, agent, sources):
+    """One run per entry, position 1..n; the user message names the source and position."""
+    for position, source in enumerate(sources, start=1):
+        db.add(Run(
+            agent_id=agent.id, prompt_version_id=agent.current_prompt_version_id, position=position, source=source,
+            messages=[{"role": "user", "content": f"{source}-{position}"}, {"role": "assistant", "content": "a"}],
+        ))
+    db.commit()
+
+
+def _run_build(db, workspace, crit, monkeypatch, verdicts):
+    mock = MagicMock(side_effect=[JudgeResult(v, "r") for v in verdicts])
+    monkeypatch.setattr(handlers, "judge", mock)
+    monkeypatch.setattr(handlers, "sanity_check", MagicMock(return_value=MagicMock(passed=True, good_verdict="pass", bad_verdict="fail")))
+    result = handle_build_tests(db, enqueue(db, workspace.id, "build_tests", {"criterion_id": crit.id}))
+    return [c.args[2][0]["content"] for c in mock.call_args_list], result
+
+
+def test_r5_live_runs_are_judged_first_and_imported_never_push_them_out_of_the_eight(db_session, monkeypatch):
+    workspace, agent, crit = _assist_setup(db_session)
+    # 3 live runs are OLDER than 7 imported ones: the newest 8 overall would hold only 1 live run.
+    _add_runs(db_session, agent, ["imported", "assist", "assist", "assist"] + ["imported"] * 6)
+    seen, result = _run_build(db_session, workspace, crit, monkeypatch, ["pass"] * 8)
+    assert result["judged"] == 8
+    assert seen[:3] == ["assist-4", "assist-3", "assist-2"]  # live first, newest first inside the group
+    assert seen[3:] == [f"imported-{n}" for n in (10, 9, 8, 7, 6)]  # then imported, newest first, filling the 8
+
+
+def test_r5_the_stop_rule_still_applies_so_two_live_failures_judge_no_imported_run(db_session, monkeypatch):
+    workspace, agent, crit = _assist_setup(db_session)
+    _add_runs(db_session, agent, ["imported"] * 3 + ["assist"] * 3 + ["imported"] * 2)
+    seen, result = _run_build(db_session, workspace, crit, monkeypatch, ["fail", "fail", "pass"])
+    assert seen == ["assist-6", "assist-5"]
+    assert result["tests_created"] == 2
+    # the tests come from the live runs
+    sources = {r.source for r in db_session.query(Run).filter(Run.id.in_([t.source_run_id for t in db_session.query(handlers.EvalTest)]))}
+    assert sources == {"assist"}
+
+
+def test_r5_imported_runs_remain_eligible_when_there_are_few_live_runs(db_session, monkeypatch):
+    workspace, agent, crit = _assist_setup(db_session)
+    _add_runs(db_session, agent, ["assist"] + ["imported"] * 5)
+    seen, _ = _run_build(db_session, workspace, crit, monkeypatch, ["pass"] * 6)
+    assert seen == ["assist-1", "imported-6", "imported-5", "imported-4", "imported-3", "imported-2"]
+
+
+def test_r5_with_no_live_runs_or_a_general_agent_the_order_is_unchanged(db_session, monkeypatch):
+    workspace, agent, crit = _assist_setup(db_session)
+    _add_runs(db_session, agent, ["imported"] * 4)
+    seen, _ = _run_build(db_session, workspace, crit, monkeypatch, ["pass"] * 4)
+    assert seen == ["imported-1", "imported-2", "imported-3", "imported-4"]  # oldest first, as before
+
+
+def test_r5_more_than_eight_live_runs_judge_the_newest_eight_live_runs(db_session, monkeypatch):
+    workspace, agent, crit = _assist_setup(db_session)
+    _add_runs(db_session, agent, ["assist"] * 10 + ["imported"] * 2)
+    seen, _ = _run_build(db_session, workspace, crit, monkeypatch, ["pass"] * 8)
+    assert seen == [f"assist-{n}" for n in range(10, 2, -1)]

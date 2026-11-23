@@ -165,6 +165,21 @@ def _owned_criterion(db: Session, job: Job) -> Criterion:
     return criterion
 
 
+def _runs_to_judge(db: Session, agent: Agent) -> list[Run]:
+    """The runs build_tests judges, in judging order (at most RECENT_RUNS_TO_JUDGE).
+
+    Normally the newest runs, oldest first. For an assistant agent with live (source "assist") runs, the
+    live runs come first (newest first) and imported runs only fill what is left of the same total, so a
+    demo import can never push a real flagged conversation out of the window."""
+    newest = select(Run).where(Run.agent_id == agent.id).order_by(Run.position.desc())
+    if agent.kind == "assist":
+        live = list(db.scalars(newest.where(Run.source == "assist").limit(RECENT_RUNS_TO_JUDGE)))
+        if live:
+            others = list(db.scalars(newest.where(Run.source != "assist").limit(RECENT_RUNS_TO_JUDGE - len(live))))
+            return live + others
+    return list(reversed(list(db.scalars(newest.limit(RECENT_RUNS_TO_JUDGE)))))
+
+
 def handle_build_tests(db: Session, job: Job) -> dict:
     criterion = _owned_criterion(db, job)
     agent = criterion.agent
@@ -175,11 +190,7 @@ def handle_build_tests(db: Session, job: Job) -> dict:
     revision = criterion.revision
     # The judge only reads the agent's name and role label; it never sees the system prompt.
     config = AgentConfig(agent.name, "", agent.user_role_label)
-    recent = list(
-        db.scalars(
-            select(Run).where(Run.agent_id == agent.id).order_by(Run.position.desc()).limit(RECENT_RUNS_TO_JUDGE)
-        )
-    )
+    recent = _runs_to_judge(db, agent)
     # End the read transaction before the slow LLM calls (expire_on_commit=False keeps rows usable).
     db.commit()
     # The sanity check is a convenience: if it is unavailable the tests are still built, no
@@ -192,7 +203,7 @@ def handle_build_tests(db: Session, job: Job) -> dict:
     try:
         judged: list[tuple[Run, JudgeResult]] = []
         failures = 0
-        for run in reversed(recent):  # oldest -> newest
+        for run in recent:
             if not user_messages(run.messages):
                 continue  # nothing to replay, so it can never become a test
             result = judge(config, spec, run.messages, **_page_evidence(agent, run))
