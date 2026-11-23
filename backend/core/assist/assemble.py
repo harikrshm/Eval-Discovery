@@ -93,9 +93,12 @@ class _Block:
 # ---- escaping and rendering ---------------------------------------------------
 
 
-def _escape_angles(text: str) -> str:
+def escape_angles(text: str) -> str:
     """Replace every "<" and ">" so untrusted text can never form a tag."""
     return text.replace("<", "&lt;").replace(">", "&gt;")
+
+
+_escape_angles = escape_angles  # kept: the original private name
 
 
 

@@ -302,7 +302,7 @@ def test_invented_figure_is_ungrounded_with_up_to_three_named_numbers():
 
 
 def test_identifier_digits_are_not_numbers():
-    assert grounded("See US10000000B2 and h2o and v1.2", None)[0] is True
+    assert grounded("See US10000000B2, US20160266243A1 and v1.2.3", None)[0] is True
 
 
 def test_the_help_demand_unit_100_is_allowed():
@@ -312,6 +312,10 @@ def test_the_help_demand_unit_100_is_allowed():
 def test_grounding_check_is_fast_on_a_100k_reply():
     start = time.perf_counter()
     for text in ("1 " * 50_000, "0.33 " * 20_000 + "99 " * 100, "x" * 100_000, ("7 6 " * 30_000)):
+        ok, warnings = insights.check_grounded(text, small_adoption(), {})
+        assert ok is False and warnings == [insights.TOO_LONG_WARNING]  # never scanned
+    # at the largest size that is scanned, still fast
+    for text in ("1 " * 5_000, "0.33 " * 2_000 + "99 " * 100, "x" * 10_000, "7 6 " * 2_500, "twenty-five " * 800):
         insights.check_grounded(text, small_adoption(), {})
     assert time.perf_counter() - start < 0.25
 
@@ -481,10 +485,243 @@ def test_overlong_reply_is_capped_and_checked_fast(client, seeded, fake):
     assert len(client.post(URL, headers=seeded["headers"]).json()["brief"]) == 2500
 
 
-def test_llm_rate_limit_applies(client, seeded, fake, monkeypatch):
-    monkeypatch.setattr(limits, "llm_limiter", limits.RateLimiter(2, 60))
-    for _ in range(2):
+def test_insights_have_their_own_limit_and_never_charge_the_chat_limiter(client, db_session, seeded, fake):
+    for _ in range(5):
         assert client.post(URL, headers=seeded["headers"]).status_code == 200
     response = client.post(URL, headers=seeded["headers"])
     assert response.status_code == 429
-    assert len(fake.calls) == 2
+    assert len(fake.calls) == 5
+    assert limits.llm_limiter._calls == {}  # the extension chat budget was never touched
+    # the chat endpoint still works for the same client
+    workspace = seeded["workspace"]
+    agent = create_agent(db_session, workspace, setup_assist.ASSIST_CONFIG, setup_assist.ASSIST_ANALYSIS)
+    fake.reply = "Hello."
+    chat = client.post(
+        f"/agents/{agent.id}/chat", headers=seeded["headers"], json={"messages": [{"role": "user", "content": "hi"}]}
+    )
+    assert chat.status_code == 200 and chat.json()["reply"] == "Hello."
+
+
+def test_insights_limiter_is_reset_with_the_others():
+    for _ in range(5):
+        assert limits.assist_insights_limiter.check("k")
+    assert not limits.assist_insights_limiter.check("k")
+    limits.reset_limiters()
+    assert limits.assist_insights_limiter.check("k")
+
+
+def test_global_llm_budget_still_applies_to_insights(client, seeded, fake, monkeypatch):
+    monkeypatch.setattr(limits, "global_llm_limiter", limits.RateLimiter(1, 60))
+    assert client.post(URL, headers=seeded["headers"]).status_code == 200
+    assert client.post(URL, headers=seeded["headers"]).status_code == 429
+
+
+# ---- grounding hardening (review R15) ---------------------------------------------
+
+
+def big_adoption():
+    """Values chosen so that 2, 3, 5, 7, 9 and 100 are NOT aggregate values (only counts of items)."""
+    views = [PV(f"s{i}", {"claims": 5000}, 9000, False, "live", 1) for i in range(41)]
+    views += [PV(f"b{i}", {}, 100, True, "live", 1) for i in range(4)]
+    qs = [Q(f"q{i}", "claim_explain", "claims", None, i < 5, True, "live", 1) for i in range(13)]
+    qs += [Q(f"c{i}", "citations_prior_art", None, None, False, True, "live", 1) for i in range(10)]
+    return compute_adoption(views, qs)
+
+
+SAMPLES_5 = {"section:claims": ["Explain claim 12", "Is claim 3 broad?", "Who owns it?"], "intent:claim_explain": ["a", "b"]}
+
+
+def test_big_adoption_has_the_expected_shape():
+    adoption = big_adoption()
+    flat = insights.flatten_metrics(insights.metrics_for_prompt(adoption))
+    numbers = {v for v in flat.values() if isinstance(v, (int, float)) and not isinstance(v, bool)}
+    assert not numbers & {2, 3, 5, 7, 9, 100}
+    assert insights.hotspots(adoption) == [("section", "claims"), ("intent", "claim_explain")]
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "Seven sections matter.",
+        "7 sections are tracked.",
+        "Nine intents are tracked.",
+        "9 task intents exist.",
+        "The top 1 section needs help.",
+        "Two hotspots stand out.",
+        "Five questions were shown as examples.",
+        "5 sample questions were shown.",
+        "- a\n- b\n- c\nThe three findings above.",
+        "Help demand is shown per 100 views.",
+        "Help demand is 31.71 per 100 views of claims.",
+        "100 views is the unit.",
+    ],
+)
+def test_counts_of_items_are_accepted_only_next_to_their_noun(text):
+    assert grounded(text, big_adoption(), SAMPLES_5) == (True, [])
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "7 users abandoned the page.",
+        "Seven users abandoned the page.",
+        "9 users were confused.",
+        "100 users left.",
+        "about 100 sessions ended early",
+        "5 users asked, in 7 minutes",
+        "Four sections matter.",  # 4 is not a count of sections
+        "7 questions were shown.",  # 7 is the section count, not the number of samples
+        "Nine hotspots exist.",
+        "3 findings",  # the brief has no bullets
+        "7 sections is wrong, but 7 users is worse: 7 users",
+    ],
+)
+def test_invented_counts_are_flagged_even_when_equal_to_an_item_count(text):
+    ok, warnings = grounded(text, big_adoption(), SAMPLES_5)
+    assert ok is False and warnings
+
+
+def test_a_count_noun_must_be_within_two_words():
+    adoption = big_adoption()
+    assert grounded("7 of the sections", adoption, SAMPLES_5)[0] is True
+    assert grounded("7 of the tracked sections", adoption, SAMPLES_5)[0] is False
+    assert grounded("7, sections", adoption, SAMPLES_5)[0] is False  # punctuation ends the phrase
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "Half of users abandoned.",
+        "A quarter of users left.",
+        "a third of users",
+        "two thirds of sessions",
+        "three quarters of visits",
+        "one fifth of users",
+        "The count doubled.",
+        "It tripled overnight.",
+        "Twice as many users.",
+        "double the questions",
+        "One in five users abandoned.",
+        "1 in 5 users abandoned.",
+        "eight out of ten users",
+        "Twenty users left.",
+        "twenty-five users",
+        "Eleven users",
+        "nineteen people",
+        "fifty percent of users",
+        "Seventy percent of users",
+        "one percent of users",
+        "one hundred users",
+        "Two hundred users",
+        "a hundred users",
+        "five thousand users",
+    ],
+)
+def test_spelled_out_and_fractional_attacks_are_flagged(text):
+    ok, warnings = grounded(text, big_adoption(), SAMPLES_5)
+    assert ok is False and warnings, text
+
+
+def test_compound_number_words_are_read_whole():
+    ok, warnings = grounded("Seventy-two percent of users abandoned.", big_adoption(), {})
+    assert ok is False
+    assert "Seventy-two percent" in warnings[0]
+    ok, warnings = grounded("Twenty five users abandoned.", big_adoption(), {})
+    assert "Twenty five" in warnings[0] and ", Five" not in warnings[0] and "five users" not in warnings[0].lower().replace("twenty five", "")
+
+
+def test_number_words_that_match_values_are_grounded():
+    adoption = big_adoption()  # 45 page views, 41 engaged, 23 questions, claims coverage 1.0, reask 0.3846
+    assert grounded("Forty-five page views and twenty-three questions.", adoption, {})[0] is True
+    assert grounded("Forty-one views were engaged.", adoption, {})[0] is True
+    assert grounded("Thirty-eight percent of claim questions were asked again.", adoption, {})[0] is True
+    assert grounded("One suggested step. No one left. Three.", adoption, {})[0] is False  # bare "Three"
+    assert grounded("One suggested step. No one left.", adoption, {})[0] is True
+
+
+def test_fractions_and_ratios_must_match_a_rate_present():
+    adoption = {"totals": {"page_views": 10, "questions": 4}, "bounce_rate": 0.5, "feature_coverage": {"claims": 0.26}}
+    assert grounded("Half of views bounced.", adoption)[0] is True
+    assert grounded("One in two views bounced.", adoption)[0] is True
+    assert grounded("1 in 2 views bounced.", adoption)[0] is True
+    assert grounded("A quarter of engaged views used claims.", adoption)[0] is True
+    assert grounded("Two quarters of views bounced.", adoption)[0] is True
+    assert grounded("A third of views", adoption)[0] is False
+    assert grounded("one in five", adoption)[0] is False
+    assert grounded("the third finding", adoption)[0] is True  # an ordinal, not a fraction
+    # "N in M" is also fine when N and M are each values present
+    assert grounded("4 in 10 views", {**adoption})[0] is True
+    assert grounded("Twice the bounce rate", adoption)[0] is False
+    assert grounded("It doubled", adoption)[0] is False
+
+
+def test_list_numbering_is_stripped_only_when_sequential():
+    adoption = big_adoption()
+    assert grounded("1. alpha\n2. beta\n3) gamma\n4. delta", adoption, {})[0] is True
+    assert grounded("72. users abandoned", adoption, {})[0] is False
+    assert grounded("1. alpha\n3. beta", adoption, {})[0] is False
+    ok, warnings = grounded("1. alpha\n2. beta\n72. gamma", adoption, {})
+    assert ok is False and "72" in warnings[0]
+    assert grounded("- 1. alpha\n- 2. beta", adoption, {})[0] is True
+
+
+def test_only_the_first_ten_ordinals_are_ignored():
+    adoption = big_adoption()
+    assert grounded("the 1st, 2nd, 3rd and 10th", adoption, {})[0] is True
+    for text in ("the 95th percentile", "the 72nd percentile", "the 11th"):
+        ok, warnings = grounded(text, adoption, {})
+        assert ok is False and warnings, text
+    assert "95th" in grounded("the 95th percentile", adoption, {})[1][0]
+
+
+@pytest.mark.parametrize("text", ["Q72 users", "x72 users", ".72 of users", "1e72 users", "h72", "abc72def"])
+def test_digits_glued_to_letters_or_after_a_dot_are_figures(text):
+    ok, warnings = grounded(text, big_adoption(), {})
+    assert ok is False and "72" in warnings[0], text
+
+
+def test_only_patent_numbers_and_versions_are_whitelisted():
+    adoption = big_adoption()
+    assert grounded("Patent US10000000B2 and US20160266243A1, build v1.2.3 and v2", adoption, {})[0] is True
+    assert grounded("V72", adoption, {})[0] is False  # uppercase V is not a version
+    assert grounded("USB72", adoption, {})[0] is False
+
+
+def test_numbers_inside_a_verbatim_quote_of_a_shown_sample_are_ignored():
+    adoption = big_adoption()
+    samples = {"section:claims": ["Explain claim 12", "Is 15 enough?"]}
+    assert grounded('People ask "Explain claim 12" a lot.', adoption, samples)[0] is True
+    assert grounded("People ask “Explain claim 12” a lot.", adoption, samples)[0] is True
+    assert grounded("People ask 'Explain claim 12' a lot.", adoption, samples)[0] is True
+    # an altered quote, an unquoted mention, or a number elsewhere in the sample is not whitelisted
+    assert grounded('People ask "Explain claim 14" a lot.', adoption, samples)[0] is False
+    assert grounded("People ask to explain claim 12 a lot.", adoption, samples)[0] is False
+    assert grounded("There were 12 such questions.", adoption, samples)[0] is False
+    assert grounded('"Explain claim 12" appeared 15 times.', adoption, samples)[0] is False
+    assert grounded("They ask about 15", adoption, samples)[0] is False
+    # a number outside the quote is still checked
+    ok, warnings = grounded('"Explain claim 12" was asked by 321 users', adoption, samples)
+    assert ok is False and "321" in warnings[0] and "12" not in warnings[0].replace("321", "")
+
+
+def test_hotspots_need_a_strictly_positive_value():
+    adoption = big_adoption()
+    assert ("intent", "citations_prior_art") not in insights.hotspots(adoption)  # 10 questions, 0 re-asked
+    zero_section = compute_adoption(
+        [PV("a", {"claims": 5000, "family": 4000}, 9000, False, "live", 1)],
+        [Q("a", "other", "claims", None, False, True, "live", 1)],
+    )
+    assert zero_section["help_demand"]["family"] == 0.0
+    assert insights.hotspots(zero_section) == [("section", "claims")]
+
+
+def test_escape_angles_is_public_and_the_old_name_is_kept():
+    from backend.core.assist import assemble
+
+    assert assemble.escape_angles("<a>") == "&lt;a&gt;"
+    assert assemble._escape_angles is assemble.escape_angles
+
+
+def test_the_module_documents_that_the_check_is_best_effort():
+    assert "BEST-EFFORT" in insights.__doc__ and "obfuscated" in insights.__doc__ and "IBAN" in insights.__doc__
+    assert "BEST-EFFORT" in insights.check_grounded.__doc__

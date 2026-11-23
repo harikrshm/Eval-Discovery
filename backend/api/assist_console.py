@@ -14,11 +14,11 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from backend.api.deps import get_current_workspace
-from backend.api.limits import rate_limit_llm
+from backend.api.limits import rate_limit_assist_insights
 from backend.api.schemas import (
     AssistConsoleMetricsOut,
-    AssistInsightsOut,
     AssistConsoleStatusOut,
+    AssistInsightsOut,
     FlaggedQuestionOut,
     FlaggedRunOut,
 )
@@ -173,12 +173,19 @@ def console_insights(
     workspace: Workspace = Depends(get_current_workspace),
     db: Session = Depends(get_db),
 ) -> AssistInsightsOut:
-    """A model-written brief grounded in the computed aggregates (plus a few anonymised questions)."""
+    """A model-written brief grounded in the computed aggregates (plus a few anonymised questions).
+
+    `grounded` comes from a BEST-EFFORT check that every figure in the brief can be explained by the
+    aggregates: a safety net against invented numbers, not a proof of truth (it does not check that a
+    figure is attached to the right metric, trends, vague quantities or causes). Question samples are
+    redacted by regex only, which cannot catch obfuscated emails, unspaced IBANs, names or addresses.
+    Rate limit: its own small per-IP budget plus the process-wide LLM budget, never the chat limiter.
+    """
     _assist_agent(db, workspace)
     adoption, _ = _compute_adoption(db, workspace)
     if adoption["totals"]["page_views"] == 0 and adoption["totals"]["questions"] == 0:
         raise HTTPException(status_code=409, detail=NO_INSIGHT_DATA)
-    rate_limit_llm(request)
+    rate_limit_assist_insights(request)
     samples = _hotspot_samples(db, workspace, adoption)
     system, messages = build_insights_messages(adoption, samples)
     try:

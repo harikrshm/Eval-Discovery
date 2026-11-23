@@ -127,6 +127,11 @@ assist_heartbeat_ip_limiter = RateLimiter(ASSIST_HEARTBEATS_PER_IP_PER_MINUTE, 6
 assist_heartbeat_limiter = RateLimiter(ASSIST_HEARTBEATS_PER_SESSION_PER_HOUR, 3600)
 assist_feedback_limiter = RateLimiter(ASSIST_FEEDBACK_PER_IP_PER_MINUTE, 60)
 
+# Console insights are model calls, but a console user must never exhaust the extension chat budget
+# (`llm_limiter`): their own small per-IP budget, plus the process-wide LLM backstop.
+ASSIST_INSIGHTS_PER_IP_PER_MINUTE = 5
+assist_insights_limiter = RateLimiter(ASSIST_INSIGHTS_PER_IP_PER_MINUTE, 60)
+
 
 def reset_limiters() -> None:
     """Forget every limiter's recorded calls (used by tests)."""
@@ -138,6 +143,7 @@ def reset_limiters() -> None:
         assist_heartbeat_ip_limiter,
         assist_heartbeat_limiter,
         assist_feedback_limiter,
+        assist_insights_limiter,
     ):
         limiter.reset()
 
@@ -192,6 +198,15 @@ def rate_limit_assist_heartbeat(request: Request, session_id: str) -> None:
 def rate_limit_assist_feedback(request: Request) -> None:
     """Raise 429 when one client sends ratings and re-asks too fast."""
     if not assist_feedback_limiter.check(client_key(request)):
+        raise HTTPException(status_code=429, detail=_TOO_MANY)
+
+
+def rate_limit_assist_insights(request: Request) -> None:
+    """Raise 429 when a client asks for insights too fast (own per-IP budget) or the process-wide LLM budget is spent.
+
+    Deliberately does NOT charge the per-IP chat limiter (`llm_limiter`).
+    """
+    if not assist_insights_limiter.check(client_key(request)) or not global_llm_limiter.check("global"):
         raise HTTPException(status_code=429, detail=_TOO_MANY)
 
 
