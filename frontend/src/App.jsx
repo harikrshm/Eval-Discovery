@@ -56,7 +56,7 @@ function PatternBadge({ patternState, criteriaError, evalCriteriaCount }) {
   return null;
 }
 
-function MainApp({ headerAction = null }) {
+function MainApp({ headerAction = null, onSettled = undefined }) {
   // Read once at startup; after that it only changes when an agent is created.
   // A deleted agent is cleared from storage by the hook, so re-reading storage
   // here would retrigger the load.
@@ -89,6 +89,12 @@ function MainApp({ headerAction = null }) {
     discardDraft,
     saveRun,
   } = loop.session;
+
+  // Tell the parent when loading has finished (successfully or not); its entry button, if any, has
+  // been mounted by then.
+  useEffect(() => {
+    if (!loading) onSettled?.();
+  }, [loading, loadError, onSettled]);
 
   const historyOpen = historyVisible && transcripts.length > 0;
   const evalOpen = panelVisible && evalCriteria.length > 0;
@@ -376,6 +382,12 @@ export default function App() {
 
   useEffect(() => {
     function onStorage(event) {
+      // Only localStorage carries the connected state; a sessionStorage event is not ours to act on.
+      try {
+        if (event.storageArea !== window.localStorage) return;
+      } catch {
+        return;
+      }
       applyStorageEvent(event);
       const now = isAssistConnected();
       if (now === connectedRef.current) return;
@@ -424,7 +436,14 @@ export default function App() {
 
   return (
     <>
-      <MainApp headerAction={entry} />
+      <MainApp
+        headerAction={entry}
+        onSettled={() => {
+          // The restored app has finished loading. If the entry button is still not on screen, the
+          // pending focus request will not be met, so it must not fire when the button appears later.
+          if (focusEntry.current && !entryRef.current) focusEntry.current = false;
+        }}
+      />
       {connectOpen && (
         <ConnectBox
           returnFocusRef={entryRef}

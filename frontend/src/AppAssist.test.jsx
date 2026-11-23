@@ -401,3 +401,74 @@ describe("focus", () => {
     expect(document.activeElement).toBe(document.body);
   });
 });
+
+describe("final fix wave (M10)", () => {
+  it("Escape while the token is being checked closes the box and the result is ignored: nothing connects", async () => {
+    let release;
+    api.assistStatus.mockImplementationOnce(() => new Promise((resolve) => (release = resolve)));
+    await openConnect();
+    await type(tokenInput(), DEMO_TOKEN);
+    await submit(document.querySelector('[role="dialog"] form'));
+    const before = JSON.stringify({ ...localStorage });
+
+    await pressKey(document, "Escape");
+    expect(dialog()).toBeNull();
+    await act(async () => release(STATUS)); // the server says yes, but the user has already left
+    await settle();
+
+    expect(JSON.stringify({ ...localStorage })).toBe(before);
+    expect(localStorage.getItem("ed_token")).toBe("my-own-token");
+    expect(localStorage.getItem("ed_assist_connected")).toBeNull();
+    expect(document.querySelector('[role="tablist"]')).toBeNull();
+    expect(container.textContent).toContain("Alex");
+  });
+
+  it("Cancel while checking behaves the same", async () => {
+    let release;
+    api.assistStatus.mockImplementationOnce(() => new Promise((resolve) => (release = resolve)));
+    await openConnect();
+    await type(tokenInput(), DEMO_TOKEN);
+    await submit(document.querySelector('[role="dialog"] form'));
+    await click(buttonByText(document.body, "Cancel"));
+    await act(async () => release(STATUS));
+    await settle();
+    expect(localStorage.getItem("ed_token")).toBe("my-own-token");
+    expect(document.querySelector('[role="tablist"]')).toBeNull();
+  });
+
+  it("a storage event from sessionStorage never moves the tab", async () => {
+    api.assistStatus.mockResolvedValue(STATUS);
+    localStorage.setItem("ed_token_backup", "my-own-token");
+    localStorage.setItem("ed_agent_id_backup", "a1");
+    localStorage.setItem("ed_token", DEMO_TOKEN);
+    localStorage.setItem("ed_agent_id", "assist-1");
+    localStorage.setItem("ed_assist_connected", "1");
+    await act(async () =>
+      window.dispatchEvent(new StorageEvent("storage", { key: "ed_assist_connected", newValue: "1", storageArea: sessionStorage }))
+    );
+    await settle();
+    expect(document.querySelector('[role="tablist"]')).toBeNull();
+    expect(container.textContent).toContain("Alex");
+    // the same event from localStorage does
+    await act(async () =>
+      window.dispatchEvent(new StorageEvent("storage", { key: "ed_assist_connected", newValue: "1", storageArea: localStorage }))
+    );
+    await settle();
+    expect(document.querySelector('[role="tablist"]')).not.toBeNull();
+  });
+
+  it("a pending focus request does not fire later when the app came back without the entry button", async () => {
+    api.assistStatus.mockResolvedValue(STATUS);
+    await connectWith(DEMO_TOKEN);
+    // The restored agent fails to load (a transient error): no entry button on screen.
+    api.getAgentState.mockRejectedValueOnce(new Error("boom"));
+    await click(buttonByText(document.body, "Disconnect"));
+    expect(entryButton()).toBeUndefined();
+    expect(document.body.textContent).toContain("Retry");
+
+    // Much later the retry works and the header (with the entry button) appears: focus must stay put.
+    await click(buttonByText(document.body, "Retry"));
+    expect(entryButton()).toBeDefined();
+    expect(document.activeElement).not.toBe(entryButton());
+  });
+});

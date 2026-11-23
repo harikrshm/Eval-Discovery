@@ -18,6 +18,7 @@ vi.mock("../api", async (importOriginal) => {
 
 import * as api from "../api";
 import { useSession } from "./useSession";
+import { clearWorkspace, getAgentId, getToken, setAgentId, setToken } from "../lib/workspace";
 
 globalThis.IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -369,5 +370,61 @@ describe("useSession refreshAgent", () => {
     });
 
     expect(view.holder.current.agent).toBe(before);
+  });
+});
+
+describe("useSession failed load (M10 d)", () => {
+  beforeEach(() => {
+    sessionStorage.clear();
+    localStorage.clear();
+    vi.clearAllMocks();
+    setToken("token-one");
+    setAgentId("a1");
+  });
+
+  afterEach(() => {
+    clearWorkspace();
+    localStorage.clear();
+  });
+
+  async function failLoadAfterSwap(status) {
+    let rejectLoad;
+    api.getAgentState.mockImplementationOnce(() => new Promise((_, reject) => (rejectLoad = reject)));
+    const view = mount("a1");
+    await view.render();
+    // While the request is in flight the workspace is swapped for another one.
+    setToken("token-two");
+    setAgentId("a2");
+    await act(async () => rejectLoad(new api.ApiError("nope", status)));
+    await view.unmount();
+  }
+
+  it("a 401 for a token that is no longer current does not wipe the new workspace", async () => {
+    await failLoadAfterSwap(401);
+    expect(getToken()).toBe("token-two");
+    expect(getAgentId()).toBe("a2");
+  });
+
+  it("a 404 for a token that is no longer current does not clear the new agent", async () => {
+    await failLoadAfterSwap(404);
+    expect(getAgentId()).toBe("a2");
+  });
+
+  it("a 401 for the current token still forgets the workspace, a 404 still forgets the agent", async () => {
+    api.getAgentState.mockRejectedValueOnce(new api.ApiError("gone", 401));
+    let view = mount("a1");
+    await view.render();
+    await view.unmount();
+    expect(getToken()).toBeNull();
+    expect(getAgentId()).toBeNull();
+
+    setToken("token-one");
+    setAgentId("a1");
+    api.getAgentState.mockRejectedValueOnce(new api.ApiError("gone", 404));
+    view = mount("a1");
+    await view.render();
+    await view.unmount();
+    expect(getToken()).toBe("token-one");
+    expect(getAgentId()).toBeNull();
   });
 });

@@ -18,6 +18,16 @@ export default function ConnectBox({ onConnected, onClose, returnFocusRef }) {
   const inputRef = useRef(null);
   const inputId = useId();
 
+  // False once the box is closed (Escape, Cancel, a connected tab elsewhere): a token check that is
+  // still running then has no say any more, so a closed box can never switch the workspace.
+  const openRef = useRef(true);
+  useEffect(() => {
+    openRef.current = true;
+    return () => {
+      openRef.current = false;
+    };
+  }, []);
+
   useEffect(() => {
     inputRef.current?.focus();
   }, []);
@@ -48,11 +58,13 @@ export default function ConnectBox({ onConnected, onClose, returnFocusRef }) {
         throw new ApiError("Unexpected response", 404);
       }
     } catch (err) {
+      if (!openRef.current) return;
       const refused = err instanceof ApiError && (err.status === 401 || err.status === 404);
       setError(refused ? NOT_ASSIST_WORKSPACE : UNREACHABLE);
       setPending(false);
       return;
     }
+    if (!openRef.current) return; // closed while the token was being checked: do not connect
     try {
       commitAssistSwap(value, status.agent_id);
     } catch {

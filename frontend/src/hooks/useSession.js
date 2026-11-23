@@ -9,7 +9,7 @@ import {
   updateCriterion as apiUpdateCriterion,
   updatePrompt as apiUpdatePrompt,
 } from "../api";
-import { clearAgentId, clearWorkspace } from "../lib/workspace";
+import { clearAgentId, clearWorkspace, getAgentId, getToken } from "../lib/workspace";
 import { derivePatternState } from "../lib/patternState";
 import { draftKey, remainingDraft } from "../lib/draft";
 import { runSaveErrorMessage } from "../lib/chatLimits";
@@ -99,6 +99,8 @@ export function useSession(agentId) {
   useEffect(() => {
     if (agentId == null) return undefined;
     let cancelled = false;
+    // What this load was sent with: a late failure may only forget the workspace or agent it is about.
+    const sentToken = getToken();
 
     getAgentState(agentId)
       .then((state) => {
@@ -124,11 +126,13 @@ export function useSession(agentId) {
         if (cancelled) return;
         const gone = isAgentGone(err);
         if (err instanceof ApiError && err.status === 401) {
-          // The stored workspace is gone; forget it (and its agent) so the app does not loop.
-          clearWorkspace();
+          // The stored workspace is gone; forget it (and its agent) so the app does not loop, but only
+          // while it is still the one this request was sent with (it may have been swapped meanwhile).
+          if (getToken() === sentToken) clearWorkspace();
         } else if (err instanceof ApiError && err.status === 404) {
-          // Only the agent is gone; the workspace is still valid.
-          clearAgentId();
+          // Only the agent is gone; the workspace is still valid. Same guard: the stored token and
+          // agent must still be the ones that failed.
+          if (getToken() === sentToken && getAgentId() === agentId) clearAgentId();
         }
         setLoaded({ agentId, error: errorMessage(err), gone });
       });
