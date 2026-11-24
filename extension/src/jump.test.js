@@ -77,6 +77,14 @@ describe('jumper', () => {
     expect(make(false).jump(claimRef('1'))).toBe(true)
     expect(scroll).toHaveBeenCalledWith({ block: 'center', behavior: 'smooth' })
   })
+  it('centres a paragraph, and starts a section at the top of the window', () => {
+    make(false).jump(paraRef('0042'))
+    expect(scroll).toHaveBeenLastCalledWith({ block: 'center', behavior: 'smooth' })
+    make(false).jump(sectionRef('claims'))
+    expect(scroll).toHaveBeenLastCalledWith({ block: 'start', behavior: 'smooth' })
+    make(true).jump(sectionRef('claims'))
+    expect(scroll).toHaveBeenLastCalledWith({ block: 'start', behavior: 'auto' })
+  })
   it('scrolls without animation when reduced motion is requested', () => {
     expect(make(true).jump(claimRef('1'))).toBe(true)
     expect(scroll).toHaveBeenCalledWith({ block: 'center', behavior: 'auto' })

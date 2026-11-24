@@ -81,7 +81,8 @@ export function createJumper(
       try {
         restore()
         try {
-          el.scrollIntoView({ block: 'center', behavior: prefersReducedMotion() ? 'auto' : 'smooth' })
+          // A section can be many screens tall: put its top at the top of the window; claims and paragraphs are centred.
+          el.scrollIntoView({ block: ref.kind === 'section' ? 'start' : 'center', behavior: prefersReducedMotion() ? 'auto' : 'smooth' })
         } catch {
           // a page without scrollIntoView still gets the highlight
         }

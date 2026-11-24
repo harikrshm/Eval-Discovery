@@ -950,6 +950,35 @@ describe('re-ask rule', () => {
       { role: 'assistant', content: 'Answer 2' },
     ])
   })
+  it('a click on the follow-up button is never a re-ask, even for the same intent within 90 s', async () => {
+    const { api, ask, followup, flush } = m({ chat: replies([{ intent: 'claim_explain' }, { intent: 'claim_explain' }, { intent: 'claim_explain' }]) })
+    await ask('explain claim 1')
+    vi.advanceTimersByTime(5000)
+    followup()[0].click()
+    await flush()
+    expect(api.chat).toHaveBeenCalledTimes(2)
+    expect(api.reask).not.toHaveBeenCalled()
+    // the previous question was not marked: it can still be re-asked by typed text
+    // (the previous of the next answer is the follow-up's answer, q-2)
+    vi.advanceTimersByTime(5000)
+    await ask('what does that mean')
+    expect(api.reask).toHaveBeenCalledTimes(1)
+    expect(api.reask.mock.calls[0][0].question_id).toBe('q-2')
+  })
+  it('a retry of a follow-up question is still not a re-ask', async () => {
+    const queue = [{ intent: 'claim_explain' }, { ok: false, status: 502, message: 'x' }, { intent: 'claim_explain' }]
+    const { api, ask, followup, flush, q } = m({ chat: async () => {
+      const n = queue.shift()
+      return n.ok === false ? n : answerFor(n)
+    } })
+    await ask('explain claim 1')
+    followup()[0].click()
+    await flush()
+    q('.error button[data-action="retry"]').click()
+    await flush()
+    expect(api.chat).toHaveBeenCalledTimes(3)
+    expect(api.reask).not.toHaveBeenCalled()
+  })
   it('does not fire for a different intent', async () => {
     const { api, ask } = m({ chat: replies([{ intent: 'claim_explain' }, { intent: 'status_family' }]) })
     await ask('a')

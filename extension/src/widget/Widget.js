@@ -312,17 +312,17 @@ export function createWidget({ doc, session, api, getSelection, now = () => Date
     const question = pickFollowUp({ intent: entry.intent, references: entry.references, asked: state.asked, claimNumbers })
     if (question === null) return
     const button = el(doc, 'button', { class: 'followup', type: 'button', 'data-action': 'followup', disabled: state.busy }, question)
-    button.addEventListener('click', () => send(question))
+    button.addEventListener('click', () => send(question, false, 'followup'))
     followups.append(button)
   }
 
-  function showError(res, question) {
+  function showError(res, question, source) {
     const message = res && isFixedMessage(res.message) ? res.message : MESSAGES.generic
     const box = el(doc, 'div', { class: 'error', role: 'alert' })
     box.append(el(doc, 'p', {}, message))
     if (message !== MESSAGES.notConfigured) {
       const retry = el(doc, 'button', { type: 'button', 'data-action': 'retry' }, 'Retry')
-      retry.addEventListener('click', () => send(question, true))
+      retry.addEventListener('click', () => send(question, true, source))
       box.append(retry)
     }
     log.append(box)
@@ -330,7 +330,8 @@ export function createWidget({ doc, session, api, getSelection, now = () => Date
   }
 
   // ---- chat ----
-  async function send(question, isRetry = false) {
+  // `source` is where the question came from: 'user' (typed text or a chip) or 'followup' (the code-picked button).
+  async function send(question, isRetry = false, source = 'user') {
     if (state.busy || state.destroyed || !usPatent || !question) return
     removeError()
     if (!isRetry) {
@@ -359,7 +360,7 @@ export function createWidget({ doc, session, api, getSelection, now = () => Date
     thinking.remove()
     setBusy(false)
     if (isFailure(res) || typeof res.answer !== 'string' || typeof res.question_id !== 'string') {
-      showError(res, question)
+      showError(res, question, source)
       renderFollowUp() // recomputed: the failed question now counts as asked
     } else {
       const previous = state.questions.at(-1)
@@ -369,6 +370,7 @@ export function createWidget({ doc, session, api, getSelection, now = () => Date
         answer: res.answer, // exactly as returned: this is what is sent back as history
         references: normalizeReferences(res.references, res.answer.length),
         intent: String(res.intent ?? ''),
+        source,
         answeredAt: now(),
         rated: false,
         reasked: false,
@@ -377,7 +379,8 @@ export function createWidget({ doc, session, api, getSelection, now = () => Date
       state.questions.push(entry)
       renderAnswer(entry)
       renderFollowUp()
-      if (previous && !previous.reasked && shouldReask(previous, entry.intent, entry.answeredAt)) {
+      // A follow-up the code suggested is not the user rephrasing: it never counts as a re-ask.
+      if (source !== 'followup' && previous && !previous.reasked && shouldReask(previous, entry.intent, entry.answeredAt)) {
         previous.reasked = true
         sendSignal((p) => api.reask(p), {
           question_id: previous.question_id,
