@@ -331,6 +331,44 @@ describe("Evolution tab: the loop as a pipeline", () => {
     expect(container.querySelector("#evolution-loop").textContent).toContain("After the check.");
   });
 
+  it("does not dim the tab or say Updating while the loop-triggered refetch is in flight", async () => {
+    api.checkPattern.mockResolvedValue({ found: true, pattern_summary: "S" });
+    await renderPanel();
+    let resolvePipeline;
+    let resolveVersions;
+    api.assistPipeline.mockReturnValue(new Promise((r) => (resolvePipeline = r)));
+    api.getVersions.mockReturnValue(new Promise((r) => (resolveVersions = r)));
+    await click(checkButton());
+    // Both refetches are in flight now; the old stepper and timeline stay, the frame stays quiet.
+    expect(api.assistPipeline).toHaveBeenCalledTimes(2);
+    expect(container.textContent).not.toContain("Updating…");
+    expect(container.querySelector("[aria-busy='true']")).toBeNull();
+    expect(container.querySelector("[data-refresh-content]").className).not.toContain("opacity-60");
+    expect(container.querySelectorAll("#evolution-loop ol > li")).toHaveLength(8);
+    expect(sectionOf("Version timeline").querySelectorAll("li")).toHaveLength(3);
+    // The answers still land.
+    await act(async () => {
+      resolvePipeline(pipelineFixture({ cycle_note: "Late note." }));
+      resolveVersions([...VERSIONS, versionRow(4, { origin: "manual", created_at: "2026-11-23T08:00:00" })]);
+    });
+    await settle();
+    expect(container.querySelector("#evolution-loop").textContent).toContain("Late note.");
+    expect(sectionOf("Version timeline").querySelectorAll("li")).toHaveLength(4);
+    expect(container.querySelector("[aria-busy='true']")).toBeNull();
+  });
+
+  it("does show Updating on an explicit Refresh, even when only the version list is slow", async () => {
+    await renderPanel({ filters: FILTERS, reloadKey: 0 });
+    let resolveVersions;
+    api.getVersions.mockReturnValue(new Promise((r) => (resolveVersions = r)));
+    await rerender(createElement(EvolutionPanel, { agentId: "assist-1", filters: FILTERS, reloadKey: 1 }));
+    expect(container.textContent).toContain("Updating…");
+    expect(container.querySelector("[aria-busy='true']")).not.toBeNull();
+    await act(async () => resolveVersions(VERSIONS));
+    await settle();
+    expect(container.textContent).not.toContain("Updating…");
+  });
+
   it("does not read the pipeline again for a check that finds nothing", async () => {
     api.checkPattern.mockResolvedValue({ found: false, pattern_summary: null });
     await renderPanel();
@@ -354,7 +392,7 @@ describe("Evolution tab: version timeline", () => {
   it("shows the empty state when the agent has no versions", async () => {
     api.getVersions.mockResolvedValue([]);
     await renderPanel();
-    expect(sectionOf("Version timeline").textContent).toContain("Not enough data yet.");
+    expect(sectionOf("Version timeline").textContent).toContain("No versions yet.");
   });
 
   it("shows an error with Retry that refetches", async () => {

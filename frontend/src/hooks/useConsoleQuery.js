@@ -19,12 +19,17 @@ function messageOf(err) {
 // refresh fails, state is "error" and `data` still holds the last good payload. `filters` is read by
 // value (range, source, version), so a new object with the same values does not refetch, and
 // `fetcher` is always the latest one passed in.
-export function useConsoleQuery(fetcher, filters, reloadKey = 0, { isEmpty = defaultIsEmpty } = {}) {
+//
+// `quietKey` (optional) is a second key that refetches like `reloadKey` does but never reports
+// `refreshing`: for a panel that must follow its own state (a loop that moved) without the
+// "Updating..." cue meant for an explicit Refresh or a filter change. Stale responses are still dropped.
+export function useConsoleQuery(fetcher, filters, reloadKey = 0, { isEmpty = defaultIsEmpty, quietKey = "" } = {}) {
   const { range, source, version = null } = filters ?? {};
   const [attempt, setAttempt] = useState(0);
-  const [result, setResult] = useState({ key: null, data: null, error: null });
+  const [result, setResult] = useState({ key: null, base: null, data: null, error: null });
   const fetcherRef = useRef(fetcher);
-  const key = `${range}|${source}|${version}|${reloadKey}|${attempt}`;
+  const base = `${range}|${source}|${version}|${reloadKey}|${attempt}`;
+  const key = `${base}|${quietKey}`;
 
   useEffect(() => {
     fetcherRef.current = fetcher;
@@ -34,15 +39,15 @@ export function useConsoleQuery(fetcher, filters, reloadKey = 0, { isEmpty = def
     let stale = false;
     (async () => fetcherRef.current({ range, source, version }))()
       .then((data) => {
-        if (!stale) setResult({ key, data, error: null });
+        if (!stale) setResult({ key, base, data, error: null });
       })
       .catch((err) => {
-        if (!stale) setResult((prev) => ({ key, data: prev.data, error: messageOf(err) }));
+        if (!stale) setResult((prev) => ({ key, base, data: prev.data, error: messageOf(err) }));
       });
     return () => {
       stale = true;
     };
-  }, [key, range, source, version]);
+  }, [key, base, range, source, version]);
 
   const retry = useCallback(() => setAttempt((n) => n + 1), []);
 
@@ -57,7 +62,7 @@ export function useConsoleQuery(fetcher, filters, reloadKey = 0, { isEmpty = def
     state,
     data: result.data,
     error: settled ? result.error : null,
-    refreshing: !settled && hasData,
+    refreshing: !settled && hasData && result.base !== base,
     retry,
   };
 }

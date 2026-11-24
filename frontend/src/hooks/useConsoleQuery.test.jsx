@@ -120,6 +120,45 @@ describe("useConsoleQuery", () => {
     expect(latest.refreshing).toBe(false);
   });
 
+  it("refetches on a quiet key change without reporting refreshing, keeping the data and the state", async () => {
+    const next = deferred();
+    const fetcher = vi.fn().mockResolvedValueOnce({ n: 1 }).mockReturnValueOnce(next.promise);
+    await render({ fetcher, filters: F, reloadKey: 0, options: { quietKey: "a" } });
+    await render({ fetcher, filters: F, reloadKey: 0, options: { quietKey: "b" } });
+    expect(fetcher).toHaveBeenCalledTimes(2);
+    expect(latest.state).toBe("ready");
+    expect(latest.data).toEqual({ n: 1 });
+    expect(latest.refreshing).toBe(false);
+    await act(async () => next.resolve({ n: 2 }));
+    expect(latest.data).toEqual({ n: 2 });
+    expect(latest.refreshing).toBe(false);
+  });
+
+  it("reports refreshing when an explicit reload arrives while a quiet refetch is in flight", async () => {
+    const quiet = deferred();
+    const explicit = deferred();
+    const fetcher = vi.fn().mockResolvedValueOnce({ n: 1 }).mockReturnValueOnce(quiet.promise).mockReturnValueOnce(explicit.promise);
+    await render({ fetcher, filters: F, reloadKey: 0, options: { quietKey: "a" } });
+    await render({ fetcher, filters: F, reloadKey: 0, options: { quietKey: "b" } });
+    expect(latest.refreshing).toBe(false);
+    await render({ fetcher, filters: F, reloadKey: 1, options: { quietKey: "b" } });
+    expect(latest.refreshing).toBe(true);
+    await act(async () => explicit.resolve({ n: 3 }));
+    expect(latest.refreshing).toBe(false);
+  });
+
+  it("ignores a stale response after a quiet key change", async () => {
+    const first = deferred();
+    const second = deferred();
+    const fetcher = vi.fn().mockResolvedValueOnce({ n: 0 }).mockReturnValueOnce(first.promise).mockReturnValueOnce(second.promise);
+    await render({ fetcher, filters: F, reloadKey: 0, options: { quietKey: "a" } });
+    await render({ fetcher, filters: F, reloadKey: 0, options: { quietKey: "b" } });
+    await render({ fetcher, filters: F, reloadKey: 0, options: { quietKey: "c" } });
+    await act(async () => second.resolve({ n: 2 }));
+    await act(async () => first.resolve({ n: 1 }));
+    expect(latest.data).toEqual({ n: 2 });
+  });
+
   it("exposes the error and retry fetches again", async () => {
     const fetcher = vi.fn().mockRejectedValueOnce(new Error("Boom")).mockResolvedValueOnce({ n: 3 });
     await render({ fetcher, filters: F, reloadKey: 0 });

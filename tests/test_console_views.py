@@ -512,6 +512,57 @@ def test_pipeline_states_follow_the_loop(client, world, db_session):
     assert SUMMARY_MARK not in text and "MARKERCRITERIONNAME" not in text and "MARKERPROMPT" not in text
 
 
+def _criterion_with_test(db_session, agent):
+    criterion = Criterion(agent_id=agent.id, position=1, name="C", definition="d", good_example="g",
+                          bad_example="b", why_discovered="w", source="discovered")
+    db_session.add(criterion)
+    db_session.commit()
+    test = EvalTest(criterion_id=criterion.id, role="fix", scripted_user_messages=["hi"])
+    db_session.add(test)
+    db_session.commit()
+    return test
+
+
+def test_pipeline_after_discovery_consumed_the_pattern_puts_fix_current(client, world, db_session):
+    _, agent, headers = world
+    for i in range(3):
+        flag(db_session, agent, f"f{i}")
+    _criterion_with_test(db_session, agent)
+    assert agent.pattern_summary is None  # discovery sets it to NULL
+    body = get(client, headers, "pipeline")
+    assert current_of(body) == "fix"
+    assert [states(body)[i] for i in ("flagged", "pattern", "criterion", "tests")] == ["done"] * 4
+    assert [states(body)[i] for i in ("review", "verify", "promoted")] == ["todo"] * 3
+
+
+def test_pipeline_with_a_promoted_fix_and_no_pattern_is_all_done(client, world, db_session):
+    _, agent, headers = world
+    flag(db_session, agent, "f0")
+    test = _criterion_with_test(db_session, agent)
+    version = PromptVersion(agent_id=agent.id, text="P", origin="suggested", status="promoted", number=2,
+                            parent_id=agent.current_prompt_version_id, source_test_id=test.id,
+                            verification={"strength": "full", "required": []})
+    db_session.add(version)
+    db_session.flush()
+    agent.current_prompt_version_id = version.id
+    db_session.commit()
+    body = get(client, headers, "pipeline")
+    assert current_of(body) is None and set(states(body).values()) == {"done"}
+
+
+def test_pipeline_manual_criterion_without_pattern_never_leaves_an_earlier_step_current(client, world, db_session):
+    _, agent, headers = world
+    db_session.add(Criterion(agent_id=agent.id, position=1, name="Mine", definition="d", good_example="g",
+                             bad_example="b", why_discovered="", source="manual"))
+    db_session.commit()
+    body = get(client, headers, "pipeline")
+    assert current_of(body) == "tests"
+    assert [states(body)[i] for i in ("flagged", "pattern", "criterion")] == ["done"] * 3
+    assert sum(s["state"] == "current" for s in body["steps"]) == 1
+    # No invented evidence in the details: only steps with real facts carry one.
+    assert body["steps"][0]["detail"] is None and body["steps"][1]["detail"] is None
+
+
 # ---- no text anywhere ------------------------------------------------------------
 
 

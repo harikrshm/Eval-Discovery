@@ -401,7 +401,8 @@ def pipeline_steps(facts: dict) -> list[dict]:
     version as {number, status, verified, required} or None. The newest suggestion decides the fix stage:
     proposed (awaiting review), approved_verifying (being checked) and promoted (or promoted and since
     superseded) move the loop forward; rejected, failed_verification and a never-verified superseded
-    suggestion put the loop back at the fix step. Details are counts and fixed phrases only.
+    suggestion put the loop back at the fix step. Evidence for a later step implies the earlier ones are
+    done (discovery consumes the pattern summary). Details are counts and fixed phrases only.
     """
     fix = facts.get("fix")
     stage, note = 0, None
@@ -419,6 +420,9 @@ def pipeline_steps(facts: dict) -> list[dict]:
     done = [
         flagged > 0, bool(facts["has_pattern"]), criteria > 0, tests > 0, stage >= 1, stage >= 2, stage >= 3, stage >= 3,
     ]
+    # Later evidence implies the earlier steps: discovery consumes the pattern summary and a criterion
+    # can be added by hand, so a criterion with no stored pattern still means the pattern step passed.
+    done = [d or any(done[i + 1 :]) for i, d in enumerate(done)]
     details = [
         _count(flagged, "flagged conversation", "flagged conversations") if flagged else None,
         "Pattern found" if facts["has_pattern"] else None,

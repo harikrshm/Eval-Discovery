@@ -64,13 +64,19 @@ export default function EvolutionPanel({ agentId, reloadKey = 0 }) {
     if (seenSignature !== null) setLoopMoves((n) => n + 1);
   }
 
-  const pipeline = useConsoleQuery(assistPipeline, NO_FILTERS, `${reloadKey}:${loopMoves}`, {
+  // Only an explicit Refresh (`reloadKey`) may dim the tab: the base key is the Refresh, and what the
+  // loop itself moves (and the verified versions the chart reads) re-key quietly.
+  const pipeline = useConsoleQuery(assistPipeline, NO_FILTERS, reloadKey, {
     isEmpty: (data) => !data?.steps?.length,
+    quietKey: loopMoves,
   });
-  const versions = useConsoleQuery(() => getVersions(agentId), NO_FILTERS, `${reloadKey}:${agentId}:${loopMoves}`);
+  const versions = useConsoleQuery(() => getVersions(agentId), NO_FILTERS, `${reloadKey}:${agentId}`, {
+    quietKey: loopMoves,
+  });
   const candidateIds =
     versions.data === null ? "pending" : replayCandidates(versions.data).map((v) => `${v.id}:${v.status}`).join(",");
-  const replays = useConsoleQuery(() => loadReplays(versions.data), NO_FILTERS, `${reloadKey}:${candidateIds}`);
+  const replays = useConsoleQuery(() => loadReplays(versions.data), NO_FILTERS, reloadKey, { quietKey: candidateIds });
+  const refreshing = pipeline.refreshing || versions.refreshing || replays.refreshing;
 
   // The chart needs the version list first: its failure or wait is the chart's too.
   const chart =
@@ -167,7 +173,7 @@ export default function EvolutionPanel({ agentId, reloadKey = 0 }) {
   }
 
   return (
-    <RefreshFrame refreshing={pipeline.refreshing}>
+    <RefreshFrame refreshing={refreshing}>
       <div className="space-y-6">
         <p className="text-xs text-muted-foreground">Applies to the whole assistant, not the selected range.</p>
 
@@ -190,9 +196,13 @@ export default function EvolutionPanel({ agentId, reloadKey = 0 }) {
             <h3 id="evolution-timeline-title" className="text-sm font-semibold text-foreground">
               Version timeline
             </h3>
-            <PanelState state={versions.state} what="the version timeline" error={versions.error} onRetry={versions.retry}>
-              {versions.state === "ready" ? <VersionTimeline versions={versions.data} /> : null}
-            </PanelState>
+            {versions.state === "empty" ? (
+              <p className="text-sm text-muted-foreground">No versions yet.</p>
+            ) : (
+              <PanelState state={versions.state} what="the version timeline" error={versions.error} onRetry={versions.retry}>
+                {versions.state === "ready" ? <VersionTimeline versions={versions.data} /> : null}
+              </PanelState>
+            )}
           </section>
 
           <div className="min-w-0">

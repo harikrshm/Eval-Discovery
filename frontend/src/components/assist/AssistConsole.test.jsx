@@ -13,6 +13,9 @@ vi.mock("../../api", async (importOriginal) => {
     assistFlagged: vi.fn(),
     assistInsights: vi.fn(),
     assistOverview: vi.fn(),
+    assistPipeline: vi.fn(),
+    getVersions: vi.fn(),
+    getReport: vi.fn(),
     getAgentState: vi.fn(),
     getTests: vi.fn(),
     getJob: vi.fn(),
@@ -32,6 +35,7 @@ import {
   metricsFixture,
   mount,
   overviewFixture,
+  pipelineFixture,
   pressKey,
   qualityFixture,
   trendsFixture,
@@ -88,6 +92,9 @@ beforeEach(() => {
   api.assistTrends.mockResolvedValue(trendsFixture());
   api.assistQuality.mockResolvedValue(qualityFixture());
   api.assistOverview.mockResolvedValue(overviewFixture());
+  api.assistPipeline.mockResolvedValue(pipelineFixture());
+  api.getVersions.mockResolvedValue([]);
+  api.getReport.mockResolvedValue(null);
 });
 
 afterEach(async () => {
