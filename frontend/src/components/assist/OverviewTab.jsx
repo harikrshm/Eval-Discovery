@@ -6,6 +6,7 @@ import LoopStepper from "./LoopStepper";
 import ChartCard from "./charts/ChartCard";
 import KpiCard from "./charts/KpiCard";
 import PanelState from "./charts/PanelState";
+import RefreshFrame from "./RefreshFrame";
 import TrendChart from "./charts/TrendChart";
 import { isNumber, utcStamp } from "./format";
 
@@ -86,39 +87,41 @@ export default function OverviewTab({ filters, reloadKey, onOpenTab }) {
   const shown = state === "ready" ? data : null;
 
   return (
-    <PanelState state={state} what="the overview" error={query.error} onRetry={query.retry}>
-      {shown ? (
-        <div className="space-y-6">
-          <AlertStrip alerts={shown.alerts} onOpen={(alert) => onOpenTab?.(alert.tab, alert.anchor)} />
+    <RefreshFrame refreshing={query.refreshing}>
+      <PanelState state={state} what="the overview" error={query.error} onRetry={query.retry}>
+        {shown ? (
+          <div className="space-y-6">
+            <AlertStrip alerts={shown.alerts} onOpen={(alert) => onOpenTab?.(alert.tab, alert.anchor)} />
 
-          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
-            {(shown.kpis ?? []).map((kpi) => (
-              <div key={kpi.id} data-kpi={kpi.id} className="min-w-0">
-                <KpiCard {...kpiProps(kpi)} />
-              </div>
-            ))}
-          </div>
-
-          <QualityTrend
-            trend={shown.quality_trend ?? []}
-            markers={shown.version_markers}
-            bucket={filters?.range === "24h" ? "hour" : "day"}
-          />
-
-          <section aria-labelledby="overview-loop-title" className="space-y-3">
-            <div className="flex flex-wrap items-center justify-between gap-2">
-              <h3 id="overview-loop-title" className="text-sm font-semibold text-foreground">
-                Improvement loop
-              </h3>
-              <Button type="button" variant="outline" size="sm" onClick={() => onOpenTab?.("evolution")}>
-                Open Evolution
-              </Button>
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
+              {(shown.kpis ?? []).map((kpi) => (
+                <div key={kpi.id} data-kpi={kpi.id} className="min-w-0">
+                  <KpiCard {...kpiProps(kpi)} />
+                </div>
+              ))}
             </div>
-            <LoopStepper steps={shown.loop?.steps} />
-            {shown.loop?.cycle_note ? <p className="text-xs text-muted-foreground">{shown.loop.cycle_note}</p> : null}
-          </section>
-        </div>
-      ) : null}
-    </PanelState>
+
+            <QualityTrend
+              trend={shown.quality_trend ?? []}
+              markers={shown.version_markers}
+              bucket={filters?.range === "24h" ? "hour" : "day"}
+            />
+
+            <section aria-labelledby="overview-loop-title" className="space-y-3">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <h3 id="overview-loop-title" className="text-sm font-semibold text-foreground">
+                  Improvement loop
+                </h3>
+                <Button type="button" variant="outline" size="sm" onClick={() => onOpenTab?.("evolution")}>
+                  Open Evolution
+                </Button>
+              </div>
+              <LoopStepper steps={shown.loop?.steps} />
+              {shown.loop?.cycle_note ? <p className="text-xs text-muted-foreground">{shown.loop.cycle_note}</p> : null}
+            </section>
+          </div>
+        ) : null}
+      </PanelState>
+    </RefreshFrame>
   );
 }

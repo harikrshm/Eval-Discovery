@@ -232,6 +232,11 @@ describe("KpiCard", () => {
     expect(delta.dataset.delta).toBe("up");
   });
 
+  it("attaches a percent unit to the number and keeps the space before words", async () => {
+    const container = await mount(<KpiCard label="Questions" value={120} delta={12.5} deltaUnit="% vs previous period" />);
+    expect(container.querySelector("[data-delta]").textContent).toContain("up 12.5% vs previous period");
+  });
+
   it("uses a different word and arrow for a negative delta, and worse when down is bad", async () => {
     const container = await mount(<KpiCard label="Thumbs-up" value="58%" delta={-2.5} deltaGood="up" />);
     const delta = container.querySelector("[data-delta]");

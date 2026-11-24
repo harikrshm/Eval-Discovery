@@ -20,8 +20,18 @@ const selectClass =
 // The controls every tab shares: time range, source, version and Refresh, plus the badge that says
 // which data is on screen. `value` is `{ range, source, version }` (version is a number or null);
 // every change calls `onChange` with the whole new object. `versions` are the numbers the version
-// select offers. Times everywhere in the console are UTC.
-export default function ConsoleControls({ value, onChange, versions = [], onRefresh, loading = false }) {
+// select offers (pass only a list that belongs to the current source). `versionsFailed` shows
+// "Couldn't load versions" with a Retry (`onRetryVersions`) next to the select. Times everywhere in
+// the console are UTC.
+export default function ConsoleControls({
+  value,
+  onChange,
+  versions = [],
+  onRefresh,
+  loading = false,
+  versionsFailed = false,
+  onRetryVersions,
+}) {
   const filters = { ...DEFAULT_FILTERS, ...value };
   // A version that is selected stays in the list even if the list has not arrived (or changed).
   const options = [...new Set([...versions, ...(filters.version != null ? [filters.version] : [])])].sort(
@@ -91,6 +101,14 @@ export default function ConsoleControls({ value, onChange, versions = [], onRefr
             </option>
           ))}
         </select>
+        {versionsFailed ? (
+          <span role="alert" className="flex items-center gap-2 text-xs text-foreground">
+            Couldn&apos;t load versions
+            <Button type="button" variant="outline" size="sm" onClick={onRetryVersions}>
+              Retry
+            </Button>
+          </span>
+        ) : null}
       </div>
 
       <div className="ml-auto flex items-center gap-3">

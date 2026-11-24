@@ -458,6 +458,10 @@ describe("global controls", () => {
     expect(after).toContainEqual({ range: "24h", source: "all", version: null });
   });
 
+  afterEach(() => {
+    delete Element.prototype.scrollIntoView;
+  });
+
   it("an alert on Overview opens its tab and scrolls to its anchor", async () => {
     api.assistOverview.mockResolvedValue(
       overviewFixture({
@@ -478,7 +482,23 @@ describe("global controls", () => {
     expect(tabNamed("Operations").getAttribute("aria-selected")).toBe("true");
     expect(scroll).toHaveBeenCalled();
     expect(scroll.mock.contexts[0]).toBe(target);
-    delete Element.prototype.scrollIntoView;
+  });
+
+  it("an alert whose anchor does not exist still opens its tab and does not throw", async () => {
+    api.assistOverview.mockResolvedValue(
+      overviewFixture({
+        alerts: [
+          { id: "p95_latency", severity: "warning", title: "Slow answers", detail: "p95 is high", tab: "operations", anchor: "no-such-anchor", demo: false },
+        ],
+      })
+    );
+    const scroll = vi.fn();
+    Element.prototype.scrollIntoView = scroll;
+    await renderConsole();
+    await click(container.querySelector("[data-alert-strip] button"));
+    expect(tabNamed("Operations").getAttribute("aria-selected")).toBe("true");
+    expect(container.querySelector("#assist-panel-operations").hidden).toBe(false);
+    expect(scroll).not.toHaveBeenCalled();
   });
 
   it("shows an Adoption error with Retry when only the metrics fail", async () => {
@@ -491,5 +511,102 @@ describe("global controls", () => {
     expect(panel.textContent).toContain("Couldn't load the adoption numbers");
     await click(buttonByText(panel, "Retry"));
     expect(panel.textContent).toContain("Feature coverage");
+  });
+});
+
+function versionCalls() {
+  return api.assistOverview.mock.calls.filter(([f]) => f.range === "24h").map(([f]) => f);
+}
+
+function versionOptions() {
+  return [...container.querySelector("select#console-version").options].map((o) => o.textContent);
+}
+
+describe("version list", () => {
+  function overviewBySource(bySource) {
+    api.assistOverview.mockImplementation(async (f) => overviewFixture({ versions: bySource[f.source] ?? [] }));
+  }
+
+  it("never offers the previous source's versions while the new source's list loads", async () => {
+    overviewBySource({ all: [1, 2, 3], live: [2, 3] });
+    await renderConsole();
+    expect(versionOptions()).toEqual(["All", "v1", "v2", "v3"]);
+
+    let release;
+    api.assistOverview.mockImplementation(
+      (f) =>
+        f.range === "24h" && f.source === "demo"
+          ? new Promise((resolve) => (release = resolve))
+          : Promise.resolve(overviewFixture())
+    );
+    await choose(container.querySelector("select#console-source"), "demo");
+    // The list that is on hand belongs to another source: not offered.
+    expect(versionOptions()).toEqual(["All"]);
+    await act(async () => release(overviewFixture({ versions: [1] })));
+    expect(versionOptions()).toEqual(["All", "v1"]);
+  });
+
+  it("keeps the selected version in the list while the right list is not there", async () => {
+    overviewBySource({ all: [1, 2, 3] });
+    await renderConsole();
+    await choose(container.querySelector("select#console-version"), "2");
+    expect(versionOptions()).toEqual(["All", "v1", "v2", "v3"]);
+    // A refresh for the same source keeps the list it has.
+    await click(buttonByText(container, "Refresh data"));
+    expect(versionOptions()).toEqual(["All", "v1", "v2", "v3"]);
+  });
+
+  it("says so when the versions cannot be loaded, offers only the selected version, and Retry refetches", async () => {
+    overviewBySource({ all: [1, 2, 3] });
+    await renderConsole();
+    await choose(container.querySelector("select#console-version"), "2");
+    api.assistOverview.mockImplementation(async (f) => {
+      if (f.range === "24h") throw new api.ApiError("Boom", 500);
+      return overviewFixture();
+    });
+    await click(buttonByText(container, "Refresh data"));
+    const message = [...container.querySelectorAll('[role="alert"]')].find((a) => a.textContent.includes("Couldn't load versions"));
+    expect(message).toBeDefined();
+    expect(versionOptions()).toEqual(["All", "v2"]);
+
+    api.assistOverview.mockImplementation(async (f) => overviewFixture({ versions: f.range === "24h" ? [1, 2, 3, 4] : [1] }));
+    const before = versionCalls().length;
+    await click(buttonByText(message, "Retry"));
+    expect(versionCalls().length).toBe(before + 1);
+    expect(container.textContent).not.toContain("Couldn't load versions");
+    expect(versionOptions()).toEqual(["All", "v1", "v2", "v3", "v4"]);
+  });
+});
+
+describe("updating state", () => {
+  it("marks the Overview busy with 'Updating…' after a filter change until the new data arrives", async () => {
+    await renderConsole();
+    const panel = () => container.querySelector("#assist-panel-overview");
+    expect(panel().querySelector('[aria-busy="true"]')).toBeNull();
+    let release;
+    api.assistOverview.mockReturnValue(new Promise((resolve) => (release = resolve)));
+    await click(buttonByText(container, "7 days"));
+    expect(panel().querySelector('[aria-busy="true"]')).not.toBeNull();
+    expect(panel().textContent).toContain("Updating…");
+    expect(container.querySelector("[data-source-badge]").textContent).toBe("Data: Live + demo dataset");
+    await act(async () => release(overviewFixture()));
+    expect(panel().querySelector('[aria-busy="true"]')).toBeNull();
+    expect(panel().textContent).not.toContain("Updating…");
+  });
+
+  it("marks the Adoption tab and the demo note busy while the metrics reload, and clears both after", async () => {
+    await renderAdoption();
+    let release;
+    api.assistMetrics.mockReturnValue(new Promise((resolve) => (release = resolve)));
+    await click(buttonByText(container, "7 days"));
+    const adoption = container.querySelector("#assist-panel-adoption");
+    expect(adoption.querySelector('[aria-busy="true"]')).not.toBeNull();
+    expect(adoption.textContent).toContain("Updating…");
+    const note = container.querySelector('[role="note"]');
+    expect(note.closest('[aria-busy="true"]').textContent).toContain("Updating…");
+    expect(container.querySelector('[aria-busy="true"] [role="note"]')).not.toBeNull();
+    await act(async () => release(metricsFixture()));
+    expect(container.querySelector('[aria-busy="true"]')).toBeNull();
+    expect(container.textContent).not.toContain("Updating…");
   });
 });

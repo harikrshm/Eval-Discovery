@@ -44,7 +44,9 @@ function Sparkline({ points }) {
 function Delta({ delta, unit, good }) {
   const amount = round1(Math.abs(delta));
   const direction = amount === 0 ? "flat" : delta > 0 ? "up" : "down";
-  const text = direction === "flat" ? "no change" : `${direction} ${amount} ${unit}`;
+  // A unit that starts with "%" attaches to the number ("12.5% vs ..."); words keep their space ("3 pts").
+  const joiner = unit.startsWith("%") ? "" : " ";
+  const text = direction === "flat" ? "no change" : `${direction} ${amount}${joiner}${unit}`;
   const judged = direction === "flat" || !good ? null : direction === good ? "better" : "worse";
   const Icon = direction === "flat" ? Minus : direction === "up" ? ArrowUp : ArrowDown;
   const colour = judged === "better" ? GOOD_TEXT : judged === "worse" ? STATUS.bad : STATUS.neutral;

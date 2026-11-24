@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { createElement } from "react";
+import { act, createElement } from "react";
 
 vi.mock("../../api", async (importOriginal) => {
   const actual = await importOriginal();
@@ -8,7 +8,7 @@ vi.mock("../../api", async (importOriginal) => {
 
 import * as api from "../../api";
 import OverviewTab from "./OverviewTab";
-import { FILTERS, buttonByText, click, emptyOverview, mount, overviewFixture, unmount } from "./testUtils";
+import { FILTERS, buttonByText, click, emptyOverview, mount, overviewFixture, rerender, unmount } from "./testUtils";
 
 let container;
 
@@ -47,7 +47,7 @@ describe("OverviewTab", () => {
     expect(cards.map((c) => c.getAttribute("data-kpi"))).toEqual(["questions", "ok_share", "open_flagged", "live_version"]);
     expect(cards[0].textContent).toContain("Questions");
     expect(cards[0].textContent).toContain("120");
-    expect(cards[0].textContent).toContain("up 12.5 % vs previous period");
+    expect(cards[0].textContent).toContain("up 12.5% vs previous period");
     expect(cards[0].textContent).toContain("(better)");
     expect(cards[1].textContent).toContain("Auto-judged OK");
     expect(cards[1].textContent).toContain("75");
@@ -157,10 +157,31 @@ describe("OverviewTab", () => {
     expect(container.querySelector('[data-kpi="questions"]')).not.toBeNull();
   });
 
-  it("refetches when the filters or the reload key change", async () => {
+  it("refetches when the reload key or the filters change, and not for an equal filters object", async () => {
+    const props = { filters: FILTERS, reloadKey: 0, onOpenTab: vi.fn() };
     await renderOverview();
-    await unmount();
-    await renderOverview({ reloadKey: 3 });
+    await rerender(createElement(OverviewTab, { ...props, filters: { ...FILTERS } }));
+    expect(api.assistOverview).toHaveBeenCalledTimes(1);
+    await rerender(createElement(OverviewTab, { ...props, reloadKey: 3 }));
     expect(api.assistOverview).toHaveBeenCalledTimes(2);
+    expect(api.assistOverview).toHaveBeenLastCalledWith(FILTERS);
+    await rerender(createElement(OverviewTab, { ...props, reloadKey: 3, filters: { ...FILTERS, range: "7d" } }));
+    expect(api.assistOverview).toHaveBeenCalledTimes(3);
+    expect(api.assistOverview).toHaveBeenLastCalledWith({ range: "7d", source: "all", version: null });
+  });
+
+  it("keeps the old numbers visible but marked as updating while a new range loads", async () => {
+    const props = { filters: FILTERS, reloadKey: 0, onOpenTab: vi.fn() };
+    await renderOverview();
+    let release;
+    api.assistOverview.mockReturnValue(new Promise((resolve) => (release = resolve)));
+    await rerender(createElement(OverviewTab, { ...props, filters: { ...FILTERS, range: "7d" } }));
+    const frame = container.querySelector("[aria-busy]");
+    expect(frame.getAttribute("aria-busy")).toBe("true");
+    expect(frame.textContent).toContain("Updating…");
+    expect(container.querySelector('[data-kpi="questions"]')).not.toBeNull();
+    await act(async () => release(overviewFixture()));
+    expect(container.querySelector('[aria-busy="true"]')).toBeNull();
+    expect(container.textContent).not.toContain("Updating…");
   });
 });

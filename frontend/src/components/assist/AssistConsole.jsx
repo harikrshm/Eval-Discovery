@@ -9,6 +9,7 @@ import { DEFAULT_FILTERS } from "./consoleFilters";
 import EvolutionPanel from "./EvolutionPanel";
 import OverviewTab from "./OverviewTab";
 import PanelState from "./charts/PanelState";
+import RefreshFrame from "./RefreshFrame";
 
 // Overview is first and the default. Every other tab mounts the first time it is opened and then stays
 // mounted (hidden) so it keeps its state. Each tab component receives `{ filters, reloadKey, onOpenTab }`.
@@ -27,6 +28,9 @@ const ANCHOR_RETRY_MS = 200;
 const STATUS_FILTERS = { range: "all", source: "all", version: null };
 const fetchStatus = () => assistStatus();
 const never = () => false;
+// The version list remembers which source it was fetched for, so a list is never shown for another one.
+const fetchVersions = (filters) =>
+  assistOverview(filters).then((overview) => ({ source: filters.source, versions: overview?.versions ?? [] }));
 
 function sourceLine(name, counts) {
   if (!counts) return null;
@@ -56,7 +60,7 @@ export default function AssistConsole({ onDisconnect, autoFocus = false }) {
   // The version select's options come from the overview and depend on the source only, so this asks
   // with the cheapest range and no version: it refetches for a new source or a Refresh, not for the rest.
   const versionsQuery = useConsoleQuery(
-    assistOverview,
+    fetchVersions,
     { range: "24h", source: filters.source, version: null },
     reloadKey,
     { isEmpty: never }
@@ -64,7 +68,11 @@ export default function AssistConsole({ onDisconnect, autoFocus = false }) {
 
   const status = statusQuery.state === "error" ? null : statusQuery.data;
   const metrics = metricsQuery.data;
-  const versions = versionsQuery.data?.versions ?? [];
+  // Offer the list only if it was fetched for the current source and the last call worked; otherwise
+  // the select has just "All" and the selected version, so it never offers a wrong version.
+  const versionsFailed = versionsQuery.state === "error";
+  const versions =
+    !versionsFailed && versionsQuery.data?.source === filters.source ? versionsQuery.data.versions : [];
   const loading = [statusQuery, metricsQuery, versionsQuery].some((q) => q.state === "loading" || q.refreshing);
 
   // After connecting, focus moves to the console heading (the connect box that had it is gone).
@@ -159,23 +167,27 @@ export default function AssistConsole({ onDisconnect, autoFocus = false }) {
             versions={versions}
             onRefresh={() => setReloadKey((n) => n + 1)}
             loading={loading}
+            versionsFailed={versionsFailed}
+            onRetryVersions={versionsQuery.retry}
           />
         </div>
-        {label && (
-          <div role="note" className="mb-4 rounded-md border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-900">
-            <p>
-              <span className="font-semibold">Data source: {label}.</span> Includes imported demo data, which is
-              not measured production usage.
+        <RefreshFrame refreshing={metricsQuery.refreshing}>
+          {label && (
+            <div role="note" className="mb-4 rounded-md border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-900">
+              <p>
+                <span className="font-semibold">Data source: {label}.</span> Includes imported demo data, which is
+                not measured production usage.
+              </p>
+            </div>
+          )}
+          {sources && (
+            <p className="mb-4 text-xs text-muted-foreground">
+              {[sourceLine("Page views", sources.page_views), sourceLine("Questions", sources.questions)]
+                .filter(Boolean)
+                .join("  |  ")}
             </p>
-          </div>
-        )}
-        {sources && (
-          <p className="mb-4 text-xs text-muted-foreground">
-            {[sourceLine("Page views", sources.page_views), sourceLine("Questions", sources.questions)]
-              .filter(Boolean)
-              .join("  |  ")}
-          </p>
-        )}
+          )}
+        </RefreshFrame>
 
         <div role="status" aria-live="polite" className="text-sm text-muted-foreground">
           {statusQuery.state === "loading" || statusQuery.refreshing ? "Loading the console…" : ""}
@@ -223,14 +235,16 @@ export default function AssistConsole({ onDisconnect, autoFocus = false }) {
             </div>
             <div role="tabpanel" id="assist-panel-adoption" aria-labelledby="assist-tab-adoption" hidden={tab !== "adoption"}>
               {opened.adoption && (
-                <PanelState
-                  state={metricsQuery.state}
-                  what="the adoption numbers"
-                  error={metricsQuery.error}
-                  onRetry={metricsQuery.retry}
-                >
-                  {metrics && <AdoptionPanel {...tabProps} metrics={metrics} onReview={() => selectTab("evolution")} />}
-                </PanelState>
+                <RefreshFrame refreshing={metricsQuery.refreshing}>
+                  <PanelState
+                    state={metricsQuery.state}
+                    what="the adoption numbers"
+                    error={metricsQuery.error}
+                    onRetry={metricsQuery.retry}
+                  >
+                    {metrics && <AdoptionPanel {...tabProps} metrics={metrics} onReview={() => selectTab("evolution")} />}
+                  </PanelState>
+                </RefreshFrame>
               )}
             </div>
             <div role="tabpanel" id="assist-panel-quality" aria-labelledby="assist-tab-quality" hidden={tab !== "quality"}>

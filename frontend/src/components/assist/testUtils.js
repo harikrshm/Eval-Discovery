@@ -34,6 +34,14 @@ export async function mount(element) {
   return container;
 }
 
+// Renders new props into the element that `mount` created (same root, so state is kept).
+export async function rerender(element) {
+  await act(async () => {
+    mounted.root.render(element);
+  });
+  await settle();
+}
+
 export async function unmount() {
   if (!mounted) return;
   const { container, root } = mounted;

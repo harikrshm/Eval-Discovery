@@ -1,4 +1,4 @@
-import { lazy, Suspense, useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef } from "react";
 import { Bot, History, ListChecks, Gauge } from "lucide-react";
 import { useEvalLoop } from "./hooks/useEvalLoop";
 import { applyStorageEvent, getAgentId, isAssistConnected, recoverInterruptedSwap } from "./lib/workspace";
@@ -13,9 +13,7 @@ import ReadinessChip from "./components/ReadinessChip";
 import { Badge } from "./components/ui/badge";
 import { Button } from "./components/ui/button";
 import ConnectBox from "./components/assist/ConnectBox";
-
-// The console carries the charting library; load it only when someone connects to it.
-const AssistConsole = lazy(() => import("./components/assist/AssistConsole"));
+import ConsoleLoader from "./components/assist/ConsoleLoader";
 
 const PANEL_WIDTH = "min(24rem, 100vw)";
 const isNarrow = () => window.matchMedia("(max-width: 1279px)").matches;
@@ -404,16 +402,14 @@ export default function App() {
 
   if (connected) {
     return (
-      <Suspense fallback={<p role="status" className="p-6 text-sm text-muted-foreground">Loading the console…</p>}>
-        <AssistConsole
-          autoFocus={justConnected}
-          onDisconnect={() => {
-            focusEntry.current = true;
-            setJustConnected(false);
-            setConnected(false);
-          }}
-        />
-      </Suspense>
+      <ConsoleLoader
+        autoFocus={justConnected}
+        onDisconnect={() => {
+          focusEntry.current = true;
+          setJustConnected(false);
+          setConnected(false);
+        }}
+      />
     );
   }
 
