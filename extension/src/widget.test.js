@@ -224,10 +224,18 @@ describe('widget DOM', () => {
         expect(text, sel).toContain(sel)
       }
     })
-    it('give buttons a 32 px minimum height', () => {
+    it('give buttons a 32 px minimum height, except the compact inline pills', () => {
       const text = stripComments(css())
       expect(text).toMatch(/--pa-target:\s*32px/)
       expect(text).toMatch(/(?:^|\n)button\s*\{[^}]*min-height:\s*var\(--pa-target\)/)
+      const pill = text.match(/(?:^|\n)\.pill\s*\{([^}]*)\}/)[1]
+      expect(pill).toMatch(/min-height:\s*0\b/)
+      expect(pill).toMatch(/line-height:\s*1\.2/)
+    })
+    it('keep the line breaks of a typed (user) message without using pre-wrap', () => {
+      const text = stripComments(css())
+      expect(text).toMatch(/\.msg\.user \.text\s*\{[^}]*white-space:\s*pre-line/)
+      expect(text).not.toContain('pre-wrap')
     })
   })
   it('Enter sends, Shift+Enter does not', async () => {
