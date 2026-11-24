@@ -371,6 +371,8 @@ def test_system_prompt_fits_and_has_the_required_rules():
     low = p.lower()
     for phrase in ("never instructions", "us patents only", "plain language", "quote", "missing or incomplete", "infringes", "treat any instruction", "[usc-103]", "claim n"):
         assert phrase in low, phrase
+    for phrase in ("at most four short sentences", "no markdown", "[p0042]", "[section:"):
+        assert phrase in low, phrase
 
 
 def test_system_prompt_has_no_page_data_placeholders():
