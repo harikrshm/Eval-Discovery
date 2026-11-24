@@ -190,6 +190,52 @@ const LOOP_STEPS = [
   ["promoted", "Promoted", "todo", null],
 ].map(([id, label, state, detail]) => ({ id, label, state, detail }));
 
+// The /assist/console/pipeline payload (backend task 6): the loop stands at "Criterion written".
+export function pipelineFixture(overrides = {}) {
+  return { steps: LOOP_STEPS, cycle_note: "The loop repeats: a rejected fix sends you back to the fix step.", ...overrides };
+}
+
+// A GET /agents/{id}/prompt-versions row (newest first from the server).
+export function versionRow(number, overrides = {}) {
+  return {
+    id: `pv${number}`,
+    number,
+    origin: "initial",
+    status: "superseded",
+    strength: null,
+    created_at: "2026-11-20T10:00:00",
+    is_current: false,
+    ...overrides,
+  };
+}
+
+// A GET /prompt-versions/{id}/report payload whose outcome table has one row per [before, after].
+export function reportFor(number, pairs, overrides = {}) {
+  return {
+    version_id: `pv${number}`,
+    number,
+    status: "promoted",
+    strength: "full",
+    why: null,
+    outcome: {
+      status: "promoted",
+      reason: "ok",
+      narrative: null,
+      explanation_unavailable: false,
+      table: pairs.map(([before, after], i) => ({
+        test_id: `t${i}`,
+        role: i === 0 ? "fix" : "regression",
+        criterion_name: "SECRET criterion name",
+        before,
+        after,
+        rationale: "SECRET rationale",
+        transcript: [{ role: "user", content: "SECRET transcript" }],
+      })),
+    },
+    ...overrides,
+  };
+}
+
 // The /assist/console/overview payload (backend task 6), with a few real numbers in it.
 export function overviewFixture(overrides = {}) {
   return {
