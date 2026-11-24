@@ -65,20 +65,22 @@ class Q:
     citation_ok: bool
     source: str
     assist_version: int | None
+    judge_flagged: bool = False
 
 
 # Why a question counts as flagged, in display order. The one definition: the console's reasons, the
 # flywheel's choice of evidence questions and the importer's flagged test all follow it.
-FLAG_REASONS = ("rated_down", "no_answer", "reasked", "citation_unverified")
+FLAG_REASONS = ("rated_down", "no_answer", "reasked", "citation_unverified", "auto_judge")
 
 
-def flag_reasons(rating: str | None, reasked: bool, citation_ok: bool) -> list[str]:
+def flag_reasons(rating: str | None, reasked: bool, citation_ok: bool, judge_flagged: bool = False) -> list[str]:
     """The flag reasons of one question, in FLAG_REASONS order; empty when it is not flagged."""
     found = {
         "rated_down": rating == "down",
         "no_answer": rating == "no_answer",
         "reasked": bool(reasked),
         "citation_unverified": not citation_ok,
+        "auto_judge": bool(judge_flagged),
     }
     return [reason for reason in FLAG_REASONS if found[reason]]
 

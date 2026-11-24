@@ -206,3 +206,29 @@ def test_entirely_imported_data_is_never_available():
     result = compute_version_comparison(rows)
     assert result["available"] is False
     assert "imported" in result["reason"]
+
+
+# ---- auto-judge flag -------------------------------------------------------------
+
+
+def test_flag_reasons_has_auto_judge_as_the_fifth_reason():
+    from backend.core.assist.adoption import FLAG_REASONS, flag_reasons
+
+    assert FLAG_REASONS == ("rated_down", "no_answer", "reasked", "citation_unverified", "auto_judge")
+    assert flag_reasons(None, False, True, judge_flagged=True) == ["auto_judge"]
+    assert flag_reasons("down", True, False, True) == [
+        "rated_down", "reasked", "citation_unverified", "auto_judge",
+    ]
+    assert flag_reasons("down", True, False) == ["rated_down", "reasked", "citation_unverified"]  # default False
+
+
+def test_adoption_numbers_are_unchanged_when_no_question_is_judge_flagged():
+    from dataclasses import replace
+
+    explicit = [replace(row, judge_flagged=False) for row in QUESTIONS]
+    assert all(row.judge_flagged is False for row in QUESTIONS)  # the new trailing field defaults to False
+    assert compute_adoption(VIEWS, explicit) == compute_adoption(VIEWS, QUESTIONS)
+    assert compute_version_comparison(explicit) == compute_version_comparison(QUESTIONS)
+    # The judge's flag marks a question for the flagged list; it is not an adoption number.
+    flagged = [replace(row, judge_flagged=True) for row in QUESTIONS]
+    assert compute_adoption(VIEWS, flagged) == compute_adoption(VIEWS, QUESTIONS)

@@ -42,14 +42,13 @@ from backend.core.assist.references import Reference, extract_references
 from backend.core.config import CHAT_MAX_TOKENS
 from backend.db.agents import current_prompt_version
 from backend.db.assist import (
-    MAX_ASSIST_RUNS,
+    FLAGGED_SOURCE,  # noqa: F401  (re-exported)
+    MAX_ASSIST_RUNS,  # noqa: F401  (re-exported)
     SessionConflict,
     add_question,
-    count_runs,
     get_assist_agent,
-    has_run_for_session,
     mark_reasked,
-    save_flagged_run,
+    save_flagged_conversation,
     set_rating,
     session_is_imported,
     upsert_page_view,
@@ -68,7 +67,6 @@ ASSIST_KEY_HEADER = "X-Assist-Key"
 NOT_CONFIGURED = "Assist is not configured."
 ASSIST_UNAVAILABLE = "The assistant is not available right now."
 CHAT_FAILED = "The assistant could not answer right now. Please try again."
-FLAGGED_SOURCE = "assist"
 QUESTION_NOT_FOUND = "Question not found."
 SESSION_CONFLICT = "This session cannot be updated."
 BRIEF_MISMATCH = "The brief does not match the question."
@@ -166,7 +164,7 @@ def chat(body: AssistChatRequest, request: Request, db: Session = Depends(get_db
         raise HTTPException(status_code=409, detail=SESSION_CONFLICT) from None
     if not check.ok:
         # The question row is already stored; losing the flagged copy must not fail the user's answer.
-        _save_flagged(
+        save_flagged_conversation(
             db, agent, body.session_id,
             [*history, {"role": "user", "content": question}, {"role": "assistant", "content": answer}], brief,
         )
@@ -236,20 +234,5 @@ def _check_brief_matches(question: AssistQuestion, body) -> None:
 
 def _flag_conversation(db: Session, agent: Agent, question: AssistQuestion, body) -> None:
     """Save the conversation as the question's session run. The run belongs to the STORED session."""
-    _save_flagged(db, agent, question.session_id, [turn.model_dump() for turn in body.conversation], body.brief)
-
-
-def _save_flagged(db: Session, agent: Agent, session_id: str, messages: list[dict], brief) -> None:
-    """Save a flagged conversation as the session's run (rating, re-ask and citation-failure paths alike).
-
-    A new session is skipped once the workspace holds MAX_ASSIST_RUNS runs; the signal is still recorded.
-    A failed save never fails the call (the signal or answer is already stored).
-    """
-    try:
-        if count_runs(db, agent) >= MAX_ASSIST_RUNS and not has_run_for_session(db, agent, session_id):
-            logger.warning("Assist flagged-run cap reached; conversation not saved")
-            return
-        save_flagged_run(db, agent, session_id, messages=messages, brief=brief, source=FLAGGED_SOURCE)
-    except Exception:
-        db.rollback()
-        logger.warning("Saving the flagged assist run failed", exc_info=True)
+    messages = [turn.model_dump() for turn in body.conversation]
+    save_flagged_conversation(db, agent, question.session_id, messages, body.brief)

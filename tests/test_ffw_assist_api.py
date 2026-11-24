@@ -134,7 +134,7 @@ BAD_REPLY = "Claim 99 adds a lid."  # claim 99 is not on the page: the citation 
 def test_m11_citation_failure_at_the_run_cap_saves_no_new_session_run(client, db_session, assist, fake, monkeypatch):
     _, agent = assist
     fake.reply = BAD_REPLY
-    monkeypatch.setattr("backend.api.assist.MAX_ASSIST_RUNS", 1)
+    monkeypatch.setattr("backend.db.assist.MAX_ASSIST_RUNS", 1)
     other = [{"role": "user", "content": "u"}, {"role": "assistant", "content": "a"}]
     save_flagged_run(db_session, agent, "session-already-1", other, make_brief(), "assist")
     r = client.post("/assist/chat", json=chat_body("session-new-0000001"), headers=HEADERS)
@@ -146,7 +146,7 @@ def test_m11_citation_failure_at_the_run_cap_saves_no_new_session_run(client, db
 def test_m11_at_the_cap_an_existing_session_run_is_still_updated(client, db_session, assist, fake, monkeypatch):
     _, agent = assist
     fake.reply = BAD_REPLY
-    monkeypatch.setattr("backend.api.assist.MAX_ASSIST_RUNS", 1)
+    monkeypatch.setattr("backend.db.assist.MAX_ASSIST_RUNS", 1)
     other = [{"role": "user", "content": "u"}, {"role": "assistant", "content": "a"}]
     save_flagged_run(db_session, agent, "session-existing-1", other, make_brief(), "assist")
     r = client.post("/assist/chat", json=chat_body("session-existing-1"), headers=HEADERS)

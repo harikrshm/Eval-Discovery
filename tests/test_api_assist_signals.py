@@ -566,7 +566,7 @@ def test_bad_conversation_shape_is_422(client, db_session, assist_agent):
 
 
 def test_flagged_run_cap_skips_the_run_but_keeps_the_rating(client, db_session, assist_agent, monkeypatch, caplog):
-    monkeypatch.setattr(assist_api, "MAX_ASSIST_RUNS", 2)
+    monkeypatch.setattr(assist_db, "MAX_ASSIST_RUNS", 2)
     for i in range(2):
         save_flagged_run(db_session, assist_agent, f"filler-session-{i}", CONVERSATION, make_brief(), "assist")
     q = make_question(db_session, assist_agent)
@@ -580,7 +580,7 @@ def test_flagged_run_cap_skips_the_run_but_keeps_the_rating(client, db_session, 
 
 
 def test_flagged_run_cap_still_updates_an_existing_session_run(client, db_session, assist_agent, monkeypatch):
-    monkeypatch.setattr(assist_api, "MAX_ASSIST_RUNS", 2)
+    monkeypatch.setattr(assist_db, "MAX_ASSIST_RUNS", 2)
     save_flagged_run(db_session, assist_agent, "filler-session-0", CONVERSATION, make_brief(), "assist")
     save_flagged_run(db_session, assist_agent, STORED_SESSION, [{"role": "user", "content": "old"}], make_brief(), "assist")
     q = make_question(db_session, assist_agent)
@@ -649,7 +649,7 @@ def test_reask_shares_a_run_with_a_rating_of_the_same_session(client, db_session
 
 
 def test_reask_respects_the_flagged_run_cap(client, db_session, assist_agent, monkeypatch):
-    monkeypatch.setattr(assist_api, "MAX_ASSIST_RUNS", 1)
+    monkeypatch.setattr(assist_db, "MAX_ASSIST_RUNS", 1)
     save_flagged_run(db_session, assist_agent, "filler-session-0", CONVERSATION, make_brief(), "assist")
     q = make_question(db_session, assist_agent)
     assert post_reask(client, signal(q.id)).status_code == 204

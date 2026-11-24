@@ -1,5 +1,6 @@
 """Persistence helpers for the Patent Assist agent: its lookup, the signal rows and flagged runs."""
 
+import logging
 import os
 from collections.abc import Sequence
 from datetime import datetime
@@ -11,12 +12,16 @@ from sqlalchemy.orm import Session
 from backend.core.assist.adoption import flag_reasons
 from backend.core.assist.bounce import is_bounce
 from backend.core.assist.brief import Brief
+from backend.core.assist.convo_judge import FLAG_GRADE_AT_OR_BELOW, RUBRIC_VERSION, Verdict
 from backend.core.assist.evidence import MAX_EVIDENCE_CHARS, cut_on_line, evidence_summary
-from backend.db.models import Agent, AssistPageView, AssistQuestion, Run, Workspace, utcnow
+from backend.db.models import Agent, AssistJudgement, AssistPageView, AssistQuestion, Run, Workspace, utcnow
+
+logger = logging.getLogger(__name__)
 
 ASSIST_AGENT_ENV = "ASSIST_AGENT_ID"
 ASSIST_AGENT_MISSING = "The assistant agent is not configured."
 MAX_ASSIST_RUNS = 1000  # flagged conversations kept per workspace; past it new sessions are not saved
+FLAGGED_SOURCE = "assist"  # the run source of a conversation flagged by a signal, a failed check or the judge
 
 
 def get_assist_agent(db: Session) -> tuple[Agent, Workspace]:
@@ -257,6 +262,96 @@ def has_run_for_session(db: Session, agent: Agent, session_id: str) -> bool:
     return db.scalar(select(Run.id).where(Run.agent_id == agent.id, Run.session_id == session_id)) is not None
 
 
+def save_flagged_conversation(db: Session, agent: Agent, session_id: str, messages: list[dict], brief) -> None:
+    """Save a flagged conversation as the session's run (rating, re-ask, citation-failure and judge paths alike).
+
+    A new session is skipped once the workspace holds MAX_ASSIST_RUNS runs; the signal is still recorded.
+    A failed save never fails the call (the signal or answer is already stored).
+    """
+    try:
+        if count_runs(db, agent) >= MAX_ASSIST_RUNS and not has_run_for_session(db, agent, session_id):
+            logger.warning("Assist flagged-run cap reached; conversation not saved")
+            return
+        save_flagged_run(db, agent, session_id, messages=messages, brief=brief, source=FLAGGED_SOURCE)
+    except Exception:
+        db.rollback()
+        logger.warning("Saving the flagged assist run failed", exc_info=True)
+
+
+def _judged_question(db: Session, workspace_id: str, session_id: str, worst_id: str | None) -> AssistQuestion | None:
+    """The question the judge's flag lands on: the named worst one of this session, else the session's latest."""
+    questions = list(
+        db.scalars(
+            select(AssistQuestion)
+            .where(AssistQuestion.workspace_id == workspace_id, AssistQuestion.session_id == session_id)
+            .order_by(AssistQuestion.created_at.desc(), AssistQuestion.id.desc())
+        )
+    )
+    for question in questions:
+        if worst_id is not None and question.id == worst_id:
+            return question
+    return questions[0] if questions else None
+
+
+def record_judgement(
+    db: Session,
+    agent: Agent,
+    workspace: Workspace,
+    session_id: str,
+    verdict: Verdict,
+    *,
+    model: str,
+    prompt_version: int,
+    turns_messages: list[dict],
+) -> AssistJudgement:
+    """Store the conversation judge's verdict and, for a low grade, put the conversation into the flagged loop.
+
+    One judgement per (workspace, session, prompt version): a second insert for the same pair raises
+    `IntegrityError` (after a rollback) and changes nothing. An imported session raises `SessionConflict`:
+    the judge never grades imported data.
+
+    A grade at or below FLAG_GRADE_AT_OR_BELOW stores `flagged=True`, sets `judge_flagged` on the worst
+    question (the latest question of the session when the verdict names none, or names one that is not in
+    the session) and saves the conversation as the session's flagged run through `save_flagged_conversation`
+    (so the run cap and the swallow-and-log behaviour apply). A conversation that was never flagged before
+    has no stored page brief, so its run is saved with `brief={}`: it can feed pattern discovery but not
+    replay tests. A session that already has a run keeps that run's stored brief.
+    """
+    if session_is_imported(db, session_id):
+        raise SessionConflict(session_id)
+    flagged = verdict.grade <= FLAG_GRADE_AT_OR_BELOW
+    # Looked up before the insert so the query cannot autoflush a duplicate judgement outside the try below.
+    target = _judged_question(db, workspace.id, session_id, verdict.worst_question_id) if flagged else None
+    row = AssistJudgement(
+        workspace_id=workspace.id,
+        session_id=session_id,
+        prompt_version=prompt_version,
+        rubric_version=RUBRIC_VERSION,
+        model=model,
+        answered=verdict.answered,
+        concise=verdict.concise,
+        citations_sensible=verdict.citations_sensible,
+        legal=verdict.legal,
+        grade=verdict.grade,
+        reason=verdict.reason,
+        worst_question_id=verdict.worst_question_id,
+        flagged=flagged,
+        source="live",
+    )
+    db.add(row)
+    if target is not None:
+        target.judge_flagged = True
+    try:
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        raise
+    if flagged:
+        existing = db.scalar(select(Run.brief_snapshot).where(Run.agent_id == agent.id, Run.session_id == session_id))
+        save_flagged_conversation(db, agent, session_id, turns_messages, existing or {})
+    return row
+
+
 # ---- flywheel evidence ---------------------------------------------------------
 
 EVIDENCE_SOURCES = ("assist", "imported")  # run sources that carry assistant evidence (never "manual")
@@ -267,7 +362,7 @@ _BLOCK_SEPARATOR = "\n---\n"
 
 
 def _is_flagged(question: AssistQuestion) -> bool:
-    return bool(flag_reasons(question.rating, question.reasked, question.citation_ok))
+    return bool(flag_reasons(question.rating, question.reasked, question.citation_ok, question.judge_flagged))
 
 
 def run_evidence(db: Session, run: Run) -> str:

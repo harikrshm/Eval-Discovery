@@ -123,6 +123,7 @@ def _load_questions(db: Session, workspace_id: str, session_ids: list[str] | Non
             AssistQuestion.rating,
             AssistQuestion.reasked,
             AssistQuestion.citation_ok,
+            AssistQuestion.judge_flagged,
             AssistQuestion.source,
             AssistQuestion.assist_version,
         )
@@ -150,7 +151,7 @@ def _compute_adoption(db: Session, workspace: Workspace) -> tuple[dict, list]:
     ]
     questions = [
         Q(r.session_id, r.intent, r.section_focus, r.rating, bool(r.reasked), bool(r.citation_ok),
-          r.source, r.assist_version)
+          r.source, r.assist_version, bool(r.judge_flagged))
         for r in _load_questions(db, workspace.id)
     ]
     return compute_adoption(views, questions), questions
@@ -245,7 +246,7 @@ def console_insights(
 
 
 def _reasons(rows: list) -> list[str]:
-    found = {reason for q in rows for reason in flag_reasons(q.rating, q.reasked, q.citation_ok)}
+    found = {reason for q in rows for reason in flag_reasons(q.rating, q.reasked, q.citation_ok, q.judge_flagged)}
     return [reason for reason in FLAG_REASONS if reason in found]
 
 
@@ -287,7 +288,7 @@ def console_flagged(
         rows = by_session.get(run.session_id, [])
         # A filter looks at the session's flagged questions (the reason the run exists); only a session
         # without any falls back to all of its questions.
-        pool = [q for q in rows if flag_reasons(q.rating, q.reasked, q.citation_ok)] or rows
+        pool = [q for q in rows if flag_reasons(q.rating, q.reasked, q.citation_ok, q.judge_flagged)] or rows
         if intent is not None and not any(q.intent == intent for q in pool):
             continue
         if section is not None and not any(q.section_focus == section for q in pool):

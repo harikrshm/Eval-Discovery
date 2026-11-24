@@ -44,6 +44,9 @@ class Workspace(Base):
     assist_calls: Mapped[list["AssistCall"]] = relationship(
         back_populates="workspace", cascade="all, delete-orphan"
     )
+    assist_judgements: Mapped[list["AssistJudgement"]] = relationship(
+        back_populates="workspace", cascade="all, delete-orphan"
+    )
 
 
 class Agent(Base):
@@ -257,6 +260,8 @@ class AssistQuestion(Base):
     rating_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
     reasked: Mapped[bool] = mapped_column(Boolean, default=False)
     citation_ok: Mapped[bool] = mapped_column(Boolean, default=True)
+    # Set when the conversation judge graded the session low and named this question the worst one.
+    judge_flagged: Mapped[bool] = mapped_column(Boolean, default=False, server_default="0")
     source: Mapped[str] = mapped_column(String(32))
     assist_version: Mapped[int] = mapped_column(Integer)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
@@ -287,3 +292,34 @@ class AssistCall(Base):
     source: Mapped[str] = mapped_column(String(16), default="live", server_default="live")  # "live" | "imported"
 
     workspace: Mapped[Workspace] = relationship(back_populates="assist_calls")
+
+
+class AssistJudgement(Base):
+    """The conversation judge's verdict on one session at one prompt version.
+
+    Labels, flags and ids only: never question text, answer text or free text from the model.
+    """
+
+    __tablename__ = "assist_judgement"
+    __table_args__ = (
+        UniqueConstraint("workspace_id", "session_id", "prompt_version", name="uq_assist_judgement_session_version"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    workspace_id: Mapped[str] = _fk("workspace.id")
+    session_id: Mapped[str] = mapped_column(String(64), index=True)
+    prompt_version: Mapped[int] = mapped_column(Integer)
+    rubric_version: Mapped[str] = mapped_column(String(16))
+    model: Mapped[str] = mapped_column(String(64))
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+    answered: Mapped[str] = mapped_column(String(16))  # "yes" | "partly" | "no"
+    concise: Mapped[bool] = mapped_column(Boolean)
+    citations_sensible: Mapped[bool] = mapped_column(Boolean)
+    legal: Mapped[str] = mapped_column(String(16))  # "handled" | "mishandled" | "not_applicable"
+    grade: Mapped[int] = mapped_column(Integer)  # 1..5
+    reason: Mapped[str] = mapped_column(String(32))  # one of convo_judge.REASONS
+    worst_question_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    flagged: Mapped[bool] = mapped_column(Boolean, default=False)
+    source: Mapped[str] = mapped_column(String(16), default="live", server_default="live")  # "live" | "imported"
+
+    workspace: Mapped[Workspace] = relationship(back_populates="assist_judgements")
