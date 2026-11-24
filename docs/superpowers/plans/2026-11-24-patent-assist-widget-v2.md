@@ -57,7 +57,7 @@
   - `"claims 1-3"` and `"claims 1, 2 and 4"` → one reference each, `target` `"1"`, label the matched text; `"claims 1-9"` and `"claim 7"` → none (a number is missing).
   - `"[p0002] says it"` → paragraph `target="0002"`, label `"¶0002"`; `"[p0099]"` → none.
   - `"[section:description]"` → section, label `"Description"`; `"[section:secrets]"` → none.
-  - Emoji first: `"😀 see claim 1"` → `start == 5` (the emoji is 2 UTF-16 units) and `utf16_offset("😀 see claim 1", 6) == 7`.
+  - Emoji first: `"😀 see claim 1"` → `start == 7` (the emoji is 2 UTF-16 units, so the word "claim" starts at UTF-16 offset 7) and `utf16_offset("😀 see claim 1", 6) == 7`.
   - 500 repetitions of `"claim 1 "` → exactly `MAX_REFERENCES` references; `"claims 1-999999"` returns in under 1 s with no references.
   - `iter_claim_ref_spans("claims 1-3 and claim 5")` yields two spans whose items are `[(1, 3)]` and `[(5, 5)]`; `list(iter_claim_ref_ranges(...))` is unchanged for the same text (existing tests in `tests/test_assist_brief.py` still pass).
 - [ ] **Step 2: Run** `python -m pytest tests/test_assist_references.py -q`. Expected: FAIL (module missing).
