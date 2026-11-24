@@ -232,14 +232,16 @@ export function assistEvaluateNow() {
 }
 
 // Flagged conversations, newest first. Empty filters are left out of the query. `reason` narrows to one
-// flag reason and `source` to all|live|demo.
-export function assistFlagged({ intent, section, limit, reason, source } = {}) {
+// flag reason; `range`, `source` and `version` are the console filters and mean what they do on /metrics.
+export function assistFlagged({ intent, section, limit, reason, range, source, version } = {}) {
   const params = new URLSearchParams();
   if (intent) params.set("intent", intent);
   if (section) params.set("section", section);
   if (limit) params.set("limit", String(limit));
   if (reason) params.set("reason", reason);
+  if (range) params.set("range", range);
   if (source) params.set("source", source);
+  if (version !== undefined && version !== null && version !== "") params.set("version", String(version));
   const query = params.toString();
   return request(`/assist/console/flagged${query ? `?${query}` : ""}`);
 }

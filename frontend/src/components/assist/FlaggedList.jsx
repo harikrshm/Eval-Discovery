@@ -20,10 +20,17 @@ function join(values) {
   return values && values.length ? values.map(humanize).join(", ") : "none";
 }
 
+// What the polite status announces once the list has loaded.
+function countText(error, items) {
+  if (error || !items) return "";
+  if (items.length === 0) return "No flagged conversations for this selection.";
+  return `${items.length} flagged conversation${items.length === 1 ? "" : "s"}`;
+}
+
 // Flagged assistant conversations: ids and labels only. An imported (demo) conversation always
 // carries a plain-text "imported" tag.
 const FlaggedList = forwardRef(function FlaggedList(
-  { items, loading, error, filter, note = null, onClearFilter, onReview, onRetry },
+  { items, loading, error, filter, scope = null, onClearFilter, onReview, onRetry },
   headingRef
 ) {
   const filterText = filter.section
@@ -38,20 +45,23 @@ const FlaggedList = forwardRef(function FlaggedList(
         <h3 id="flagged-heading" ref={headingRef} tabIndex={-1} className="text-sm font-semibold text-foreground focus:outline-none">
           Flagged conversations
         </h3>
-        {filterText && (
+        {filterText ? (
           <>
-            <span className="text-sm text-muted-foreground">Filtered by {filterText}</span>
+            <span className="text-sm text-muted-foreground">
+              Filtered by {filterText}
+              {scope ? `, ${scope}` : ""}
+            </span>
             <Button type="button" size="sm" variant="outline" onClick={onClearFilter}>
               Clear filter
             </Button>
           </>
-        )}
+        ) : scope ? (
+          <span className="text-sm text-muted-foreground">Showing {scope}</span>
+        ) : null}
       </div>
 
-      {note ? <p className="text-xs text-muted-foreground">{note}</p> : null}
-
       <div role="status" aria-live="polite" className="text-sm text-muted-foreground">
-        {loading ? "Loading flagged conversations…" : ""}
+        {loading ? "Loading flagged conversations…" : countText(error, items)}
       </div>
       {error && (
         <div role="alert" className="flex flex-wrap items-center gap-3 text-sm text-red-700">
@@ -60,9 +70,6 @@ const FlaggedList = forwardRef(function FlaggedList(
             Retry
           </Button>
         </div>
-      )}
-      {!loading && !error && items && items.length === 0 && (
-        <p className="text-sm text-muted-foreground">No flagged conversations{filterText ? " for this filter" : ""}.</p>
       )}
 
       {!error && items && items.length > 0 && (

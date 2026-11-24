@@ -57,6 +57,16 @@ async function renderAdoption() {
   return container;
 }
 
+// Waits (in short real steps, inside act) until `condition()` holds; fails after about 3 seconds.
+async function until(condition) {
+  for (let i = 0; i < 150 && !condition(); i += 1) {
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    });
+  }
+  expect(condition()).toBe(true);
+}
+
 async function choose(select, value) {
   await act(async () => {
     select.value = value;
@@ -76,7 +86,10 @@ beforeEach(() => {
   api.assistOverview.mockResolvedValue(overviewFixture());
 });
 
-afterEach(unmount);
+afterEach(async () => {
+  delete Element.prototype.scrollIntoView;
+  await unmount();
+});
 
 describe("console header", () => {
   it("shows the data-source label prominently with the live and imported counts", async () => {
@@ -437,12 +450,19 @@ describe("updating state", () => {
     expect(container.textContent).not.toContain("Updating…");
   });
 
-  it("sends the console filters to the Adoption tab's requests", async () => {
+  it("sends the console filters, range and version included, to the Adoption tab's requests", async () => {
     await renderAdoption();
     await click(buttonByText(container, "7 days"));
     await choose(container.querySelector("select#console-source"), "demo");
     expect(api.assistTrends).toHaveBeenLastCalledWith({ range: "7d", source: "demo", version: null });
-    expect(api.assistFlagged).toHaveBeenLastCalledWith({ intent: undefined, section: undefined, limit: 50, source: "demo" });
+    expect(api.assistFlagged).toHaveBeenLastCalledWith({
+      intent: undefined,
+      section: undefined,
+      limit: 50,
+      range: "7d",
+      source: "demo",
+      version: null,
+    });
   });
 
   it("an alert that points at the re-ask chart opens Adoption and scrolls to it", async () => {
@@ -458,10 +478,7 @@ describe("updating state", () => {
     await renderConsole();
     await click(container.querySelector("[data-alert-strip] button"));
     expect(tabNamed("Adoption").getAttribute("aria-selected")).toBe("true");
-    await act(async () => {
-      await new Promise((resolve) => setTimeout(resolve, 450));
-    });
-    expect(scroll.mock.contexts.some((el) => el?.id === "adoption-reasks")).toBe(true);
-    delete Element.prototype.scrollIntoView;
+    // The panel loads after the tab opens, so the shell looks for the anchor again; wait for that, not a fixed time.
+    await until(() => scroll.mock.contexts.some((el) => el?.id === "adoption-reasks"));
   });
 });

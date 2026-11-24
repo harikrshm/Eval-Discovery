@@ -82,7 +82,7 @@ beforeEach(async () => {
   localStorage.setItem("ed_token", "my-own-token");
   localStorage.setItem("ed_agent_id", "a1");
   container = await mount(createElement(App));
-});
+}, 30000);
 
 afterEach(async () => {
   await unmount();

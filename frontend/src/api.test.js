@@ -573,6 +573,19 @@ describe("fix-loop api", () => {
       expect(urls[1]).toMatch(/\/assist\/console\/flagged\?intent=claim_explain$/);
     });
 
+    it("passes the range and version to the flagged list and leaves out unset ones", async () => {
+      const { workspace, api } = await load();
+      workspace.setToken("demo-tok");
+      fetchMock.mockResolvedValue(jsonResponse(200, []));
+
+      await api.assistFlagged({ section: "claims", limit: 50, range: "7d", source: "live", version: 3 });
+      await api.assistFlagged({ range: "30d", version: null });
+
+      const urls = fetchMock.mock.calls.map((c) => c[0]);
+      expect(urls[0]).toMatch(/\/assist\/console\/flagged\?section=claims&limit=50&range=7d&source=live&version=3$/);
+      expect(urls[1]).toMatch(/\/assist\/console\/flagged\?range=30d$/);
+    });
+
     it("posts to evaluate one waiting conversation now", async () => {
       const { workspace, api } = await load();
       workspace.setToken("demo-tok");

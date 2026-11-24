@@ -292,7 +292,7 @@ def console_flagged(
     intent: str | None = None,
     section: str | None = None,
     reason: str | None = None,
-    source: str = cf.DEFAULT_SOURCE,
+    filters: cf.Filters = Depends(console_filters),
     limit: Annotated[int, Query(ge=1)] = DEFAULT_FLAGGED_LIMIT,
     workspace: Workspace = Depends(get_current_workspace),
     db: Session = Depends(get_db),
@@ -301,8 +301,10 @@ def console_flagged(
 
     A run matches the filters when a flagged question of its session has that intent / section focus
     (or any question of it, for a session without a flagged one). With `reason`, only the questions
-    flagged for that reason count, and the run must have one. `source` is `all`, `live` (not imported)
-    or `demo` (imported).
+    flagged for that reason count, and the run must have one. The console filters apply as on `/metrics`:
+    `range` keeps runs created inside it (half-open, UTC), `source` is `all`, `live` (not imported) or `demo`
+    (imported), and `version` keeps runs with a question of that assistant version in the same pool the
+    intent and section filters look at. Defaults are `range=all`, `source=all`, no version.
     """
     if intent is not None and intent not in _INTENTS:
         raise HTTPException(status_code=422, detail="Unknown intent.")
@@ -310,9 +312,6 @@ def console_flagged(
         raise HTTPException(status_code=422, detail="Unknown section.")
     if reason is not None and reason not in FLAG_REASONS:
         raise HTTPException(status_code=422, detail="Unknown reason.")
-    if source not in cf.SOURCES:
-        raise HTTPException(status_code=422, detail=cf.INVALID_FILTER)
-    source_filter = cf.parse_filters(cf.DEFAULT_RANGE, source, None)
     limit = min(limit, MAX_FLAGGED_LIMIT)
     agent = _assist_agent(db, workspace)
 
@@ -331,7 +330,7 @@ def console_flagged(
 
     out = []
     for run in runs:
-        if not cf.matches(run.source, source_filter):
+        if not cf.matches(run.source, filters) or not cf.in_range(run.created_at, filters):
             continue
         rows = by_session.get(run.session_id, [])
         # A filter looks at the session's flagged questions (the reason the run exists); only a session
@@ -344,6 +343,8 @@ def console_flagged(
         if intent is not None and not any(q.intent == intent for q in pool):
             continue
         if section is not None and not any(q.section_focus == section for q in pool):
+            continue
+        if filters.version is not None and not any(q.assist_version == filters.version for q in pool):
             continue
         out.append(
             FlaggedRunOut(

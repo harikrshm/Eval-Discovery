@@ -239,6 +239,67 @@ def test_flagged_filters_reason_and_source(client, flagged_data):
         assert client.get(f"/assist/console/flagged?reason={reason}", headers=headers).status_code == 200
 
 
+@pytest.fixture
+def flagged_timed(db_session):
+    """Three flagged runs: live v2 an hour ago, live v1 3 days ago, demo v1 20 days ago."""
+    workspace, agent, headers = make_workspace(db_session)
+    now = utcnow()
+    spec = [
+        ("a", now - timedelta(hours=1), "assist", 2, "claim_explain", "claims", {"rating": "down"}),
+        ("b", now - timedelta(days=3), "assist", 1, "citations_prior_art", "citations", {"citation_ok": False}),
+        ("c", now - timedelta(days=20), "imported", 1, "claim_explain", "claims", {"rating": "down"}),
+    ]
+    runs = {}
+    for session, at, source, version, intent, section, extra in spec:
+        add_q(db_session, workspace, session, intent, section, source=source, version=version, created_at=at, **extra)
+        run = flag(db_session, agent, session, source="imported" if source == "imported" else "assist")
+        run.created_at = at
+        runs[session] = run
+    # A run flagged for one version, plus an unflagged question of another in the same session.
+    add_q(db_session, workspace, "a", "other", None, version=1, created_at=now - timedelta(hours=2))
+    db_session.commit()
+    return {"headers": headers, "runs": runs}
+
+
+def test_flagged_range_keeps_runs_created_inside_it(client, flagged_timed):
+    headers, runs = flagged_timed["headers"], flagged_timed["runs"]
+    assert flagged_ids(client, headers, "?range=24h") == {runs["a"].id}
+    assert flagged_ids(client, headers, "?range=7d") == {runs["a"].id, runs["b"].id}
+    assert flagged_ids(client, headers, "?range=30d") == {runs["a"].id, runs["b"].id, runs["c"].id}
+    assert flagged_ids(client, headers, "?range=all") == {runs["a"].id, runs["b"].id, runs["c"].id}
+
+
+def test_flagged_version_keeps_runs_with_a_question_of_that_version_in_the_pool(client, flagged_timed):
+    headers, runs = flagged_timed["headers"], flagged_timed["runs"]
+    assert flagged_ids(client, headers, "?version=2") == {runs["a"].id}
+    assert flagged_ids(client, headers, "?version=1") == {runs["b"].id, runs["c"].id}
+    # Run a also has a v1 question, but it is not flagged, so it is not in the pool.
+    assert runs["a"].id not in flagged_ids(client, headers, "?version=1")
+    assert flagged_ids(client, headers, "?version=9") == set()
+
+
+def test_flagged_filters_combine(client, flagged_timed):
+    headers, runs = flagged_timed["headers"], flagged_timed["runs"]
+    assert flagged_ids(client, headers, "?range=7d&source=live&version=1") == {runs["b"].id}
+    assert flagged_ids(client, headers, "?range=30d&source=demo&version=1&section=claims") == {runs["c"].id}
+    assert flagged_ids(client, headers, "?range=7d&section=claims&intent=claim_explain&reason=rated_down") == {
+        runs["a"].id
+    }
+    assert flagged_ids(client, headers, "?range=24h&section=citations") == set()
+    assert flagged_ids(client, headers, "?range=30d&source=demo&version=2") == set()
+
+
+def test_flagged_range_is_half_open_on_the_run_time(client, db_session):
+    workspace, agent, headers = make_workspace(db_session)
+    now = utcnow()
+    add_q(db_session, workspace, "edge", "claim_explain", "claims", rating="down")
+    run = flag(db_session, agent, "edge")
+    run.created_at = now + timedelta(minutes=5)  # after the request instant: outside every bounded range
+    db_session.commit()
+    assert flagged_ids(client, headers, "?range=24h") == set()
+    assert flagged_ids(client, headers, "") == {run.id}
+
+
 # ---- validation and text safety -----------------------------------------------------------
 
 
@@ -254,6 +315,9 @@ def test_flagged_filters_reason_and_source(client, flagged_data):
         "/assist/console/trends?version=abc",
         "/assist/console/flagged?reason=bogus",
         "/assist/console/flagged?source=bogus",
+        "/assist/console/flagged?range=1y",
+        "/assist/console/flagged?version=abc",
+        "/assist/console/flagged?version=0",
     ],
 )
 def test_invalid_filter_values_422(client, timed, path):
@@ -274,6 +338,7 @@ def test_responses_contain_no_text(client, db_session):
         "/assist/console/metrics", "/assist/console/metrics?range=24h&source=live&version=1",
         "/assist/console/trends", "/assist/console/trends?range=7d&source=demo",
         "/assist/console/flagged", "/assist/console/flagged?reason=rated_down&source=live",
+        "/assist/console/flagged?range=7d&version=1&source=live",
     ]
     for path in paths:
         response = client.get(path, headers=headers)

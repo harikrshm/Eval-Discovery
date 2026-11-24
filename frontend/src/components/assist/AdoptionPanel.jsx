@@ -11,15 +11,12 @@ import InsightsBrief from "./InsightsBrief";
 import RefreshFrame from "./RefreshFrame";
 import VersionComparison from "./VersionComparison";
 import { chartMarkers } from "./chartMarkers";
+import { scopeText } from "./consoleFilters";
 import { NA, humanize, isNumber, pct, per100, utcStamp } from "./format";
 
 const FLAGGED_LIMIT = 50;
 const NO_FILTER = { intent: null, section: null };
 const SELECT_HINT = "Select a bar to list the flagged conversations behind it.";
-const FLAGGED_NOTE = `The ${FLAGGED_LIMIT} newest. The source filter applies; the time range and version do not.`;
-// The flagged list uses the console's source only; a fixed range and no version keep it from refetching
-// when only those change.
-const FLAGGED_QUERY_FILTERS = { range: "all", version: null };
 
 const DEFINITIONS = [
   "Coverage = share of non-bounce page views where the section was visible for at least 3 seconds.",
@@ -69,8 +66,12 @@ function pointChange(now, before) {
   return isNumber(now) && isNumber(before) ? (now - before) * 100 : null;
 }
 
+// Empty only when this period and the previous one are both without page views and questions: a
+// period that fell to zero still shows its KPIs, with the drop.
 function isEmptyTrends(data) {
-  return !data || total(data.totals, "page_views") + total(data.totals, "questions") === 0;
+  if (!data) return true;
+  const activity = (counts) => total(counts, "page_views") + total(counts, "questions");
+  return activity(data.totals) + activity(data.previous) === 0;
 }
 
 function isEmptyMetrics(data) {
@@ -142,6 +143,14 @@ function kpiCards(trends) {
 
 function UsageTrend({ trends }) {
   const points = trends.points ?? [];
+  if (points.length === 0) {
+    return (
+      <section aria-label="Page views and questions over time" className="rounded-lg border border-border bg-card p-4">
+        <h3 className="text-sm font-semibold text-foreground">Page views and questions over time</h3>
+        <p className="text-sm text-muted-foreground">No data points in this range.</p>
+      </section>
+    );
+  }
   return (
     <ChartCard
       title="Page views and questions over time"
@@ -306,15 +315,18 @@ export default function AdoptionPanel({ filters, reloadKey = 0, onOpenTab }) {
 
   const trends = useConsoleQuery(assistTrends, filters, reloadKey, { isEmpty: isEmptyTrends });
   const metrics = useConsoleQuery(assistMetrics, filters, reloadKey, { isEmpty: isEmptyMetrics });
+  // The list answers to the same range, source and version as the charts, plus the picked section or task.
   const flagged = useConsoleQuery(
-    ({ source }) =>
+    ({ range, source, version }) =>
       assistFlagged({
         intent: filter.intent ?? undefined,
         section: filter.section ?? undefined,
         limit: FLAGGED_LIMIT,
+        range,
         source,
+        version,
       }),
-    { ...FLAGGED_QUERY_FILTERS, source: filters?.source },
+    filters,
     `${reloadKey}:${filter.intent ?? ""}:${filter.section ?? ""}`,
     { isEmpty: never }
   );
@@ -383,7 +395,7 @@ export default function AdoptionPanel({ filters, reloadKey = 0, onOpenTab }) {
         loading={flaggedBusy}
         error={flagged.state === "error" ? flagged.error : null}
         filter={filter}
-        note={FLAGGED_NOTE}
+        scope={scopeText(filters)}
         onClearFilter={() => setFilter(NO_FILTER)}
         onRetry={flagged.retry}
         onReview={() => onOpenTab?.("evolution")}
