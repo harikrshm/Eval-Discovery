@@ -93,3 +93,38 @@ def test_iter_claim_ref_spans():
     assert spans[0][2] == [(1, 3)] and spans[1][2] == [(5, 5)]
     assert text[spans[0][0] : spans[0][1]] == "claims 1-3"
     assert list(iter_claim_ref_ranges(text)) == [(1, 3), (5, 5)]
+
+
+def test_section_labels_cover_section_names():
+    from backend.core.assist.intent import SECTION_NAMES
+
+    assert set(SECTION_LABELS) == set(SECTION_NAMES)
+
+
+def test_check_flags_unverified_paragraphs():
+    from backend.core.assist.citations import check_citations
+
+    brief = make_brief()
+    bad = check_citations("see [p0099]", brief, [])
+    assert bad.unverified_paragraphs == ["0099"] and bad.ok is False
+    assert check_citations("see [p0001]", brief, []).ok is True
+
+
+def test_check_flags_unverified_sections():
+    from backend.core.assist.citations import check_citations
+
+    brief = make_brief()
+    bad = check_citations("see [section:nope]", brief, [])
+    assert bad.unverified_sections == ["nope"] and bad.ok is False
+    assert check_citations("see [section:claims]", brief, []).ok is True
+
+
+def test_check_caps_each_new_list():
+    from backend.core.assist.citations import MAX_REPORTED, check_citations
+
+    brief = make_brief()
+    paras = " ".join(f"[p{n:04d}]" for n in range(1000, 1200))
+    secs = " ".join(f"[section:x{'a' * (n % 10)}{chr(97 + n % 26)}{chr(97 + n // 26 % 26)}]" for n in range(300))
+    check = check_citations(paras + " " + secs, brief, [])
+    assert len(check.unverified_paragraphs) == MAX_REPORTED
+    assert len(check.unverified_sections) == MAX_REPORTED

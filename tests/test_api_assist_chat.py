@@ -156,11 +156,13 @@ def test_happy_path_returns_the_answer_and_stores_one_question(client, db_sessio
     r = post(client)
     assert r.status_code == 200
     data = r.json()
-    assert set(data) == {"answer", "question_id", "intent", "assist_version", "citation_check"}
+    assert set(data) == {"answer", "question_id", "intent", "assist_version", "citation_check", "references"}
     assert data["answer"] == "Claim 1 describes a widget."
     assert data["intent"] == "claim_explain"
     assert data["assist_version"] == current_prompt_version(assist_agent).number == 1
-    assert data["citation_check"] == {"ok": True, "unverified_claims": [], "unverified_law": []}
+    assert data["citation_check"] == {
+        "ok": True, "unverified_claims": [], "unverified_law": [], "unverified_paragraphs": [], "unverified_sections": [],
+    }
 
     rows = questions(db_session)
     assert len(rows) == 1
@@ -277,8 +279,11 @@ def test_non_us_brief_gets_the_fixed_answer_with_no_model_call(client, db_sessio
     assert r.status_code == 200
     data = r.json()
     assert data["answer"] == NOT_US_ANSWER
+    assert data["references"] == []
     assert data["intent"] == "other"
-    assert data["citation_check"] == {"ok": True, "unverified_claims": [], "unverified_law": []}
+    assert data["citation_check"] == {
+        "ok": True, "unverified_claims": [], "unverified_law": [], "unverified_paragraphs": [], "unverified_sections": [],
+    }
     assert fake.calls == [] and fake.retries == []
     rows = questions(db_session)
     assert len(rows) == 1
@@ -300,7 +305,9 @@ def test_unknown_claim_gets_the_note_and_a_flagged_run(client, db_session, assis
     data = r.json()
     assert data["answer"] == "Claim 99 adds a lid.\n\n" + CITATION_NOTE
     assert CITATION_NOTE == "Some citations in this answer could not be verified against the page."
-    assert data["citation_check"] == {"ok": False, "unverified_claims": [99], "unverified_law": []}
+    assert data["citation_check"] == {
+        "ok": False, "unverified_claims": [99], "unverified_law": [], "unverified_paragraphs": [], "unverified_sections": [],
+    }
 
     rows = questions(db_session)
     assert len(rows) == 1 and rows[0].citation_ok is False and rows[0].answer == data["answer"]
@@ -316,6 +323,41 @@ def test_unknown_claim_gets_the_note_and_a_flagged_run(client, db_session, assis
         {"role": "assistant", "content": data["answer"]},
     ]
     assert run.brief_snapshot["patent_number"] == "US10000000B2"
+
+
+def _slice_utf16(text, start, end):
+    return text.encode("utf-16-le")[2 * start : 2 * end].decode("utf-16-le")
+
+
+def test_response_carries_validated_references(client, db_session, assist_agent, fake):
+    fake.reply = "Claim 1 covers X, see claim 1 and [p0001]."
+    brief = make_brief(description=[{"heading": "Background", "text": "[p0001] First paragraph."}])
+    data = post(client, body(brief=brief)).json()
+    refs = data["references"]
+    assert [r["kind"] for r in refs] == ["claim", "claim", "paragraph"]
+    assert [r["target"] for r in refs] == ["1", "1", "0001"]
+    assert [_slice_utf16(data["answer"], r["start"], r["end"]) for r in refs] == ["Claim 1", "claim 1", "[p0001]"]
+    assert refs[2]["label"] == "¶0001"
+    assert data["citation_check"]["ok"] is True
+
+
+def test_unverified_paragraph_is_flagged_and_not_a_reference(client, db_session, assist_agent, fake):
+    fake.reply = "See [p9999] for details."
+    brief = make_brief(description=[{"heading": "Background", "text": "[p0001] First paragraph."}])
+    data = post(client, body(brief=brief)).json()
+    assert data["references"] == []
+    assert data["citation_check"]["ok"] is False
+    assert data["citation_check"]["unverified_paragraphs"] == ["9999"]
+    assert data["answer"] == "See [p9999] for details.\n\n" + CITATION_NOTE
+    assert questions(db_session)[0].citation_ok is False
+    assert len(list(db_session.scalars(select(Run)))) == 1
+
+
+def test_references_offsets_follow_the_final_answer(client, db_session, assist_agent, fake):
+    fake.reply = "\U0001F600 see claim 1"
+    data = post(client, body()).json()
+    ref = data["references"][0]
+    assert ref["start"] == 7 and _slice_utf16(data["answer"], ref["start"], ref["end"]) == "claim 1"
 
 
 def test_unprovided_law_id_is_flagged(client, db_session, assist_agent, fake):

@@ -527,6 +527,18 @@ class CitationCheckOut(BaseModel):
     ok: bool
     unverified_claims: list[int]
     unverified_law: list[str]
+    unverified_paragraphs: list[str] = []
+    unverified_sections: list[str] = []
+
+
+class ReferenceOut(BaseModel):
+    """A validated claim, paragraph or section reference; offsets are UTF-16 units into `answer`."""
+
+    start: int
+    end: int
+    kind: Literal["claim", "paragraph", "section"]
+    target: str
+    label: str
 
 
 class AssistChatResponse(BaseModel):
@@ -535,6 +547,7 @@ class AssistChatResponse(BaseModel):
     intent: str
     assist_version: int
     citation_check: CitationCheckOut
+    references: list[ReferenceOut] = []
 
 
 class AssistConsoleStatusOut(BaseModel):

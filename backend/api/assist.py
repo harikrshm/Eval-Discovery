@@ -29,6 +29,7 @@ from backend.api.schemas import (
     AssistRatingRequest,
     AssistReaskRequest,
     CitationCheckOut,
+    ReferenceOut,
 )
 from backend.core.assist import ASSIST_MODEL
 from backend.core.assist.answer import CITATION_NOTE, build_answer_request, finalize_answer  # noqa: F401  (CITATION_NOTE is re-exported)
@@ -36,6 +37,7 @@ from backend.core.assist.assemble import NOT_US_ANSWER
 from backend.core.assist.brief import is_us_patent
 from backend.core.assist.citations import CitationCheck
 from backend.core.assist.intent import Intent, primary_section
+from backend.core.assist.references import Reference, extract_references
 from backend.core.config import CHAT_MAX_TOKENS
 from backend.db.agents import current_prompt_version
 from backend.db.assist import (
@@ -83,15 +85,25 @@ def require_assist_key(x_assist_key: str | None = Header(default=None)) -> None:
         raise HTTPException(status_code=401, detail="Invalid assist key.")
 
 
-def _response(question_id: str, answer: str, intent: Intent, version: int, check) -> AssistChatResponse:
+def _response(
+    question_id: str, answer: str, intent: Intent, version: int, check, references: list[Reference] | None = None
+) -> AssistChatResponse:
     return AssistChatResponse(
         answer=answer,
         question_id=question_id,
         intent=intent.value,
         assist_version=version,
         citation_check=CitationCheckOut(
-            ok=check.ok, unverified_claims=check.unverified_claims, unverified_law=check.unverified_law
+            ok=check.ok,
+            unverified_claims=check.unverified_claims,
+            unverified_law=check.unverified_law,
+            unverified_paragraphs=check.unverified_paragraphs,
+            unverified_sections=check.unverified_sections,
         ),
+        references=[
+            ReferenceOut(start=r.start, end=r.end, kind=r.kind, target=r.target, label=r.label)
+            for r in references or []
+        ],
     )
 
 
@@ -147,7 +159,7 @@ def chat(body: AssistChatRequest, request: Request, db: Session = Depends(get_db
             db, agent, body.session_id,
             [*history, {"role": "user", "content": question}, {"role": "assistant", "content": answer}], brief,
         )
-    return _response(row.id, answer, intent, version.number, check)
+    return _response(row.id, answer, intent, version.number, check, extract_references(answer, brief))
 
 
 @router.post("/page-views", status_code=204, dependencies=[Depends(require_assist_key)])

@@ -15,6 +15,11 @@ Law citations are `[id]` where id starts with "usc-" or "mpep-" followed by
 Any other bracketed text ("[1]", "[snippet]", "[Figure 3]", "[USC-103]", "[]")
 is not a law citation and is ignored.
 
+Paragraph citations are `[pNNNN]` and section citations are `[section:name]` (the grammar of
+`references.PARAGRAPH_MARKER_RE` and `SECTION_TOKEN_RE`, read from the normalised text like law ids). A
+paragraph is unverified when no description section of the brief holds that marker; a section is unverified
+when its name is not in `SECTION_NAMES`.
+
 Everything is bounded so a hostile answer cannot slow the check: the regexes
 have bounded quantifiers, a range is never expanded in full (the runs of
 missing claim numbers are computed once and found per range by bisection, so a
@@ -29,6 +34,8 @@ from bisect import bisect_left
 from dataclasses import dataclass, field
 
 from backend.core.assist.brief import Brief, iter_claim_ref_ranges
+from backend.core.assist.intent import SECTION_NAMES
+from backend.core.assist.references import PARAGRAPH_MARKER_RE, SECTION_TOKEN_RE, paragraph_numbers
 
 # Look-alikes the model writes for ASCII: the dash family (U+2010..U+2015, minus sign) and curly quotes.
 _DASHES = dict.fromkeys(list(range(0x2010, 0x2016)) + [0x2212], "-")
@@ -59,6 +66,8 @@ class CitationCheck:
     ok: bool
     unverified_claims: list[int] = field(default_factory=list)
     unverified_law: list[str] = field(default_factory=list)
+    unverified_paragraphs: list[str] = field(default_factory=list)
+    unverified_sections: list[str] = field(default_factory=list)
 
 
 def _unverified_claims(answer: str, brief: Brief) -> list[int]:
@@ -108,11 +117,41 @@ def _unverified_law(answer: str, provided_ids: list[str]) -> list[str]:
     return list(seen)[:MAX_REPORTED]
 
 
-def check_citations(answer: str, brief: Brief, provided_ids: list[str]) -> CitationCheck:
-    """Flag claim numbers not on the page and law ids that were not supplied.
+def _unverified_paragraphs(answer: str, brief: Brief) -> list[str]:
+    known = paragraph_numbers(brief)
+    seen: dict[str, None] = {}
+    for m in PARAGRAPH_MARKER_RE.finditer(answer):
+        if m.group(1) not in known:
+            seen[m.group(1)] = None
+            if len(seen) >= MAX_REPORTED:
+                break
+    return list(seen)
 
-    Law ids are read from the normalised text (see `normalize_for_check`). Claim references are read from
+
+def _unverified_sections(answer: str) -> list[str]:
+    seen: dict[str, None] = {}
+    for m in SECTION_TOKEN_RE.finditer(answer):
+        if m.group(1) not in SECTION_NAMES:
+            seen[m.group(1)] = None
+            if len(seen) >= MAX_REPORTED:
+                break
+    return list(seen)
+
+
+def check_citations(answer: str, brief: Brief, provided_ids: list[str]) -> CitationCheck:
+    """Flag claim numbers not on the page, law ids that were not supplied, and unknown paragraph or section citations.
+
+    Law ids, paragraph markers and section tokens are read from the normalised text (see `normalize_for_check`). Claim references are read from
     the text as written: the claim grammar is ASCII-digit only (fullwidth digits are not a reference)."""
     claims = _unverified_claims(answer, brief)
-    law = _unverified_law(normalize_for_check(answer), provided_ids)
-    return CitationCheck(ok=not claims and not law, unverified_claims=claims, unverified_law=law)
+    normalized = normalize_for_check(answer)
+    law = _unverified_law(normalized, provided_ids)
+    paragraphs = _unverified_paragraphs(normalized, brief)
+    sections = _unverified_sections(normalized)
+    return CitationCheck(
+        ok=not (claims or law or paragraphs or sections),
+        unverified_claims=claims,
+        unverified_law=law,
+        unverified_paragraphs=paragraphs,
+        unverified_sections=sections,
+    )
