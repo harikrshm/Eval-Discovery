@@ -348,6 +348,12 @@ export function createWidget({ doc, session, api, getSelection, now = () => Date
       setOpen(false)
     }
   })
+  // Keep typing inside the widget: the page's own shortcuts (I, W/A/S/D, arrows) listen on the
+  // document and would otherwise see these events retargeted to the host. Registered after the
+  // Escape handler so that one still runs first.
+  for (const type of ['keydown', 'keyup', 'keypress']) {
+    root.addEventListener(type, (e) => e.stopPropagation())
+  }
   // A click on the input moves the page selection away, so remember the last one made on the page.
   const onSelectionChange = () => {
     if (state.destroyed) return

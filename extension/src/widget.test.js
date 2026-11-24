@@ -192,6 +192,81 @@ describe('widget DOM', () => {
     expect(ev.defaultPrevented).toBe(true)
     expect(api.chat).toHaveBeenCalledTimes(1)
   })
+  describe('keystrokes stay inside the widget', () => {
+    const KEYS = ['i', 'w', 's', 'a', 'd', 'ArrowLeft']
+    const TYPES = ['keydown', 'keyup', 'keypress']
+    const fire = (target, type, key) =>
+      target.dispatchEvent(new KeyboardEvent(type, { key, bubbles: true, composed: true, cancelable: true }))
+    const watch = () => {
+      const onDoc = vi.fn()
+      const onWin = vi.fn()
+      for (const t of TYPES) {
+        document.addEventListener(t, onDoc)
+        window.addEventListener(t, onWin)
+      }
+      return {
+        onDoc,
+        onWin,
+        stop: () => {
+          for (const t of TYPES) {
+            document.removeEventListener(t, onDoc)
+            window.removeEventListener(t, onWin)
+          }
+        },
+      }
+    }
+
+    it('does not let page-level listeners see keys typed in the textarea', () => {
+      const { q } = m()
+      q('.launcher').click()
+      const w = watch()
+      try {
+        for (const type of TYPES) for (const key of KEYS) fire(q('textarea'), type, key)
+        expect(w.onDoc).not.toHaveBeenCalled()
+        expect(w.onWin).not.toHaveBeenCalled()
+      } finally {
+        w.stop()
+      }
+    })
+    it('control: the same keys on document.body still reach those listeners', () => {
+      m()
+      const w = watch()
+      try {
+        for (const type of TYPES) for (const key of KEYS) fire(document.body, type, key)
+        expect(w.onDoc).toHaveBeenCalledTimes(TYPES.length * KEYS.length)
+        expect(w.onWin).toHaveBeenCalledTimes(TYPES.length * KEYS.length)
+      } finally {
+        w.stop()
+      }
+    })
+    it('Enter in the textarea still sends and is not leaked to the page', async () => {
+      const { api, q, type, flush } = m()
+      q('.launcher').click()
+      type('Hello there')
+      const w = watch()
+      try {
+        fire(q('textarea'), 'keydown', 'Enter')
+        await flush()
+        expect(api.chat).toHaveBeenCalledTimes(1)
+        expect(w.onDoc).not.toHaveBeenCalled()
+      } finally {
+        w.stop()
+      }
+    })
+    it('Escape still closes the panel and focuses the launcher', () => {
+      const { widget, q } = m()
+      q('.launcher').click()
+      const w = watch()
+      try {
+        fire(q('textarea'), 'keydown', 'Escape')
+        expect(q('.panel').hidden).toBe(true)
+        expect(widget.shadow.activeElement).toBe(q('.launcher'))
+        expect(w.onDoc).not.toHaveBeenCalled()
+      } finally {
+        w.stop()
+      }
+    })
+  })
   it('caps the input at 2000 characters', () => {
     const { q } = m()
     expect(q('textarea').maxLength).toBe(2000)
