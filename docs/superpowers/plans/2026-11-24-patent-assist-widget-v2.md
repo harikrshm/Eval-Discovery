@@ -202,7 +202,7 @@
 - Produces in `followups.js`:
   - `export const FEEDBACK_AFTER_QUESTIONS = 3`.
   - `pickFollowUp(input: { intent: string, references: Ref[], asked: string[], claimNumbers: number[] }): string | null` with this exact table. Let `n` = smallest claim number in `claimNumbers` greater than the highest claim number among `references` of kind `claim` (use 0 when there are none).
-    - `claim_explain`, `claim_scope`: candidates `What does claim ${n} add?` (only if `n` exists), `What do these CPC codes mean?`, `Is this still in force?`
+    - `claim_explain`, `claim_scope`: candidates `What does claim ${n} add?` (only when the answer cites at least one claim and `n` exists; with no cited claim it is skipped), `What do these CPC codes mean?`, `Is this still in force?`
     - `classification`: `Is this still in force?`, `Who cites this patent?`
     - `status_family`: `What do these CPC codes mean?`, `Explain claim 1`
     - `citations_prior_art`: `Explain claim 1`, `Is this still in force?`
