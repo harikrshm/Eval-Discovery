@@ -158,6 +158,20 @@ _REF_RE = re.compile(rf"(?<![A-Za-z0-9_])claims?\s+({_ITEM}(?:{_LIST_SEP}{_ITEM}
 _ITEM_RE = re.compile(rf"([0-9]+)(?:{_RANGE_SEP}([0-9]+))?")
 
 
+def iter_claim_ref_spans(text: str):
+    """Yield (start, end, items) for every claim reference match in `text`.
+
+    `start`/`end` are str indexes of the whole match (e.g. "claims 1-3"); `items`
+    are the (lo, hi) pairs `iter_claim_ref_ranges` yields for that match.
+    """
+    for ref in _REF_RE.finditer(text):
+        items = []
+        for item in _ITEM_RE.finditer(ref.group(1)):
+            lo = int(item.group(1))
+            items.append((lo, int(item.group(2)) if item.group(2) else lo))
+        yield ref.start(), ref.end(), items
+
+
 def iter_claim_ref_ranges(text: str):
     """Yield (start, end) for every item of every claim reference in `text`.
 
@@ -165,10 +179,8 @@ def iter_claim_ref_ranges(text: str):
     single number yields (n, n). Nothing is clamped or expanded here, and a
     reversed range such as "3-1" yields (3, 1), which spans no claims.
     """
-    for ref in _REF_RE.finditer(text):
-        for item in _ITEM_RE.finditer(ref.group(1)):
-            start = int(item.group(1))
-            yield start, int(item.group(2)) if item.group(2) else start
+    for _start, _end, items in iter_claim_ref_spans(text):
+        yield from items
 
 
 def parse_claim_refs(number: int, text: str) -> list[int]:
