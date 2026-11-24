@@ -319,6 +319,7 @@ class AssistJudgement(Base):
     grade: Mapped[int] = mapped_column(Integer)  # 1..5
     reason: Mapped[str] = mapped_column(String(32))  # one of convo_judge.REASONS
     worst_question_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    # The grade was at or below the threshold; not a promise that a run exists (the run cap can skip it).
     flagged: Mapped[bool] = mapped_column(Boolean, default=False)
     source: Mapped[str] = mapped_column(String(16), default="live", server_default="live")  # "live" | "imported"
 

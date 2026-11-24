@@ -104,6 +104,8 @@ def evidence_summary(run_messages: list[dict], brief_snapshot: dict | None, meta
         reasons.append("re-asked")
     if citation_ok is False:
         reasons.append("citation failure")
+    if meta.get("judge_flagged") is True:
+        reasons.append("auto-judge flagged the conversation")
     lines.append(f"Signals: {'; '.join(reasons) if reasons else 'none'}")
     if rating in _RATINGS:
         lines.append(f"Rating: {rating}")

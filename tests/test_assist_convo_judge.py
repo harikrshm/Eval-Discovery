@@ -368,3 +368,33 @@ def test_migration_0007_upgrades_and_downgrades(tmp_path, monkeypatch):
         assert "assist_judgement" in inspect(engine).get_table_names()
     finally:
         engine.dispose()
+
+
+# ---- flywheel evidence ---------------------------------------------------------
+
+
+def test_a_judge_only_flag_shows_in_the_flywheel_evidence(db_session, world):
+    from backend.db.assist import run_evidence
+
+    workspace, agent, _ = world
+    flagged = ask(db_session, workspace, n=1)
+    clean = ask(db_session, workspace, n=2)
+    record(db_session, agent, workspace, verdict(grade=2, worst=flagged.id))
+    run = db_session.scalar(select(Run).where(Run.session_id == SESSION))
+    blocks = run_evidence(db_session, run).split("\n---\n")
+    assert len(blocks) == 2
+    newest, flagged_block = blocks  # newest first: the clean question, then the judge-flagged one
+    assert "Signals: auto-judge flagged the conversation" in flagged_block
+    assert "Signals: none" not in flagged_block
+    assert "Signals: none" in newest and "auto-judge" not in newest
+
+
+def test_evidence_summary_is_unchanged_without_the_judge_flag():
+    from backend.core.assist.evidence import evidence_summary
+
+    meta = {"intent": "claim_explain", "section_focus": "claims", "rating": "down", "reasked": True,
+            "citation_ok": False, "assist_version": 1}
+    base = evidence_summary(messages_for(1), {}, meta)
+    assert evidence_summary(messages_for(1), {}, {**meta, "judge_flagged": False}) == base
+    assert "Signals: rating down; re-asked; citation failure\n" in base + "\n"
+    assert "auto-judge" in evidence_summary(messages_for(1), {}, {**meta, "judge_flagged": True})

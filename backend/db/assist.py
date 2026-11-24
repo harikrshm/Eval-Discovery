@@ -316,6 +316,9 @@ def record_judgement(
     (so the run cap and the swallow-and-log behaviour apply). A conversation that was never flagged before
     has no stored page brief, so its run is saved with `brief={}`: it can feed pattern discovery but not
     replay tests. A session that already has a run keeps that run's stored brief.
+
+    `AssistJudgement.flagged` means "the grade was at or below the threshold", not that a run was created:
+    the run can be skipped by the cap, and no question is flagged when the session has none.
     """
     if session_is_imported(db, session_id):
         raise SessionConflict(session_id)
@@ -400,6 +403,7 @@ def run_evidence(db: Session, run: Run) -> str:
                 "rating": q.rating,
                 "reasked": q.reasked,
                 "citation_ok": q.citation_ok,
+                "judge_flagged": q.judge_flagged,
                 "assist_version": q.assist_version,
                 "completeness": snapshot.get("completeness"),
             },
