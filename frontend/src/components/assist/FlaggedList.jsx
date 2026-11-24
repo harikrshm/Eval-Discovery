@@ -23,7 +23,7 @@ function join(values) {
 // Flagged assistant conversations: ids and labels only. An imported (demo) conversation always
 // carries a plain-text "imported" tag.
 const FlaggedList = forwardRef(function FlaggedList(
-  { items, loading, error, filter, onClearFilter, onReview, onRetry },
+  { items, loading, error, filter, note = null, onClearFilter, onReview, onRetry },
   headingRef
 ) {
   const filterText = filter.section
@@ -47,6 +47,8 @@ const FlaggedList = forwardRef(function FlaggedList(
           </>
         )}
       </div>
+
+      {note ? <p className="text-xs text-muted-foreground">{note}</p> : null}
 
       <div role="status" aria-live="polite" className="text-sm text-muted-foreground">
         {loading ? "Loading flagged conversations…" : ""}

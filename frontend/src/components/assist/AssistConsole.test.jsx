@@ -7,6 +7,7 @@ vi.mock("../../api", async (importOriginal) => {
     ...actual,
     assistStatus: vi.fn(),
     assistMetrics: vi.fn(),
+    assistTrends: vi.fn(),
     assistFlagged: vi.fn(),
     assistInsights: vi.fn(),
     assistOverview: vi.fn(),
@@ -30,6 +31,7 @@ import {
   mount,
   overviewFixture,
   pressKey,
+  trendsFixture,
   unmount,
 } from "./testUtils";
 
@@ -62,16 +64,6 @@ async function choose(select, value) {
   });
 }
 
-function row(label) {
-  return [...container.querySelectorAll("li")].find((li) => li.textContent.startsWith(label));
-}
-
-function tableRows(index) {
-  return [...container.querySelectorAll("table")[index].querySelectorAll("tbody tr")].map((tr) =>
-    [...tr.children].map((c) => c.textContent)
-  );
-}
-
 beforeEach(() => {
   localStorage.clear();
   sessionStorage.clear();
@@ -80,6 +72,7 @@ beforeEach(() => {
   api.assistStatus.mockResolvedValue(STATUS);
   api.assistMetrics.mockResolvedValue(metricsFixture());
   api.assistFlagged.mockResolvedValue([]);
+  api.assistTrends.mockResolvedValue(trendsFixture());
   api.assistOverview.mockResolvedValue(overviewFixture());
 });
 
@@ -134,176 +127,7 @@ describe("console header", () => {
   });
 });
 
-describe("adoption numbers", () => {
-  it("draws coverage bars with a text value and an accessible label", async () => {
-    await renderAdoption();
-    const claims = row("claims");
-    expect(claims.textContent).toContain("50%");
-    const bar = claims.querySelector('[role="img"]');
-    expect(bar.getAttribute("aria-label")).toBe("claims: 50%");
-    expect(bar.querySelector("[data-bar-fill]").style.width).toBe("50%");
-    // Every row of every bar list has exactly one labelled image that states a value or n/a.
-    const rows = container.querySelectorAll('ul[aria-label^="Feature coverage"] > li, ul[aria-label^="Task mix"] > li');
-    expect(rows.length).toBe(10);
-    for (const li of rows) {
-      expect(li.querySelectorAll('[role="img"]')).toHaveLength(1);
-      expect(li.querySelector('[role="img"]').getAttribute("aria-label")).toMatch(/: (n\/a|(\d+, )?[\d.]+%)$/);
-    }
-  });
-
-  it("renders a missing value as n/a with no bar", async () => {
-    await renderAdoption();
-    const classifications = row("classifications");
-    expect(classifications.textContent).toContain("n/a");
-    expect(classifications.querySelector("[data-bar-fill]")).toBeNull();
-    expect(classifications.querySelector('[role="img"]').getAttribute("aria-label")).toBe("classifications: n/a");
-    // A real zero is a zero, not n/a.
-    expect(row("family").textContent).toContain("0%");
-    expect(row("family").querySelector("[data-bar-fill]")).not.toBeNull();
-    // Task mix with a null share.
-    expect(row("other").querySelector("[data-bar-fill]")).toBeNull();
-  });
-
-  it("lists the task mix with counts and shares", async () => {
-    await renderAdoption();
-    expect(row("claim explain").textContent).toContain("6 · 50%");
-    expect(row("claim explain").querySelector('[role="img"]').getAttribute("aria-label")).toBe("claim explain: 6, 50%");
-  });
-
-  it("shows the help-demand table with n/a and the questions without views", async () => {
-    await renderAdoption();
-    const rows = tableRows(0);
-    expect(rows[0]).toEqual(["claims", "10", "30"]);
-    expect(rows[2]).toEqual(["classifications", "0", "n/a"]);
-    expect(rows[3]).toEqual(["citations", "5", "120"]); // help demand can exceed 100
-    expect(container.textContent).toContain("Questions about sections with no recorded views: landscapes (2)");
-  });
-
-  it("shows the struggle numbers with n/a for missing rates", async () => {
-    await renderAdoption();
-    const dl = container.querySelector("dl");
-    expect([...dl.children].map((c) => c.textContent)).toEqual([
-      "Navigation help questions",
-      "3",
-      "Refusals",
-      "1",
-      "Unverified citation rate",
-      "n/a",
-      "Bounce rate",
-      "20%",
-    ]);
-    const reask = tableRows(1);
-    expect(reask[0]).toEqual(["claim explain", "33.3%", "16.7%"]);
-    expect(reask[1]).toEqual(["navigation help", "n/a", "n/a"]);
-  });
-
-  it("states the metric definitions in plain text", async () => {
-    await renderAdoption();
-    const text = container.querySelector('section[aria-labelledby="definitions-heading"]').textContent;
-    expect(text).toContain("at least 3 seconds");
-    expect(text).toContain("per 100 non-bounce views in which that section was visible at all");
-    expect(text).toContain("can exceed 100");
-    expect(text).toContain('"down" ratings only');
-    expect(text).toContain("legal-opinion questions");
-    expect(text).toContain("Widget usage is NOT measured");
-  });
-});
-
-describe("version comparison", () => {
-  it("gives one sentence and no table when it is not available", async () => {
-    await renderAdoption();
-    const section = container.querySelector('section[aria-labelledby="versions-heading"]');
-    expect(section.textContent).toContain("All questions are imported demo data, so versions cannot be compared.");
-    expect(section.textContent).toContain("Real (non-imported) questions only.");
-    expect(section.querySelector("table")).toBeNull();
-  });
-
-  it("shows per-version rows and greys versions with too little data", async () => {
-    api.assistMetrics.mockResolvedValue(
-      metricsFixture({
-        data_source_label: null,
-        version_comparison: {
-          available: true,
-          note: "Real (non-imported) questions only.",
-          versions: {
-            1: { questions: 12, reask_rate: 0.25, thumbs_down_rate: 0.1667, enough_data: true, intents: {} },
-            2: { questions: 14, reask_rate: 0.1, thumbs_down_rate: 0, enough_data: true, intents: {} },
-            3: { questions: 4, reask_rate: 1, thumbs_down_rate: 1, enough_data: false, intents: {} },
-          },
-        },
-      })
-    );
-    await renderAdoption();
-    const section = container.querySelector('section[aria-labelledby="versions-heading"]');
-    const rows = [...section.querySelectorAll("tbody tr")];
-    expect(rows).toHaveLength(3);
-    expect(rows[0].textContent).toBe("v11225%16.7%");
-    expect(rows[0].getAttribute("data-enough-data")).toBe("true");
-    expect(rows[2].getAttribute("data-enough-data")).toBe("false");
-    expect(rows[2].className).toContain("opacity-60");
-    expect(rows[2].textContent).toContain("too few questions to compare");
-    expect(rows[2].textContent).not.toContain("100%");
-    expect(section.textContent).toContain("Real (non-imported) questions only.");
-  });
-});
-
-describe("flagged conversations", () => {
-  const flaggedItems = () => [...container.querySelectorAll('section[aria-labelledby="flagged-heading"] > ul > li')];
-
-  it("lists imported and live conversations with a plain-text source tag", async () => {
-    api.assistFlagged.mockResolvedValue([
-      flaggedRun(),
-      flaggedRun({ run_id: "run-2", source: "assist", session_id: null, patent_number: null, intents: [], reasons: [] }),
-    ]);
-    await renderAdoption();
-    expect(api.assistFlagged).toHaveBeenCalledWith({ intent: undefined, section: undefined, limit: 50 });
-    const items = flaggedItems();
-    expect(items).toHaveLength(2);
-    expect(items[0].textContent).toContain("imported");
-    expect(items[0].textContent).toContain("abcdef12");
-    expect(items[0].textContent).not.toContain("abcdef1234567890");
-    expect(items[0].textContent).toContain("US1234567B2");
-    expect(items[0].textContent).toContain("claim explain");
-    expect(items[0].textContent).toContain("rated down, reasked");
-    expect(items[1].textContent).toContain("live");
-    expect(items[1].textContent).not.toContain("imported");
-    expect(items[0].querySelector("a")).toBeNull();
-  });
-
-  it("filters the list when a help-demand section is clicked, and clears the filter", async () => {
-    await renderAdoption();
-    // Zero demand is not a hotspot.
-    expect(buttonByLabel(container, "Show flagged conversations for section description")).toBeUndefined();
-    api.assistFlagged.mockResolvedValue([flaggedRun()]);
-    await click(buttonByLabel(container, "Show flagged conversations for section claims"));
-    expect(api.assistFlagged).toHaveBeenLastCalledWith({ intent: undefined, section: "claims", limit: 50 });
-    expect(container.textContent).toContain("Filtered by section: claims");
-    expect(flaggedItems()).toHaveLength(1);
-
-    await click(buttonByText(container, "Clear filter"));
-    expect(api.assistFlagged).toHaveBeenLastCalledWith({ intent: undefined, section: undefined, limit: 50 });
-    expect(container.textContent).not.toContain("Filtered by");
-  });
-
-  it("filters by intent from a re-ask hotspot", async () => {
-    await renderAdoption();
-    // A missing rate is not a hotspot.
-    expect(buttonByLabel(container, "Show flagged conversations for task navigation help")).toBeUndefined();
-    await click(buttonByLabel(container, "Show flagged conversations for task claim explain"));
-    expect(api.assistFlagged).toHaveBeenLastCalledWith({ intent: "claim_explain", section: undefined, limit: 50 });
-    expect(container.textContent).toContain("Filtered by task: claim explain");
-  });
-
-  it("says so when nothing is flagged and shows a load error with a retry", async () => {
-    await renderAdoption();
-    expect(container.textContent).toContain("No flagged conversations.");
-    api.assistFlagged.mockRejectedValueOnce(new api.ApiError("Boom", 500));
-    await click(buttonByLabel(container, "Show flagged conversations for section claims"));
-    expect(container.textContent).toContain("Couldn't load flagged conversations. Boom");
-    await click(buttonByText(container, "Retry"));
-    expect(container.textContent).toContain("No flagged conversations for this filter.");
-  });
-
+describe("Adoption tab in the shell", () => {
   it("'Review in Evolution' switches to the Evolution tab", async () => {
     api.assistFlagged.mockResolvedValue([flaggedRun()]);
     api.getAgentState.mockResolvedValue({
@@ -353,7 +177,7 @@ describe("five-tab shell", () => {
     // A tab that was opened stays mounted when another is selected.
     await click(tabNamed("Overview"));
     expect(container.querySelector("#assist-panel-adoption").hidden).toBe(true);
-    expect(container.querySelector("#assist-panel-adoption").textContent).toContain("Feature coverage");
+    expect(container.querySelector("#assist-panel-adoption").textContent).toContain("Feature coverage by section");
   });
 
   it("shows placeholders for Quality and Operations", async () => {
@@ -501,16 +325,19 @@ describe("global controls", () => {
     expect(scroll).not.toHaveBeenCalled();
   });
 
-  it("shows an Adoption error with Retry when only the metrics fail", async () => {
-    api.assistMetrics.mockRejectedValueOnce(new api.ApiError("Boom", 500));
+  it("shows an Adoption error with Retry for the metrics only, and the rest of the tab keeps working", async () => {
+    api.assistMetrics.mockRejectedValue(new api.ApiError("Boom", 500));
     await renderConsole();
     // The rest of the console is still usable.
     expect(container.querySelector('[data-kpi="questions"]')).not.toBeNull();
     await click(tabNamed("Adoption"));
     const panel = container.querySelector("#assist-panel-adoption");
     expect(panel.textContent).toContain("Couldn't load the adoption numbers");
+    // The usage trend comes from another request and is still shown.
+    expect(panel.querySelector('[data-kpi="thumbs_down_rate"]')).not.toBeNull();
+    api.assistMetrics.mockResolvedValue(metricsFixture());
     await click(buttonByText(panel, "Retry"));
-    expect(panel.textContent).toContain("Feature coverage");
+    expect(panel.textContent).toContain("Feature coverage by section");
   });
 });
 
@@ -608,5 +435,33 @@ describe("updating state", () => {
     await act(async () => release(metricsFixture()));
     expect(container.querySelector('[aria-busy="true"]')).toBeNull();
     expect(container.textContent).not.toContain("Updating…");
+  });
+
+  it("sends the console filters to the Adoption tab's requests", async () => {
+    await renderAdoption();
+    await click(buttonByText(container, "7 days"));
+    await choose(container.querySelector("select#console-source"), "demo");
+    expect(api.assistTrends).toHaveBeenLastCalledWith({ range: "7d", source: "demo", version: null });
+    expect(api.assistFlagged).toHaveBeenLastCalledWith({ intent: undefined, section: undefined, limit: 50, source: "demo" });
+  });
+
+  it("an alert that points at the re-ask chart opens Adoption and scrolls to it", async () => {
+    api.assistOverview.mockResolvedValue(
+      overviewFixture({
+        alerts: [
+          { id: "reask", severity: "warning", title: "Re-asks are high", detail: "30% re-asked", tab: "adoption", anchor: "adoption-reasks", demo: false },
+        ],
+      })
+    );
+    const scroll = vi.fn();
+    Element.prototype.scrollIntoView = scroll;
+    await renderConsole();
+    await click(container.querySelector("[data-alert-strip] button"));
+    expect(tabNamed("Adoption").getAttribute("aria-selected")).toBe("true");
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 450));
+    });
+    expect(scroll.mock.contexts.some((el) => el?.id === "adoption-reasks")).toBe(true);
+    delete Element.prototype.scrollIntoView;
   });
 });

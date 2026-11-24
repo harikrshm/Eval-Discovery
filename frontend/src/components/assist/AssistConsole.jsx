@@ -8,7 +8,6 @@ import ConsoleControls from "./ConsoleControls";
 import { DEFAULT_FILTERS } from "./consoleFilters";
 import EvolutionPanel from "./EvolutionPanel";
 import OverviewTab from "./OverviewTab";
-import PanelState from "./charts/PanelState";
 import RefreshFrame from "./RefreshFrame";
 
 // Overview is first and the default. Every other tab mounts the first time it is opened and then stays
@@ -234,18 +233,7 @@ export default function AssistConsole({ onDisconnect, autoFocus = false }) {
               <OverviewTab {...tabProps} />
             </div>
             <div role="tabpanel" id="assist-panel-adoption" aria-labelledby="assist-tab-adoption" hidden={tab !== "adoption"}>
-              {opened.adoption && (
-                <RefreshFrame refreshing={metricsQuery.refreshing}>
-                  <PanelState
-                    state={metricsQuery.state}
-                    what="the adoption numbers"
-                    error={metricsQuery.error}
-                    onRetry={metricsQuery.retry}
-                  >
-                    {metrics && <AdoptionPanel {...tabProps} metrics={metrics} onReview={() => selectTab("evolution")} />}
-                  </PanelState>
-                </RefreshFrame>
-              )}
+              {opened.adoption && <AdoptionPanel {...tabProps} />}
             </div>
             <div role="tabpanel" id="assist-panel-quality" aria-labelledby="assist-tab-quality" hidden={tab !== "quality"}>
               {opened.quality && <Placeholder />}

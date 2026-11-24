@@ -7,6 +7,7 @@ vi.mock("./api", async (importOriginal) => {
     ...actual,
     assistStatus: vi.fn(),
     assistMetrics: vi.fn(),
+    assistTrends: vi.fn(),
     assistFlagged: vi.fn(),
     assistInsights: vi.fn(),
     assistOverview: vi.fn(),
@@ -19,7 +20,7 @@ vi.mock("./api", async (importOriginal) => {
 import * as api from "./api";
 import App from "./App";
 import { clearWorkspace, commitAssistSwap, restoreAssistBackup } from "./lib/workspace";
-import { STATUS, buttonByText, click, metricsFixture, mount, overviewFixture, pressKey, settle, submit, type, unmount } from "./components/assist/testUtils";
+import { STATUS, buttonByText, click, metricsFixture, mount, overviewFixture, pressKey, settle, submit, trendsFixture, type, unmount } from "./components/assist/testUtils";
 
 const DEMO_TOKEN = "demo-secret-token-123";
 const FIXED_ERROR = "That token does not belong to a Patent Assist workspace.";
@@ -73,6 +74,7 @@ beforeEach(async () => {
   });
   api.getTests.mockResolvedValue(null);
   api.assistMetrics.mockResolvedValue(metricsFixture());
+  api.assistTrends.mockResolvedValue(trendsFixture());
   api.assistFlagged.mockResolvedValue([]);
   api.assistOverview.mockResolvedValue(overviewFixture());
   // The console is a lazy chunk; load it up front so connecting renders it within a few ticks.

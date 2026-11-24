@@ -8,6 +8,7 @@ import KpiCard from "./charts/KpiCard";
 import PanelState from "./charts/PanelState";
 import RefreshFrame from "./RefreshFrame";
 import TrendChart from "./charts/TrendChart";
+import { chartMarkers } from "./chartMarkers";
 import { isNumber, utcStamp } from "./format";
 
 const GRADE_SERIES = [{ key: "avg_grade", label: "Average grade (1 to 5)" }];
@@ -43,15 +44,6 @@ function kpiProps(kpi) {
     return { ...base, value: kpi.value, delta: kpi.delta, deltaUnit: "% vs previous period" };
   }
   return { ...base, value: kpi.value };
-}
-
-// The marker label already says "(demo)" for generated data; the chart adds it from `demo`.
-function chartMarkers(markers) {
-  return (markers ?? []).map((m) => ({
-    at: m.at,
-    label: String(m.label ?? `v${m.version}`).replace(/ \(demo\)$/, ""),
-    demo: m.source === "demo",
-  }));
 }
 
 function QualityTrend({ trend, markers, bucket }) {

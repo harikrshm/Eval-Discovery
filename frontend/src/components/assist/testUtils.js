@@ -226,3 +226,47 @@ export function emptyOverview() {
     version_markers: [],
   });
 }
+
+// The /assist/console/trends payload (backend task 5): counts per bucket, whole-range totals and the
+// totals of the previous period of the same length (null for the range "all").
+export function trendsFixture(overrides = {}) {
+  return {
+    bucket: "day",
+    totals: { page_views: 20, questions: 12, reasked: 3, rated_down: 2 },
+    previous: { page_views: 16, questions: 10, reasked: 2, rated_down: 2 },
+    points: [
+      { t: "2026-11-22T00:00:00", page_views: 5, questions: 3, reasked: 1, rated_down: 0 },
+      { t: "2026-11-23T00:00:00", page_views: 7, questions: 4, reasked: 1, rated_down: 1 },
+      { t: "2026-11-24T00:00:00", page_views: 8, questions: 5, reasked: 1, rated_down: 1 },
+    ],
+    version_markers: [
+      { at: "2026-11-23T09:00:00", version: 2, source: "live", label: "v2" },
+      { at: "2026-11-22T12:00:00", version: 1, source: "demo", label: "v1 (demo)" },
+    ],
+    ...overrides,
+  };
+}
+
+// What an empty database returns: well-formed, all zeros, no points.
+export function emptyTrends() {
+  const zero = { page_views: 0, questions: 0, reasked: 0, rated_down: 0 };
+  return { bucket: "day", totals: zero, previous: zero, points: [], version_markers: [] };
+}
+
+export function emptyMetrics() {
+  return {
+    adoption: {
+      totals: { page_views: 0, questions: 0, non_bounce_views: 0 },
+      bounce_rate: null,
+      feature_coverage: {},
+      views_by_section: {},
+      help_demand: {},
+      questions_without_views: {},
+      task_mix: {},
+      struggle: { reask_rate_by_intent: {}, thumbs_down_rate_by_intent: {} },
+    },
+    version_comparison: { available: false, reason: "No real questions yet." },
+    data_source_label: null,
+    sources: { page_views: { live: 0, imported: 0 }, questions: { live: 0, imported: 0 } },
+  };
+}
