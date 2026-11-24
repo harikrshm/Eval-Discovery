@@ -73,6 +73,10 @@ def _record(db: Session, job: Job, started: float, outcome: str) -> None:
 
 
 def handle_judge_conversation(db: Session, job: Job) -> dict:
+    # Function-local: handlers.py imports this module to register the handler, so a module-level import
+    # of its exception classes here would be a cycle.
+    from backend.jobs.handlers import JobFailed, RetryableJobFailure
+
     session_id = job.payload.get("session_id") if isinstance(job.payload, dict) else None
     if not isinstance(session_id, str) or not session_id:
         raise JobFailed(_BAD_SESSION)
@@ -215,27 +219,42 @@ def _session_of(job: Job) -> str | None:
     return value if isinstance(value, str) else None
 
 
-def _pending(db: Session, workspace_id: str, idle_before: datetime | None) -> list[tuple[str, datetime]]:
-    """Unjudged sessions (oldest idle first) that need a new job.
+def _split(
+    db: Session, workspace_id: str, idle_before: datetime | None
+) -> tuple[list[tuple[str, datetime]], list[tuple[str, datetime]]]:
+    """(pending, unreadable): unjudged sessions, oldest idle first, split by whether they need a new job.
 
-    Left out: a session with a judge job in flight, and one whose judge job already failed after its latest
-    question (otherwise a conversation the judge cannot read would be retried first on every scan and starve
-    the rest until the hourly cap). A new question makes it eligible again.
+    Never in either list: a session with a judge job in flight. `unreadable` holds a session whose latest
+    judge job failed with the fixed unreadable-conversation message after its latest question: the judge
+    cannot read it, so retrying would make it first in line on every scan and starve the rest. A new
+    question makes it eligible again. A job that failed for any other reason (retries used up after a 429
+    or timeout, a crash, a stale job) does not suppress anything: that session stays in `pending`.
     """
     jobs = _judge_jobs(db, workspace_id)
     in_flight = {_session_of(j) for j in jobs if j.status in _ACTIVE}
-    failed_at: dict[str, datetime] = {}
-    for job in jobs:
+    latest_job: dict[str, Job] = {}
+    for job in sorted(jobs, key=lambda j: (j.created_at, j.id)):
         session_id = _session_of(job)
-        if job.status == "failed" and session_id is not None:
-            failed_at[session_id] = max(job.created_at, failed_at.get(session_id, job.created_at))
-    return [
-        (session_id, last_at)
-        for session_id, last_at in _unjudged(db, workspace_id)
-        if (idle_before is None or last_at <= idle_before)
-        and session_id not in in_flight
-        and not (session_id in failed_at and failed_at[session_id] >= last_at)
-    ]
+        if session_id is not None:
+            latest_job[session_id] = job
+    pending: list[tuple[str, datetime]] = []
+    unreadable: list[tuple[str, datetime]] = []
+    for session_id, last_at in _unjudged(db, workspace_id):
+        if idle_before is not None and last_at > idle_before:
+            continue
+        if session_id in in_flight:
+            continue
+        job = latest_job.get(session_id)
+        if job is not None and job.status == "failed" and job.error == _UNREADABLE and job.created_at >= last_at:
+            unreadable.append((session_id, last_at))
+        else:
+            pending.append((session_id, last_at))
+    return pending, unreadable
+
+
+def _pending(db: Session, workspace_id: str, idle_before: datetime | None) -> list[tuple[str, datetime]]:
+    """Unjudged sessions (oldest idle first) that need a new job (see `_split`)."""
+    return _split(db, workspace_id, idle_before)[0]
 
 
 def _hourly_cap_reached(db: Session, workspace_id: str, now: datetime) -> bool:
@@ -269,8 +288,8 @@ def scan_and_enqueue(db: Session, now: datetime | None = None) -> int:
     newest_question = db.scalar(
         select(func.max(AssistQuestion.created_at)).where(AssistQuestion.source != _IMPORTED)
     )
-    if newest_question is not None and newest_question > now - timedelta(seconds=CHAT_QUIET_SECONDS):
-        return 0
+    if newest_question is None or newest_question > now - timedelta(seconds=CHAT_QUIET_SECONDS):
+        return 0  # no live conversation at all, or chat is still busy
 
     idle_before = now - timedelta(minutes=JUDGE_IDLE_MINUTES)
     best: tuple[datetime, str, str] | None = None
@@ -307,9 +326,14 @@ def evaluate_now(db: Session, workspace_id: str, now: datetime | None = None) ->
 
 
 def judge_queue_stats(db: Session, workspace_id: str, now: datetime | None = None) -> dict:
-    """Counts for the console: sessions waiting for a job, jobs in flight, the oldest wait and the hour's judgements."""
+    """Counts for the console: sessions waiting for a job, jobs in flight, the oldest wait and the hour's judgements.
+
+    `waiting_sessions` counts unjudged sessions that will get a job. `unreadable_sessions` counts the unjudged
+    ones the judge could not read (their last judge job failed with the fixed unreadable message and no
+    question was asked since): they are not retried and not in `waiting_sessions`, but never invisible.
+    """
     now = now or utcnow()
-    pending = _pending(db, workspace_id, None)
+    pending, unreadable = _split(db, workspace_id, None)
     oldest = None
     if pending:
         oldest = max(0, int((now - pending[0][1]).total_seconds() // 60))
@@ -320,13 +344,10 @@ def judge_queue_stats(db: Session, workspace_id: str, now: datetime | None = Non
     )
     return {
         "waiting_sessions": len(pending),
+        "unreadable_sessions": len(unreadable),
         "queued_jobs": len(_judge_jobs(db, workspace_id, _ACTIVE)),
         "oldest_waiting_minutes": oldest,
         "judged_last_hour": judged_last_hour,
         "hourly_cap": JUDGE_MAX_PER_HOUR,
     }
 
-
-# handlers.py registers this module's handler at the bottom of ITS file, and this module needs its exception
-# classes at call time only, so the import sits here: either module can be imported first.
-from backend.jobs.handlers import JobFailed, RetryableJobFailure  # noqa: E402

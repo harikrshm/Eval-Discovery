@@ -51,6 +51,13 @@ def _clean_usage():
     groq_client.last_usage.set(None)
 
 
+@pytest.fixture(autouse=True)
+def _fresh_scan_throttle():
+    worker.reset_scan_throttle()
+    yield
+    worker.reset_scan_throttle()
+
+
 @pytest.fixture
 def world(db_session):
     workspace, token = create_workspace(db_session)
@@ -436,25 +443,116 @@ def test_scan_hourly_cap_leaves_rest_waiting(db_session, world):
     assert scan_and_enqueue(db_session, NOW + timedelta(hours=1, minutes=1)) == 1  # the hour has passed
 
 
-def test_scan_does_not_retry_a_session_whose_job_failed_until_a_new_question(db_session, world):
+UNREADABLE = "The judge could not read this conversation."
+UNAVAILABLE = "The judge was unavailable. Try again."
+
+
+def failed_judge_job(db, workspace, session, error, created_at):
+    job = enqueue(db, workspace.id, JOB_TYPE, {"session_id": session, "system": True})
+    job.status, job.error, job.created_at = "failed", error, created_at
+    db.commit()
+    return job
+
+
+def test_transient_failure_is_retried_by_the_scan(db_session, world):
     workspace, _, _ = world
-    ask(db_session, workspace, "bad", minutes_ago=30)
-    ask(db_session, workspace, "good", minutes_ago=20)
-    assert scan_and_enqueue(db_session, NOW) == 1
-    (job,) = judge_jobs(db_session)
-    job.status = "failed"
-    job.created_at = NOW - timedelta(minutes=5)
-    db_session.commit()
+    ask(db_session, workspace, "a", minutes_ago=30)
+    ask(db_session, workspace, "b", minutes_ago=20)
+    failed_judge_job(db_session, workspace, "a", UNAVAILABLE, NOW - timedelta(minutes=5))  # retries used up
 
     assert scan_and_enqueue(db_session, NOW) == 1
-    assert judge_jobs(db_session)[-1].payload["session_id"] == "good"
 
-    ask(db_session, workspace, "bad", minutes_ago=4, n=2)  # a new question after the failure
+    assert judge_jobs(db_session)[-1].payload["session_id"] == "a"  # still the oldest, and still eligible
+
+
+def test_transient_failure_is_retried_by_evaluate_now_and_counted_as_waiting(db_session, world):
+    workspace, _, _ = world
+    ask(db_session, workspace, "a", minutes_ago=30)
+    ask(db_session, workspace, "b", minutes_ago=20)
+    failed_judge_job(db_session, workspace, "a", UNAVAILABLE, NOW - timedelta(minutes=5))
+
+    stats = judge_queue_stats(db_session, workspace.id, NOW)
+    assert (stats["waiting_sessions"], stats["unreadable_sessions"]) == (2, 0)
+    assert evaluate_now(db_session, workspace.id, NOW) == {"queued": 1, "waiting": 1}
+    assert judge_jobs(db_session)[-1].payload["session_id"] == "a"
+
+
+def test_unreadable_session_is_not_retried_not_waiting_and_shown_apart(db_session, world):
+    workspace, _, _ = world
+    ask(db_session, workspace, "a", minutes_ago=30)
+    ask(db_session, workspace, "b", minutes_ago=20)
+    failed_judge_job(db_session, workspace, "a", UNREADABLE, NOW - timedelta(minutes=5))
+
+    stats = judge_queue_stats(db_session, workspace.id, NOW)
+    assert (stats["waiting_sessions"], stats["unreadable_sessions"]) == (1, 1)
+    assert scan_and_enqueue(db_session, NOW) == 1
     job = judge_jobs(db_session)[-1]
+    assert job.payload["session_id"] == "b"  # not starved by the unreadable "a"
+
     job.status = "done"
-    mark_judged(db_session, workspace, "good")
-    assert scan_and_enqueue(db_session, NOW + timedelta(minutes=5)) == 1
-    assert judge_jobs(db_session)[-1].payload["session_id"] == "bad"
+    mark_judged(db_session, workspace, "b")
+    assert scan_and_enqueue(db_session, NOW) == 0
+    assert evaluate_now(db_session, workspace.id, NOW) == {"queued": 0, "waiting": 0}
+    stats = judge_queue_stats(db_session, workspace.id, NOW)
+    assert (stats["waiting_sessions"], stats["unreadable_sessions"], stats["oldest_waiting_minutes"]) == (0, 1, None)
+    assert unjudged_sessions(db_session, workspace.id, None) == ["a"]  # the brief's definition is unchanged
+
+
+def test_new_question_after_an_unreadable_failure_makes_the_session_eligible_again(db_session, world):
+    workspace, _, _ = world
+    ask(db_session, workspace, "a", minutes_ago=30)
+    failed_judge_job(db_session, workspace, "a", UNREADABLE, NOW - timedelta(minutes=5))
+    assert scan_and_enqueue(db_session, NOW) == 0
+
+    ask(db_session, workspace, "a", minutes_ago=4, n=2)  # asked after the failure
+
+    assert judge_queue_stats(db_session, workspace.id, NOW)["unreadable_sessions"] == 0
+    assert scan_and_enqueue(db_session, NOW) == 1
+    assert judge_jobs(db_session)[-1].payload["session_id"] == "a"
+
+
+def test_a_later_transient_failure_lifts_the_unreadable_mark(db_session, world):
+    workspace, _, _ = world
+    ask(db_session, workspace, "a", minutes_ago=30)
+    failed_judge_job(db_session, workspace, "a", UNREADABLE, NOW - timedelta(minutes=8))
+    failed_judge_job(db_session, workspace, "a", UNAVAILABLE, NOW - timedelta(minutes=4))
+
+    stats = judge_queue_stats(db_session, workspace.id, NOW)
+    assert (stats["waiting_sessions"], stats["unreadable_sessions"]) == (1, 0)
+
+
+# ---- boundaries ------------------------------------------------------------------
+
+
+def test_idle_time_boundary_is_inclusive(db_session, world):
+    workspace, _, _ = world
+    ask(db_session, workspace, "short", minutes_ago=JUDGE_IDLE_MINUTES - 1 / 60)
+    assert scan_and_enqueue(db_session, NOW) == 0  # one second short of idle
+
+    ask(db_session, workspace, "exact", minutes_ago=JUDGE_IDLE_MINUTES)
+    assert scan_and_enqueue(db_session, NOW) == 1  # exactly 3 minutes counts as idle
+    assert judge_jobs(db_session)[0].payload["session_id"] == "exact"
+
+
+def test_chat_quiet_boundary_is_inclusive(db_session, world):
+    workspace, _, _ = world
+    ask(db_session, workspace, "old", minutes_ago=20)
+    ask(db_session, workspace, "chatting", minutes_ago=(CHAT_QUIET_SECONDS - 1) / 60)
+    assert scan_and_enqueue(db_session, NOW) == 0  # 59 seconds: still chatting
+
+    assert scan_and_enqueue(db_session, NOW + timedelta(seconds=1)) == 1  # exactly 60 seconds is quiet
+
+
+def test_hourly_cap_boundary_counts_a_job_created_exactly_one_hour_ago(db_session, world):
+    workspace, _, _ = world
+    ask(db_session, workspace, "a", minutes_ago=30)
+    fill_hourly_cap(db_session, workspace, NOW - timedelta(hours=1))
+    assert scan_and_enqueue(db_session, NOW) == 0  # exactly one hour ago still counts
+
+    for job in judge_jobs(db_session):
+        job.created_at = NOW - timedelta(hours=1, seconds=1)
+    db_session.commit()
+    assert scan_and_enqueue(db_session, NOW) == 1
 
 
 # ---- evaluate now ----------------------------------------------------------------
@@ -519,7 +617,7 @@ def test_judge_queue_stats(db_session, world):
     workspace, _, _ = world
     empty = judge_queue_stats(db_session, workspace.id, NOW)
     assert empty == {
-        "waiting_sessions": 0, "queued_jobs": 0, "oldest_waiting_minutes": None,
+        "waiting_sessions": 0, "unreadable_sessions": 0, "queued_jobs": 0, "oldest_waiting_minutes": None,
         "judged_last_hour": 0, "hourly_cap": JUDGE_MAX_PER_HOUR,
     }
 
@@ -563,3 +661,39 @@ def test_worker_scans_only_when_idle(db_session, monkeypatch):
 
     assert worker._run_pass() is False
     scan.assert_called_once()
+
+
+def test_idle_scan_is_throttled(db_session, monkeypatch):
+    monkeypatch.setattr(worker, "SessionLocal", sessionmaker(bind=db_session.get_bind()))
+    scan = MagicMock(return_value=0)
+    monkeypatch.setattr(worker, "scan_and_enqueue", scan)
+    clock = [1000.0]
+    monkeypatch.setattr(worker, "_clock", lambda: clock[0])
+
+    assert worker._run_pass() is False
+    clock[0] += worker.SCAN_INTERVAL_SECONDS - 1
+    assert worker._run_pass() is False
+    assert scan.call_count == 1  # two idle passes inside the interval: one scan
+
+    clock[0] += 1
+    assert worker._run_pass() is False
+    assert scan.call_count == 2  # the interval has passed
+
+
+def test_a_raising_scan_is_throttled_too_and_never_breaks_the_pass(db_session, monkeypatch):
+    monkeypatch.setattr(worker, "SessionLocal", sessionmaker(bind=db_session.get_bind()))
+    scan = MagicMock(side_effect=RuntimeError("scan blew up"))
+    monkeypatch.setattr(worker, "scan_and_enqueue", scan)
+    clock = [1000.0]
+    monkeypatch.setattr(worker, "_clock", lambda: clock[0])
+
+    assert worker._run_pass() is False
+    assert worker._run_pass() is False
+    assert scan.call_count == 1  # a broken scan is not retried every second
+    clock[0] += worker.SCAN_INTERVAL_SECONDS
+    assert worker._run_pass() is False
+    assert scan.call_count == 2
+
+
+def test_throttle_constant():
+    assert worker.SCAN_INTERVAL_SECONDS == 10

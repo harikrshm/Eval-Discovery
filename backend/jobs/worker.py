@@ -2,6 +2,7 @@
 
 import asyncio
 import logging
+import time
 from datetime import datetime
 
 from sqlalchemy.orm import Session
@@ -16,6 +17,10 @@ from backend.jobs.queue import MAX_JOB_ATTEMPTS, claim_next, complete, fail, req
 logger = logging.getLogger(__name__)
 
 _UNEXPECTED_ERROR = "Something went wrong. Try again."
+
+SCAN_INTERVAL_SECONDS = 10  # the idle judge scan runs at most this often (the worker polls every second)
+_clock = time.monotonic  # replaced in tests
+_last_scan: float | None = None
 
 
 def _reload(db: Session, job_id: str) -> Job | None:
@@ -89,8 +94,23 @@ def run_one(db: Session, now: datetime | None = None) -> bool:
         _reconcile(db, now)
 
 
+def reset_scan_throttle() -> None:
+    """Forget when the idle scan last ran (for tests)."""
+    global _last_scan
+    _last_scan = None
+
+
 def _scan_idle(db: Session) -> None:
-    """Queue a conversation judgement when the worker has nothing else to do; never raises."""
+    """Queue a conversation judgement when the worker has nothing else to do; never raises.
+
+    Throttled: the scan reads every question and judge job, so it runs at most once per
+    SCAN_INTERVAL_SECONDS (a scan that raised counts as a run, so a broken scan is not retried every second).
+    """
+    global _last_scan
+    now = _clock()
+    if _last_scan is not None and now - _last_scan < SCAN_INTERVAL_SECONDS:
+        return
+    _last_scan = now
     try:
         scan_and_enqueue(db)
     except Exception:

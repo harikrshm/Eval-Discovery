@@ -35,6 +35,8 @@ from backend.db.candidates import (
 )
 from backend.db.events import try_log_event
 from backend.db.models import Agent, Criterion, EvalResult, EvalTest, Job, PromptVersion, Run
+from backend.jobs.conversation_judge import JOB_TYPE as JUDGE_JOB_TYPE
+from backend.jobs.conversation_judge import handle_judge_conversation
 
 logger = logging.getLogger(__name__)
 
@@ -622,9 +624,5 @@ HANDLERS: dict[str, Callable[[Session, Job], dict]] = {
     "suggest_fix": handle_suggest_fix,
     "generate_heldout": handle_generate_heldout,
     "change_report": handle_change_report,
+    JUDGE_JOB_TYPE: handle_judge_conversation,
 }
-
-# Registered here, after JobFailed and RetryableJobFailure exist: that module imports them back from this one.
-from backend.jobs.conversation_judge import JOB_TYPE as JUDGE_JOB_TYPE, handle_judge_conversation  # noqa: E402
-
-HANDLERS[JUDGE_JOB_TYPE] = handle_judge_conversation
