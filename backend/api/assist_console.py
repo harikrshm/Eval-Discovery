@@ -23,6 +23,7 @@ from backend.api.schemas import (
     FlaggedQuestionOut,
     FlaggedRunOut,
 )
+from backend.core.assist import console_filters as cf
 from backend.core.assist.adoption import (
     FLAG_REASONS,
     IMPORTED_SOURCE,
@@ -126,6 +127,7 @@ def _load_questions(db: Session, workspace_id: str, session_ids: list[str] | Non
             AssistQuestion.judge_flagged,
             AssistQuestion.source,
             AssistQuestion.assist_version,
+            AssistQuestion.created_at,
         )
         .where(AssistQuestion.workspace_id == workspace_id)
         .order_by(AssistQuestion.created_at, AssistQuestion.id)
@@ -135,9 +137,23 @@ def _load_questions(db: Session, workspace_id: str, session_ids: list[str] | Non
     return list(db.execute(query))
 
 
-def _compute_adoption(db: Session, workspace: Workspace) -> tuple[dict, list]:
+def console_filters(
+    range_name: Annotated[str, Query(alias="range")] = cf.DEFAULT_RANGE,
+    source: str = cf.DEFAULT_SOURCE,
+    version: str | None = None,
+) -> cf.Filters:
+    """The `range`, `source` and `version` query filters; 422 with a fixed message when any is invalid."""
+    try:
+        parsed = int(version) if version is not None else None
+        return cf.parse_filters(range_name, source, parsed)
+    except ValueError:
+        raise HTTPException(status_code=422, detail=cf.INVALID_FILTER) from None
+
+
+def _load_timed_rows(db: Session, workspace: Workspace) -> tuple[list[tuple], list[tuple]]:
+    """Every page view and question of the workspace as (timestamp, PV) / (timestamp, Q), label columns only."""
     views = [
-        PV(r.session_id, r.sections or {}, r.dwell_ms or 0, bool(r.bounce), r.source, r.assist_version)
+        (r.started_at, PV(r.session_id, r.sections or {}, r.dwell_ms or 0, bool(r.bounce), r.source, r.assist_version))
         for r in db.execute(
             select(
                 AssistPageView.session_id,
@@ -146,23 +162,44 @@ def _compute_adoption(db: Session, workspace: Workspace) -> tuple[dict, list]:
                 AssistPageView.bounce,
                 AssistPageView.source,
                 AssistPageView.assist_version,
+                AssistPageView.started_at,
             ).where(AssistPageView.workspace_id == workspace.id)
         )
     ]
     questions = [
-        Q(r.session_id, r.intent, r.section_focus, r.rating, bool(r.reasked), bool(r.citation_ok),
-          r.source, r.assist_version, bool(r.judge_flagged))
+        (
+            r.created_at,
+            Q(r.session_id, r.intent, r.section_focus, r.rating, bool(r.reasked), bool(r.citation_ok),
+              r.source, r.assist_version, bool(r.judge_flagged)),
+        )
         for r in _load_questions(db, workspace.id)
     ]
-    return compute_adoption(views, questions), questions
+    return views, questions
+
+
+def _filtered(timed: list[tuple], filters: cf.Filters | None) -> list:
+    return [row for at, row in timed if filters is None or cf.keep(at, row.source, row.assist_version, filters)]
+
+
+def _compute_adoption(db: Session, workspace: Workspace, filters: cf.Filters | None = None) -> tuple[dict, list]:
+    """The adoption numbers over the rows that pass `filters` (all rows when None).
+
+    The second value is EVERY question of the workspace, unfiltered: the version comparison needs all of
+    them (it ignores the range and the source filter and uses live data only).
+    """
+    timed_views, timed_questions = _load_timed_rows(db, workspace)
+    adoption = compute_adoption(_filtered(timed_views, filters), _filtered(timed_questions, filters))
+    return adoption, [q for _, q in timed_questions]
 
 
 @router.get("/metrics", response_model=AssistConsoleMetricsOut)
 def console_metrics(
-    workspace: Workspace = Depends(get_current_workspace), db: Session = Depends(get_db)
+    filters: cf.Filters = Depends(console_filters),
+    workspace: Workspace = Depends(get_current_workspace),
+    db: Session = Depends(get_db),
 ) -> AssistConsoleMetricsOut:
     _assist_agent(db, workspace)
-    adoption, questions = _compute_adoption(db, workspace)
+    adoption, questions = _compute_adoption(db, workspace, filters)
     return AssistConsoleMetricsOut(
         adoption=adoption,
         version_comparison=compute_version_comparison(questions),
@@ -254,6 +291,8 @@ def _reasons(rows: list) -> list[str]:
 def console_flagged(
     intent: str | None = None,
     section: str | None = None,
+    reason: str | None = None,
+    source: str = cf.DEFAULT_SOURCE,
     limit: Annotated[int, Query(ge=1)] = DEFAULT_FLAGGED_LIMIT,
     workspace: Workspace = Depends(get_current_workspace),
     db: Session = Depends(get_db),
@@ -261,12 +300,19 @@ def console_flagged(
     """Flagged runs (source assist or imported), newest first; `limit` is capped at 200.
 
     A run matches the filters when a flagged question of its session has that intent / section focus
-    (or any question of it, for a session without a flagged one).
+    (or any question of it, for a session without a flagged one). With `reason`, only the questions
+    flagged for that reason count, and the run must have one. `source` is `all`, `live` (not imported)
+    or `demo` (imported).
     """
     if intent is not None and intent not in _INTENTS:
         raise HTTPException(status_code=422, detail="Unknown intent.")
     if section is not None and section not in SECTION_NAMES:
         raise HTTPException(status_code=422, detail="Unknown section.")
+    if reason is not None and reason not in FLAG_REASONS:
+        raise HTTPException(status_code=422, detail="Unknown reason.")
+    if source not in cf.SOURCES:
+        raise HTTPException(status_code=422, detail=cf.INVALID_FILTER)
+    source_filter = cf.parse_filters(cf.DEFAULT_RANGE, source, None)
     limit = min(limit, MAX_FLAGGED_LIMIT)
     agent = _assist_agent(db, workspace)
 
@@ -285,10 +331,16 @@ def console_flagged(
 
     out = []
     for run in runs:
+        if not cf.matches(run.source, source_filter):
+            continue
         rows = by_session.get(run.session_id, [])
         # A filter looks at the session's flagged questions (the reason the run exists); only a session
         # without any falls back to all of its questions.
         pool = [q for q in rows if flag_reasons(q.rating, q.reasked, q.citation_ok, q.judge_flagged)] or rows
+        if reason is not None:
+            pool = [q for q in pool if reason in flag_reasons(q.rating, q.reasked, q.citation_ok, q.judge_flagged)]
+            if not pool:
+                continue
         if intent is not None and not any(q.intent == intent for q in pool):
             continue
         if section is not None and not any(q.section_focus == section for q in pool):

@@ -566,6 +566,34 @@ class AssistConsoleMetricsOut(BaseModel):
     sources: dict
 
 
+class TrendCountsOut(BaseModel):
+    """Counts only: page views, questions, re-asked questions and thumbs-down questions."""
+
+    page_views: int
+    questions: int
+    reasked: int
+    rated_down: int
+
+
+class TrendPointOut(TrendCountsOut):
+    t: str  # ISO start of the bucket, naive UTC
+
+
+class VersionMarkerOut(BaseModel):
+    at: str  # ISO, naive UTC
+    version: int
+    source: Literal["live", "demo"]
+    label: str
+
+
+class AssistConsoleTrendsOut(BaseModel):
+    bucket: Literal["hour", "day"]
+    totals: TrendCountsOut
+    previous: TrendCountsOut | None
+    points: list[TrendPointOut]
+    version_markers: list[VersionMarkerOut]
+
+
 class JudgeEvaluateOut(BaseModel):
     """What "Evaluate now" did: judge jobs queued (0 or 1) and conversations still waiting."""
 
