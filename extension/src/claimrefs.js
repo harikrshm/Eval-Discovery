@@ -56,6 +56,13 @@ export function isUsPatentNumber(patentNumber) {
   return typeof patentNumber === 'string' && US_RE.test(patentNumber.trim())
 }
 
+const GRANTED_RE = /^US[0-9]{6,11}[BE][0-9]?$/i
+
+/** True for compact US grants: kind code B or E, optionally followed by one digit (ASCII only). */
+export function isGrantedPatentNumber(patentNumber) {
+  return typeof patentNumber === 'string' && GRANTED_RE.test(patentNumber.trim())
+}
+
 /** "US 10,000,000 B2" -> "US10000000B2": drop whitespace, commas and hyphens, upper-case. */
 export function normalizePatentNumber(text) {
   if (typeof text !== 'string') return ''

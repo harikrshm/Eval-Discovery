@@ -3,6 +3,7 @@ import { resolve } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import {
   buildClaimTree,
+  isGrantedPatentNumber,
   isUsPatentNumber,
   normalizePatentNumber,
   parseClaimRefs,
@@ -60,5 +61,31 @@ describe('patent numbers', () => {
     expect(normalizePatentNumber(' us-6756997-b1 ')).toBe('US6756997B1')
     expect(normalizePatentNumber(undefined)).toBe('')
     expect(isUsPatentNumber(normalizePatentNumber('US 10,000,000 B2'))).toBe(true)
+  })
+})
+
+describe('isGrantedPatentNumber', () => {
+  it.each(['US12401720B1', 'US6756997B1', 'US10000000B2', 'us7629993b2', ' US10000000E ', 'US10000000E1'])(
+    '%s is granted',
+    (n) => {
+      expect(isGrantedPatentNumber(n)).toBe(true)
+    },
+  )
+  it.each([
+    'US20250119367A1',
+    'US20250119367A9',
+    'US7629993',
+    'USD123456S',
+    'USPP12345P',
+    'US10000000B12',
+    'EP4517554A1',
+    'EP4517554B1',
+    '',
+    null,
+    undefined,
+    12,
+    {},
+  ])('%s is not granted', (n) => {
+    expect(isGrantedPatentNumber(n)).toBe(false)
   })
 })
