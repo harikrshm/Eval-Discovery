@@ -157,6 +157,12 @@ def handle_judge_conversation(db: Session, job: Job) -> dict:
 
 def _unjudged(db: Session, workspace_id: str) -> list[tuple[str, datetime]]:
     """(session_id, time of its latest question) of the live sessions not yet judged for their latest version."""
+    return [(session_id, last_at) for session_id, last_at, _ in unjudged_conversations(db, workspace_id)]
+
+
+def unjudged_conversations(db: Session, workspace_id: str) -> list[tuple[str, datetime, int | None]]:
+    """(session_id, time of its latest question, that question's version) of the live sessions not yet judged
+    for their latest version, oldest first."""
     rows = db.execute(
         select(
             AssistQuestion.session_id, AssistQuestion.source, AssistQuestion.assist_version, AssistQuestion.created_at
@@ -186,7 +192,7 @@ def _unjudged(db: Session, workspace_id: str) -> list[tuple[str, datetime]]:
         )
     }
     found = [
-        (session_id, last_at)
+        (session_id, last_at, version)
         for session_id, (last_at, version) in latest.items()
         if session_id not in imported and (session_id, version) not in judged
     ]

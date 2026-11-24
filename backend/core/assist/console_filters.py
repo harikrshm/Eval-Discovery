@@ -9,6 +9,7 @@ so a period and its predecessor never overlap and never leave a gap.
 
 from dataclasses import dataclass
 from datetime import datetime, timedelta
+from typing import Any, Iterable
 
 from backend.core.assist.adoption import IMPORTED_SOURCE
 from backend.db.models import utcnow
@@ -82,3 +83,61 @@ def keep(at: datetime, source_value: str, assist_version: int | None, filters: F
     if not (in_range(at, filters) and matches(source_value, filters)):
         return False
     return filters.version is None or assist_version == filters.version
+
+
+def kept(
+    timed: Iterable[tuple[datetime, Any]], filters: Filters, version_attr: str = "assist_version"
+) -> list[tuple[datetime, Any]]:
+    """The (timestamp, row) pairs whose row passes every filter. Rows carry `source` and a version attribute.
+
+    The one filter-then-count step: questions and page views keep their version in `assist_version`, model
+    calls and judgements in `prompt_version` (pass `version_attr="prompt_version"`).
+    """
+    return [(at, row) for at, row in timed if keep(at, row.source, getattr(row, version_attr), filters)]
+
+
+HOUR, DAY = timedelta(hours=1), timedelta(days=1)
+
+
+def day_start(at: datetime) -> datetime:
+    return at.replace(hour=0, minute=0, second=0, microsecond=0)
+
+
+@dataclass(frozen=True)
+class Layout:
+    """Equal-width buckets: `size` buckets of `step` starting at `start`."""
+
+    start: datetime
+    step: timedelta
+    size: int
+
+    def labels(self) -> list[str]:
+        return [(self.start + i * self.step).isoformat() for i in range(self.size)]
+
+    def index(self, at: datetime) -> int | None:
+        i = (at - self.start) // self.step
+        return i if 0 <= i < self.size else None
+
+    def group(self, timed: Iterable[tuple[datetime, Any]]) -> list[list]:
+        """The rows of `timed` per bucket, in bucket order; rows outside every bucket are dropped."""
+        groups: list[list] = [[] for _ in range(self.size)]
+        for at, row in timed:
+            if (i := self.index(at)) is not None:
+                groups[i].append(row)
+        return groups
+
+
+def bucket_layout(filters: Filters, stamps: list[datetime], now: datetime | None = None) -> Layout | None:
+    """The buckets a series is drawn in.
+
+    A bounded range is split into whole buckets counted back from the request time (24 hourly buckets for
+    24h, 7 daily for 7d, 30 for 30d). `all` runs in calendar days from the oldest of `stamps` to now; with no
+    stamps at all it has no buckets (None).
+    """
+    step = HOUR if bucket_for(filters) == "hour" else DAY
+    if filters.since is not None and filters.until is not None:
+        return Layout(filters.since, step, int((filters.until - filters.since) / step))
+    if not stamps:
+        return None
+    start = day_start(min(stamps))
+    return Layout(start, step, (day_start(max(now or utcnow(), *stamps)) - start).days + 1)

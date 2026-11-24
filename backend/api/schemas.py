@@ -594,6 +594,124 @@ class AssistConsoleTrendsOut(BaseModel):
     version_markers: list[VersionMarkerOut]
 
 
+class GradePointOut(BaseModel):
+    t: str  # ISO start of the bucket, naive UTC
+    avg_grade: float | None
+    n: int
+
+
+class QualityOut(BaseModel):
+    """The automatic judge's verdicts in aggregate: counts, shares and fixed labels only."""
+
+    judged: int
+    unjudged: int
+    grade_trend: list[GradePointOut]
+    answered: dict[str, int]
+    concise_share: float | None
+    citations_share: float | None
+    legal: dict[str, int]
+    reasons: dict[str, int]
+    ratings: dict[str, int]
+    bucket: Literal["hour", "day"]
+
+
+class LatencyPointOut(BaseModel):
+    t: str
+    p50_ms: int | None
+    p95_ms: int | None
+    n: int
+
+
+class OutcomePointOut(BaseModel):
+    t: str
+    ok: int
+    error: int
+    rate_limited: int
+    timeout: int
+
+
+class RequestPointOut(BaseModel):
+    t: str
+    n: int
+
+
+class OperationsTotalsOut(BaseModel):
+    calls: int
+    error_rate: float | None
+    rate_limit_rate: float | None
+    p50_ms: int | None
+    p95_ms: int | None
+    tokens: int
+
+
+class FailedJobOut(BaseModel):
+    """A failed background job: ids, type, time and the fixed error message only, never its payload."""
+
+    id: str
+    type: str
+    created_at: datetime
+    error: str | None
+
+
+class OperationsOut(BaseModel):
+    bucket: Literal["hour", "day"]
+    latency: list[LatencyPointOut]
+    outcomes: list[OutcomePointOut]
+    requests: list[RequestPointOut]
+    tokens_by_kind: dict[str, int]
+    totals: OperationsTotalsOut
+    judge_queue: dict
+    recent_failed_jobs: list[FailedJobOut]
+
+
+class AlertOut(BaseModel):
+    id: str
+    severity: Literal["warning", "critical"]
+    title: str
+    detail: str
+    tab: str
+    anchor: str
+    demo: bool
+
+
+class KpiOut(BaseModel):
+    """One overview tile. `unit` is count | percent | version; a percent value is 0-100 and its delta is in points."""
+
+    id: str
+    label: str
+    value: int | float | str | None
+    unit: Literal["count", "percent", "version"]
+    delta: float | None
+    delta_good: Literal["up", "down"]
+    sparkline: list[float | None]
+
+
+class PipelineStepOut(BaseModel):
+    id: str
+    label: str
+    state: Literal["done", "current", "todo"]
+    detail: str | None
+
+
+class PipelineOut(BaseModel):
+    steps: list[PipelineStepOut]
+    cycle_note: str
+
+
+class QualityPointOut(BaseModel):
+    t: str
+    avg_grade: float | None
+
+
+class OverviewOut(BaseModel):
+    versions: list[int]
+    kpis: list[KpiOut]
+    alerts: list[AlertOut]
+    loop: PipelineOut
+    quality_trend: list[QualityPointOut]
+    version_markers: list[VersionMarkerOut]
+
+
 class JudgeEvaluateOut(BaseModel):
     """What "Evaluate now" did: judge jobs queued (0 or 1) and conversations still waiting."""
 

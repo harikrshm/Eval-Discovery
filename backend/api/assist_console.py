@@ -178,7 +178,7 @@ def _load_timed_rows(db: Session, workspace: Workspace) -> tuple[list[tuple], li
 
 
 def _filtered(timed: list[tuple], filters: cf.Filters | None) -> list:
-    return [row for at, row in timed if filters is None or cf.keep(at, row.source, row.assist_version, filters)]
+    return [row for _, row in timed] if filters is None else [row for _, row in cf.kept(timed, filters)]
 
 
 def _compute_adoption(db: Session, workspace: Workspace, filters: cf.Filters | None = None) -> tuple[dict, list]:
