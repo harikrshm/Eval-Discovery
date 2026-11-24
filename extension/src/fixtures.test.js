@@ -127,7 +127,7 @@ describe('US grant US12401720B1 (recent)', () => {
     expect(b.description.map((d) => d.heading)).toEqual([
       'TECHNICAL FIELD', 'BACKGROUND', 'SUMMARY', 'BRIEF DESCRIPTION OF THE DRAWINGS', 'DETAILED DESCRIPTION',
     ])
-    expect(b.description[0].text).toBe('This disclosure relates generally to an apparatus and method for control such as in a building or in a vehicle using a server implementing gateway or control functionalities.')
+    expect(b.description[0].text).toBe('[p0001] This disclosure relates generally to an apparatus and method for control such as in a building or in a vehicle using a server implementing gateway or control functionalities.')
   })
 })
 

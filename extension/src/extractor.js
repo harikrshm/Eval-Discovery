@@ -325,7 +325,12 @@ function readDescription(doc) {
       current = { heading: clean(el.textContent), paragraphs: [] }
     } else {
       const t = textOf(el)
-      if (t) current.paragraphs.push(t)
+      if (t) {
+        // Granted patents number their paragraphs in a num attribute; keep it as a
+        // [pNNNN] marker so the model can cite it as the page shows it.
+        const num = el.classList.contains('description-paragraph') ? el.getAttribute('num') : null
+        current.paragraphs.push(num !== null && /^[0-9]{1,6}$/.test(num) ? `[p${num}] ${t}` : t)
+      }
     }
   }
   flush()
