@@ -3,10 +3,11 @@
 import hashlib
 import math
 import os
+import re
 import statistics
 import subprocess
 import sys
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
@@ -17,7 +18,7 @@ from backend.core.assist.brief import Brief
 from backend.core.assist.convo_judge import FLAG_GRADE_AT_OR_BELOW, REASONS
 from backend.core.assist.intent import classify_intent
 from backend.db.agents import create_agent
-from backend.db.assist import add_question, upsert_page_view
+from backend.db.assist import add_question, save_flagged_run, upsert_page_view
 from backend.db.models import (
     AssistCall,
     AssistJudgement,
@@ -66,6 +67,29 @@ def live_question(db, session_id):
         db, db.workspace.id, session_id, "US12401720B1", "Explain claim 1", "claim_explain", "claims",
         "Claim 1 is a device.", True, "extension", 1,
     )
+
+
+def live_run(db, session_id):
+    return save_flagged_run(
+        db, db.agent, session_id, [{"role": "user", "content": "Is claim 1 valid?"}, {"role": "assistant", "content": "No opinion."}],
+        {"patent_number": "US12401720B1"}, "assist",
+    )
+
+
+def live_call_and_judgement(db):
+    db.add(AssistCall(workspace_id=db.workspace.id, kind="chat", model="real-model", latency_ms=1234, outcome="ok", source="live"))
+    db.add(
+        AssistJudgement(
+            workspace_id=db.workspace.id, session_id="live-session-001", prompt_version=1, rubric_version="1",
+            model="real-model", answered="yes", concise=True, citations_sensible=True, legal="not_applicable",
+            grade=4, reason="no_issue", source="live",
+        )
+    )
+    db.commit()
+
+
+def everything(db):
+    return {m.__name__: snapshot(db, m) for m in (*TABLES, PromptVersion)}
 
 
 def counts(db):
@@ -164,10 +188,13 @@ def test_seed_never_touches_live_or_example_rows(demo_db):
     db = demo_db
     upsert_page_view(db, db.workspace.id, "live-session-001", "US12401720B1", 40000, {"claims": 20000}, False, 1, "extension")
     live_question(db, "live-session-001")
+    live_call_and_judgement(db)
     assert import_page_views.main([str(EXAMPLE)]) == 0
     db.expire_all()
     models = (AssistPageView, AssistQuestion, Run, PromptVersion)
     before = {m.__name__: snapshot(db, m) for m in models}
+    live_before = (snapshot(db, AssistCall, source="live"), snapshot(db, AssistJudgement, source="live"))
+    assert len(live_before[0]) == 1 and len(live_before[1]) == 1
     current_before = db.agent.current_prompt_version_id
     assert seed_demo_console.main(ARGS) == 0
     db.expire_all()
@@ -178,8 +205,14 @@ def test_seed_never_touches_live_or_example_rows(demo_db):
         "PromptVersion": snapshot(db, PromptVersion),
     }
     assert after_untouched == before
+    assert (snapshot(db, AssistCall, source="live"), snapshot(db, AssistJudgement, source="live")) == live_before
     db.refresh(db.agent)
     assert db.agent.current_prompt_version_id == current_before
+    assert seed_demo_console.main(["--remove", "--confirm"]) == 0
+    assert (snapshot(db, AssistCall, source="live"), snapshot(db, AssistJudgement, source="live")) == live_before
+    assert {k: snapshot(db, m) for k, m in (("AssistPageView", AssistPageView), ("AssistQuestion", AssistQuestion), ("Run", Run))} == {
+        k: before[k] for k in ("AssistPageView", "AssistQuestion", "Run")
+    }
 
 
 def test_remove_restores_pre_seed_counts(demo_db, capsys):
@@ -229,8 +262,10 @@ def test_an_unmigrated_database_is_a_configuration_error(tmp_path, monkeypatch, 
     assert "alembic upgrade head" in capsys.readouterr().err
 
 
-def test_a_failure_while_saving_runs_leaves_nothing_behind(demo_db, monkeypatch, capsys):
-    real = seed_demo_console.save_flagged_run
+def test_a_failed_reseed_leaves_the_previous_seed_intact(demo_db, monkeypatch, capsys):
+    assert seed_demo_console.main(ARGS) == 0
+    before = everything(demo_db)
+    real = seed_demo_console._run_row
     calls = []
 
     def boom(*args, **kwargs):
@@ -239,11 +274,53 @@ def test_a_failure_while_saving_runs_leaves_nothing_behind(demo_db, monkeypatch,
             raise RuntimeError("disk on fire password=hunter2")
         return real(*args, **kwargs)
 
-    monkeypatch.setattr(seed_demo_console, "save_flagged_run", boom)
-    assert seed_demo_console.main(ARGS) == 3
+    monkeypatch.setattr(seed_demo_console, "_run_row", boom)
+    capsys.readouterr()
+    assert seed_demo_console.main(ARGS + ["--seed", "5"]) == 3
     captured = capsys.readouterr()
-    assert counts(demo_db) == (0, 0, 0, 0, 0)
+    assert everything(demo_db) == before
     assert "hunter2" not in captured.out + captured.err
+
+
+def test_a_failed_first_seed_leaves_nothing_behind(demo_db, monkeypatch):
+    def boom(*args, **kwargs):
+        raise RuntimeError("disk on fire")
+
+    monkeypatch.setattr(seed_demo_console, "_run_row", boom)
+    assert seed_demo_console.main(ARGS) == 3
+    assert counts(demo_db) == (0, 0, 0, 0, 0)
+
+
+def test_a_first_seed_after_live_runs_continues_the_positions(demo_db):
+    live_run(demo_db, "live-session-001")
+    live_run(demo_db, "live-session-002")
+    assert seed_demo_console.main(ARGS) == 0
+    positions = [r.position for r in demo_db.scalars(select(Run).order_by(Run.position)).all()]
+    assert positions == list(range(1, len(positions) + 1)) and len(positions) == 27
+    seeded = [r for r in demo_db.scalars(select(Run).order_by(Run.position)).all() if r.session_id.startswith("demo30-")]
+    assert [r.position for r in seeded] == list(range(3, 28))
+    assert seed_demo_console.main(ARGS) == 0  # a re-seed (live runs are below the seed) keeps working
+    assert [r.position for r in demo_db.scalars(select(Run).order_by(Run.position)).all()] == list(range(1, 28))
+
+
+def test_live_runs_above_the_seed_block_refuse_a_reseed_and_a_remove(demo_db, capsys):
+    assert seed_demo_console.main(ARGS) == 0
+    live_run(demo_db, "live-session-001")
+    before = everything(demo_db)
+    capsys.readouterr()
+    assert seed_demo_console.main(ARGS + ["--seed", "5"]) == 2
+    assert "live flagged runs were saved after the seed" in capsys.readouterr().err
+    assert everything(demo_db) == before
+    assert seed_demo_console.main(["--remove", "--confirm"]) == 2
+    assert "live flagged runs were saved after the seed" in capsys.readouterr().err
+    assert everything(demo_db) == before
+
+
+def test_end_date_defaults_to_today_utc():
+    before = datetime.now(timezone.utc).date()
+    got = seed_demo_console._end_date(None)
+    assert before <= got <= datetime.now(timezone.utc).date()
+    assert seed_demo_console._end_date("2026-11-24") == END
 
 
 def test_cli_runs_as_a_script_from_another_directory(tmp_path):
@@ -396,10 +473,17 @@ def test_storyline_is_visible_in_the_data(seeded):
     assert all(c.total_tokens is None for c in limited)
 
 
+def _matchers(table):
+    return [re.compile(re.escape(t).replace(r"\{n\}", r"\d+")) for templates in table.values() for t in templates]
+
+
 def test_question_and_answer_text_is_canned(seeded):
-    texts = {q.text for q in seeded.scalars(select(AssistQuestion)).all()}
-    assert len(texts) < 100  # a small set of templates, not generated prose
-    assert all(len(q.answer) < 400 for q in seeded.scalars(select(AssistQuestion)).all())
+    questions = _matchers(seed_demo_console.QUESTIONS)
+    answers = _matchers(seed_demo_console.ANSWERS)
+    for q in seeded.scalars(select(AssistQuestion)).all():
+        assert any(m.fullmatch(q.text) for m in questions), q.text
+        assert any(m.fullmatch(q.answer.removeprefix(seed_demo_console.REASK_ANSWER_FIX)) for m in answers), q.answer
+        assert q.answer.startswith(seed_demo_console.REASK_ANSWER_FIX) == q.reasked
 
 
 def test_templates_classify_as_their_intent():

@@ -21,10 +21,18 @@ wrote: the rows of this workspace with a `demo30-` session id and source "import
 model calls (calls with source "imported" are only ever written by this script). It never touches rows without
 the prefix (such as the hand-written example import) or live rows; a live row that uses the prefix aborts it.
 
+Caveats. Imported runs are evidence for the pattern check (`EVIDENCE_SOURCES` includes "imported"); they are canned
+demo text. `--remove` does not reset `agent.last_checked_at_run` or `pattern_run_ids`. With the default --end of
+today the seeded timestamps for today run up to about 22:50 UTC, later than "now": pass yesterday as --end to
+avoid future-dated rows. Runs are inserted at the next positions after the agent's highest one, in ONE transaction
+with everything else (a failure leaves the database as it was). If live runs were saved after the seed (a live run
+sits above a seed run), re-seeding or removing would leave a position gap that the live runs API would collide
+with, so the script refuses (exit 2) before deleting anything.
+
 The database is --database-url, else $DATABASE_URL, else the local SQLite file. The password is masked in all
 output and no driver error text is ever echoed (it can carry the connection URL).
 
-Exit codes: 0 ok, 2 invalid input (bad --end, no --confirm, a live row using the prefix), 3 database or
+Exit codes: 0 ok, 2 invalid input (bad --end, no --confirm, a live row using the prefix, live runs above the seed), 3 database or
 configuration error (no assist agent, schema out of date, connection failure, a failed write).
 """
 
@@ -47,7 +55,7 @@ from backend.core.assist.bounce import is_bounce  # noqa: E402
 from backend.core.assist.convo_judge import FLAG_GRADE_AT_OR_BELOW, REASONS  # noqa: E402
 from backend.core.assist.importing import IMPORTED_SOURCE  # noqa: E402
 from backend.core.assist.intent import SECTION_NAMES, Intent, primary_section  # noqa: E402
-from backend.db.assist import get_assist_agent, save_flagged_run  # noqa: E402
+from backend.db.assist import get_assist_agent  # noqa: E402
 from backend.db.models import (  # noqa: E402
     AssistCall,
     AssistJudgement,
@@ -632,19 +640,65 @@ def delete_seed(db: Session, agent, workspace_id: str) -> dict[str, int]:
     return deleted
 
 
-def write_plan(db: Session, agent, workspace_id: str, plan: Plan, progress: list[str]) -> None:
-    """Insert the plan. The flagged runs commit as they go (save_flagged_run does); `progress` gets "committed"
-    before the first of them, so a caller that sees an error knows whether a rollback is enough."""
+def _run_row(agent, position: int, run: dict) -> Run:
+    """The Run row save_flagged_run would store for this conversation, with the session's start as `created_at`."""
+    return Run(
+        agent_id=agent.id,
+        prompt_version_id=agent.current_prompt_version_id,
+        position=position,
+        messages=[{"role": m["role"], "content": m["content"]} for m in run["messages"]],
+        source=IMPORTED_SOURCE,
+        session_id=run["session_id"],
+        brief_snapshot=dict(run["brief"]),
+        created_at=run["created_at"],
+    )
+
+
+def write_plan(db: Session, agent, workspace_id: str, plan: Plan) -> None:
+    """Insert the plan (flushed, not committed). Runs take the next positions after the agent's highest one, in
+    order, like the importer does; the caller commits once, so a failure leaves nothing half-written."""
     db.add_all(AssistPageView(workspace_id=workspace_id, **row) for row in plan.page_views)
     db.add_all(AssistQuestion(workspace_id=workspace_id, **row) for row in plan.questions)
     db.add_all(AssistJudgement(workspace_id=workspace_id, **row) for row in plan.judgements)
     db.add_all(AssistCall(workspace_id=workspace_id, **row) for row in plan.calls)
-    db.flush()
+    position = db.scalar(select(func.max(Run.position)).where(Run.agent_id == agent.id)) or 0
     for run in plan.runs:
-        progress.append("committed")
-        saved = save_flagged_run(db, agent, run["session_id"], run["messages"], run["brief"], IMPORTED_SOURCE)
-        saved.created_at = run["created_at"]
-    db.commit()
+        position += 1
+        db.add(_run_row(agent, position, run))
+    db.flush()
+
+
+def live_runs_above_seed(db: Session, agent) -> bool:
+    """True when a run that is not part of the seed sits above a seed run (live runs were saved after the seed).
+
+    Removing the seed would then leave a gap in the positions, and the live runs API (position = count + 1)
+    would later try a position that is taken. Positions cannot be renumbered (`last_checked_at_run` is a position),
+    so the script refuses instead.
+    """
+    seed_first = db.scalar(
+        select(func.min(Run.position)).where(
+            Run.agent_id == agent.id, Run.session_id.like(_like_prefix()), Run.source == IMPORTED_SOURCE
+        )
+    )
+    if seed_first is None:
+        return False
+    above = db.scalar(
+        select(func.count())
+        .select_from(Run)
+        .where(
+            Run.agent_id == agent.id,
+            Run.position > seed_first,
+            ~(Run.session_id.like(_like_prefix()) & (Run.source == IMPORTED_SOURCE)),
+        )
+    )
+    return bool(above)
+
+
+NOTES = (
+    "Notes: imported runs count as evidence for the pattern check (they are canned demo text); --remove does not "
+    "reset agent.last_checked_at_run or pattern_run_ids; with the default --end (today) the seeded timestamps for "
+    "today run up to about 22:50 UTC, later than now: pass yesterday as --end to avoid future-dated rows."
+)
 
 
 def _error(message: str) -> None:
@@ -684,12 +738,14 @@ def main(argv: list[str] | None = None) -> int:
                 f"Would remove every row with a {PREFIX} session id and source {IMPORTED_SOURCE!r}, and every "
                 f"imported model call, from the assist workspace. Nothing was written; pass --confirm to remove."
             )
+            print(NOTES)
         else:
             plan = build_plan(end, args.seed)
             _print_counts(
                 f"Would seed the 30 days ending {end.isoformat()} (seed {args.seed}) as demo dataset:", plan.counts()
             )
             print("Nothing was written; pass --confirm to write. A re-run replaces the previous seed.")
+            print(NOTES)
         return EXIT_INVALID
 
     url = args.database_url or os.getenv("DATABASE_URL") or DEFAULT_DATABASE_URL
@@ -724,27 +780,24 @@ def main(argv: list[str] | None = None) -> int:
                         "the seed never changes live data, so nothing was written"
                     )
                     return EXIT_INVALID
+                if live_runs_above_seed(db, agent):
+                    _error(
+                        "live flagged runs were saved after the seed, so removing or replacing the seed would leave "
+                        "a gap in the run positions that the live runs API would later collide with; "
+                        "nothing was changed"
+                    )
+                    return EXIT_INVALID
                 deleted = delete_seed(db, agent, workspace.id)
                 if args.remove:
                     db.commit()
                     _print_counts(f"Removed the demo seed from {masked}:", deleted)
                     return EXIT_OK
                 plan = build_plan(end, args.seed)
-                progress: list[str] = []
-                try:
-                    write_plan(db, agent, workspace.id, plan, progress)
-                except Exception:
-                    db.rollback()
-                    if progress:  # some runs were already committed: take the whole seed out again
-                        try:
-                            delete_seed(db, agent, workspace.id)
-                            db.commit()
-                        except Exception:
-                            db.rollback()
-                    raise
+                write_plan(db, agent, workspace.id, plan)
+                db.commit()  # the one commit: delete and inserts land together or not at all
             except Exception as exc:
                 db.rollback()
-                _error(f"the seed failed and was rolled back ({type(exc).__name__}); nothing was written")
+                _error(f"the seed failed and was rolled back ({type(exc).__name__}); nothing was changed")
                 return EXIT_DATABASE
     finally:
         if engine is not None:
