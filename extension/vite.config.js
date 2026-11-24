@@ -48,6 +48,8 @@ export default defineConfig(({ mode }) => {
     test: {
       environment: 'jsdom',
       include: ['src/**/*.test.js'],
+      // Vitest otherwise turns every imported .css (even `?raw`) into an empty string, which would hide the widget's styles from its tests.
+      css: { include: [/styles\.css/] },
       // The content script only acts on Google Patents, so tests run on a patent URL.
       environmentOptions: { jsdom: { url: 'https://patents.google.com/patent/US1000000B2/en' } },
     },

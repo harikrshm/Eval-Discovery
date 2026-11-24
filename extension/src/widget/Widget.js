@@ -126,7 +126,7 @@ export function createWidget({ doc, session, api, getSelection, now = () => Date
   const panel = el(doc, 'section', { class: 'panel', id: 'pa-panel', role: 'dialog', 'aria-label': 'Patent Assist', hidden: true })
   const header = el(doc, 'header')
   const closeBtn = el(doc, 'button', { class: 'close', type: 'button', 'aria-label': 'Close Patent Assist' }, '×')
-  header.append(el(doc, 'h2', {}, 'Patent Assist'), closeBtn)
+  header.append(el(doc, 'h2', {}, 'Patent Assist'), el(doc, 'span', { class: 'pn' }, brief.patent_number), closeBtn)
   const incomplete = Object.values(brief.completeness ?? {}).some((v) => v === false)
   const notice = el(doc, 'p', { class: 'notice', role: 'status', hidden: usPatent }, NON_US_NOTICE)
   const note = el(doc, 'p', { class: 'note', hidden: !incomplete }, INCOMPLETE_NOTE)

@@ -181,6 +181,55 @@ describe('widget DOM', () => {
     }
     expect(q('.footer').textContent).toMatch(/Not legal advice/)
   })
+  it('shows the patent number as a chip in the header, set as text', () => {
+    const { q } = m()
+    const chip = q('.panel > header .pn')
+    expect(chip).not.toBeNull()
+    expect(chip.tagName).toBe('SPAN')
+    expect(chip.textContent).toBe(BRIEF.patent_number)
+    expect(chip.children).toHaveLength(0)
+    expect(q('.panel > header h2').textContent).toBe('Patent Assist')
+    expect(q('.close').getAttribute('aria-label')).toBe('Close Patent Assist')
+    expect(q('.close').textContent).toBe('×')
+  })
+  it('keeps the patent number text-only even when it holds markup', () => {
+    const { q } = m({ brief: { ...BRIEF, patent_number: '<img src=x onerror=alert(1)>' } })
+    expect(q('.panel > header .pn').textContent).toBe('<img src=x onerror=alert(1)>')
+    expect(q('.panel > header img')).toBeNull()
+  })
+  describe('styles', () => {
+    const css = () => m().q('style').textContent
+    const stripComments = (s) => s.replace(/\/\*[\s\S]*?\*\//g, '')
+    it('define every --pa- token they use, in the :host block, and use no raw colours elsewhere', () => {
+      const text = stripComments(css())
+      const hostBlock = text.match(/:host\s*\{([^}]*)\}/)[1]
+      const defined = new Set([...hostBlock.matchAll(/(--pa-[a-z0-9-]+)\s*:/g)].map((x) => x[1]))
+      const used = new Set([...text.matchAll(/var\(\s*(--pa-[a-z0-9-]+)/g)].map((x) => x[1]))
+      expect(used.size).toBeGreaterThan(10)
+      for (const token of used) expect(defined, token).toContain(token)
+      const outside = text.replace(/:host\s*\{[^}]*\}/, '')
+      expect(outside).not.toMatch(/#[0-9a-fA-F]{3,8}\b/)
+      expect(outside).not.toMatch(/\b(?:rgb|rgba|hsl|hsla)\(/)
+    })
+    it('do not use pre-wrap, keep [hidden] and a reduced-motion rule', () => {
+      const text = css()
+      expect(text).not.toContain('pre-wrap')
+      expect(text).toMatch(/\[hidden\]\s*\{\s*display:\s*none\s*!important/)
+      expect(text).toContain('prefers-reduced-motion: reduce')
+      expect(text).toContain('overflow-wrap: anywhere')
+    })
+    it('style the new answer, pill, follow-up and feedback classes', () => {
+      const text = css()
+      for (const sel of ['.pill', '.pill:disabled', '.law', '.ref', '.followup', '.feedback', '.msg .text p', '.msg .text ul', '.msg .text ol', '.pn']) {
+        expect(text, sel).toContain(sel)
+      }
+    })
+    it('give buttons a 32 px minimum height', () => {
+      const text = stripComments(css())
+      expect(text).toMatch(/--pa-target:\s*32px/)
+      expect(text).toMatch(/(?:^|\n)button\s*\{[^}]*min-height:\s*var\(--pa-target\)/)
+    })
+  })
   it('Enter sends, Shift+Enter does not', async () => {
     const { api, q, type, flush } = m()
     q('.launcher').click()
