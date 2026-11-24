@@ -168,3 +168,53 @@ export function flaggedRun(overrides = {}) {
     ...overrides,
   };
 }
+
+export const FILTERS = { range: "30d", source: "all", version: null };
+
+const LOOP_STEPS = [
+  ["flagged", "Flagged conversations", "done", "3 flagged"],
+  ["pattern", "Pattern found", "done", null],
+  ["criterion", "Criterion chosen", "current", "0 criteria"],
+  ["tests", "Tests built", "todo", null],
+  ["fix", "Fix suggested", "todo", null],
+  ["review", "Fix reviewed", "todo", null],
+  ["verify", "Fix verified", "todo", null],
+  ["promoted", "Promoted", "todo", null],
+].map(([id, label, state, detail]) => ({ id, label, state, detail }));
+
+// The /assist/console/overview payload (backend task 6), with a few real numbers in it.
+export function overviewFixture(overrides = {}) {
+  return {
+    versions: [1, 2],
+    kpis: [
+      { id: "questions", label: "Questions", value: 120, unit: "count", delta: 12.5, delta_good: "up", sparkline: [3, 4, 5, 6] },
+      { id: "ok_share", label: "Auto-judged OK", value: 75, unit: "percent", delta: -2.5, delta_good: "up", sparkline: [70, null, 80] },
+      { id: "open_flagged", label: "Open flagged conversations", value: 4, unit: "count", delta: null, delta_good: "down", sparkline: [0, 1, 2] },
+      { id: "live_version", label: "Live version", value: "v2", unit: "version", delta: null, delta_good: "up", sparkline: [] },
+    ],
+    alerts: [],
+    loop: { steps: LOOP_STEPS, cycle_note: "The loop runs on live conversations only." },
+    quality_trend: [
+      { t: "2026-11-22T10:00:00", avg_grade: 3.5 },
+      { t: "2026-11-23T10:00:00", avg_grade: null },
+      { t: "2026-11-24T10:00:00", avg_grade: 4.25 },
+    ],
+    version_markers: [{ at: "2026-11-23T09:00:00", version: 2, source: "live", label: "v2" }],
+    ...overrides,
+  };
+}
+
+// What an empty database returns: well-formed, with nothing in it.
+export function emptyOverview() {
+  return overviewFixture({
+    versions: [1],
+    kpis: [
+      { id: "questions", label: "Questions", value: 0, unit: "count", delta: null, delta_good: "up", sparkline: [] },
+      { id: "ok_share", label: "Auto-judged OK", value: null, unit: "percent", delta: null, delta_good: "up", sparkline: [] },
+      { id: "open_flagged", label: "Open flagged conversations", value: 0, unit: "count", delta: null, delta_good: "down", sparkline: [] },
+      { id: "live_version", label: "Live version", value: "v1", unit: "version", delta: null, delta_good: "up", sparkline: [] },
+    ],
+    quality_trend: [],
+    version_markers: [],
+  });
+}

@@ -9,6 +9,7 @@ vi.mock("./api", async (importOriginal) => {
     assistMetrics: vi.fn(),
     assistFlagged: vi.fn(),
     assistInsights: vi.fn(),
+    assistOverview: vi.fn(),
     getAgentState: vi.fn(),
     getTests: vi.fn(),
     listPresets: vi.fn(),
@@ -18,7 +19,7 @@ vi.mock("./api", async (importOriginal) => {
 import * as api from "./api";
 import App from "./App";
 import { clearWorkspace, commitAssistSwap, restoreAssistBackup } from "./lib/workspace";
-import { STATUS, buttonByText, click, metricsFixture, mount, pressKey, settle, submit, type, unmount } from "./components/assist/testUtils";
+import { STATUS, buttonByText, click, metricsFixture, mount, overviewFixture, pressKey, settle, submit, type, unmount } from "./components/assist/testUtils";
 
 const DEMO_TOKEN = "demo-secret-token-123";
 const FIXED_ERROR = "That token does not belong to a Patent Assist workspace.";
@@ -73,6 +74,9 @@ beforeEach(async () => {
   api.getTests.mockResolvedValue(null);
   api.assistMetrics.mockResolvedValue(metricsFixture());
   api.assistFlagged.mockResolvedValue([]);
+  api.assistOverview.mockResolvedValue(overviewFixture());
+  // The console is a lazy chunk; load it up front so connecting renders it within a few ticks.
+  await import("./components/assist/AssistConsole");
   localStorage.setItem("ed_token", "my-own-token");
   localStorage.setItem("ed_agent_id", "a1");
   container = await mount(createElement(App));

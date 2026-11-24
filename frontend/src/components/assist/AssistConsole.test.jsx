@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { createElement } from "react";
+import { act, createElement } from "react";
 
 vi.mock("../../api", async (importOriginal) => {
   const actual = await importOriginal();
@@ -9,6 +9,7 @@ vi.mock("../../api", async (importOriginal) => {
     assistMetrics: vi.fn(),
     assistFlagged: vi.fn(),
     assistInsights: vi.fn(),
+    assistOverview: vi.fn(),
     getAgentState: vi.fn(),
     getTests: vi.fn(),
     getJob: vi.fn(),
@@ -27,6 +28,8 @@ import {
   flaggedRun,
   metricsFixture,
   mount,
+  overviewFixture,
+  pressKey,
   unmount,
 } from "./testUtils";
 
@@ -35,6 +38,28 @@ let container;
 async function renderConsole(onDisconnect = vi.fn()) {
   container = await mount(createElement(AssistConsole, { onDisconnect }));
   return container;
+}
+
+function tabs() {
+  return [...container.querySelectorAll('[role="tab"]')];
+}
+
+function tabNamed(name) {
+  return tabs().find((t) => t.textContent === name);
+}
+
+// The Adoption tab mounts when it is first opened, so its tests open it first.
+async function renderAdoption() {
+  await renderConsole();
+  await click(tabNamed("Adoption"));
+  return container;
+}
+
+async function choose(select, value) {
+  await act(async () => {
+    select.value = value;
+    select.dispatchEvent(new Event("change", { bubbles: true }));
+  });
 }
 
 function row(label) {
@@ -55,6 +80,7 @@ beforeEach(() => {
   api.assistStatus.mockResolvedValue(STATUS);
   api.assistMetrics.mockResolvedValue(metricsFixture());
   api.assistFlagged.mockResolvedValue([]);
+  api.assistOverview.mockResolvedValue(overviewFixture());
 });
 
 afterEach(unmount);
@@ -81,7 +107,8 @@ describe("console header", () => {
     );
     await renderConsole();
     expect(container.querySelector('[role="note"]')).toBeNull();
-    expect(container.textContent).not.toContain("demo dataset");
+    expect(container.textContent).not.toContain("Includes imported demo data");
+    expect(container.textContent).not.toContain("Data source:");
     expect(container.textContent).toContain("Page views — Live: 4 · Imported: 0");
   });
 
@@ -98,11 +125,10 @@ describe("console header", () => {
     await renderConsole();
     const tabs = [...container.querySelectorAll('[role="tab"]')];
     expect(container.querySelector('[role="tablist"]')).not.toBeNull();
-    expect(tabs.map((t) => t.textContent)).toEqual(["Adoption", "Evolution"]);
-    expect(tabs.map((t) => t.getAttribute("aria-selected"))).toEqual(["true", "false"]);
+    expect(tabs.map((t) => t.textContent)).toEqual(["Overview", "Adoption", "Quality", "Evolution", "Operations"]);
+    expect(tabs.map((t) => t.getAttribute("aria-selected"))).toEqual(["true", "false", "false", "false", "false"]);
     const panels = [...container.querySelectorAll('[role="tabpanel"]')];
-    expect(panels[0].hidden).toBe(false);
-    expect(panels[1].hidden).toBe(true);
+    expect(panels.map((p) => p.hidden)).toEqual([false, true, true, true, true]);
     expect(tabs[0].getAttribute("aria-controls")).toBe(panels[0].id);
     expect(panels[0].getAttribute("aria-labelledby")).toBe(tabs[0].id);
   });
@@ -110,7 +136,7 @@ describe("console header", () => {
 
 describe("adoption numbers", () => {
   it("draws coverage bars with a text value and an accessible label", async () => {
-    await renderConsole();
+    await renderAdoption();
     const claims = row("claims");
     expect(claims.textContent).toContain("50%");
     const bar = claims.querySelector('[role="img"]');
@@ -126,7 +152,7 @@ describe("adoption numbers", () => {
   });
 
   it("renders a missing value as n/a with no bar", async () => {
-    await renderConsole();
+    await renderAdoption();
     const classifications = row("classifications");
     expect(classifications.textContent).toContain("n/a");
     expect(classifications.querySelector("[data-bar-fill]")).toBeNull();
@@ -139,13 +165,13 @@ describe("adoption numbers", () => {
   });
 
   it("lists the task mix with counts and shares", async () => {
-    await renderConsole();
+    await renderAdoption();
     expect(row("claim explain").textContent).toContain("6 · 50%");
     expect(row("claim explain").querySelector('[role="img"]').getAttribute("aria-label")).toBe("claim explain: 6, 50%");
   });
 
   it("shows the help-demand table with n/a and the questions without views", async () => {
-    await renderConsole();
+    await renderAdoption();
     const rows = tableRows(0);
     expect(rows[0]).toEqual(["claims", "10", "30"]);
     expect(rows[2]).toEqual(["classifications", "0", "n/a"]);
@@ -154,7 +180,7 @@ describe("adoption numbers", () => {
   });
 
   it("shows the struggle numbers with n/a for missing rates", async () => {
-    await renderConsole();
+    await renderAdoption();
     const dl = container.querySelector("dl");
     expect([...dl.children].map((c) => c.textContent)).toEqual([
       "Navigation help questions",
@@ -172,7 +198,7 @@ describe("adoption numbers", () => {
   });
 
   it("states the metric definitions in plain text", async () => {
-    await renderConsole();
+    await renderAdoption();
     const text = container.querySelector('section[aria-labelledby="definitions-heading"]').textContent;
     expect(text).toContain("at least 3 seconds");
     expect(text).toContain("per 100 non-bounce views in which that section was visible at all");
@@ -185,7 +211,7 @@ describe("adoption numbers", () => {
 
 describe("version comparison", () => {
   it("gives one sentence and no table when it is not available", async () => {
-    await renderConsole();
+    await renderAdoption();
     const section = container.querySelector('section[aria-labelledby="versions-heading"]');
     expect(section.textContent).toContain("All questions are imported demo data, so versions cannot be compared.");
     expect(section.textContent).toContain("Real (non-imported) questions only.");
@@ -207,7 +233,7 @@ describe("version comparison", () => {
         },
       })
     );
-    await renderConsole();
+    await renderAdoption();
     const section = container.querySelector('section[aria-labelledby="versions-heading"]');
     const rows = [...section.querySelectorAll("tbody tr")];
     expect(rows).toHaveLength(3);
@@ -229,7 +255,7 @@ describe("flagged conversations", () => {
       flaggedRun(),
       flaggedRun({ run_id: "run-2", source: "assist", session_id: null, patent_number: null, intents: [], reasons: [] }),
     ]);
-    await renderConsole();
+    await renderAdoption();
     expect(api.assistFlagged).toHaveBeenCalledWith({ intent: undefined, section: undefined, limit: 50 });
     const items = flaggedItems();
     expect(items).toHaveLength(2);
@@ -245,7 +271,7 @@ describe("flagged conversations", () => {
   });
 
   it("filters the list when a help-demand section is clicked, and clears the filter", async () => {
-    await renderConsole();
+    await renderAdoption();
     // Zero demand is not a hotspot.
     expect(buttonByLabel(container, "Show flagged conversations for section description")).toBeUndefined();
     api.assistFlagged.mockResolvedValue([flaggedRun()]);
@@ -260,7 +286,7 @@ describe("flagged conversations", () => {
   });
 
   it("filters by intent from a re-ask hotspot", async () => {
-    await renderConsole();
+    await renderAdoption();
     // A missing rate is not a hotspot.
     expect(buttonByLabel(container, "Show flagged conversations for task navigation help")).toBeUndefined();
     await click(buttonByLabel(container, "Show flagged conversations for task claim explain"));
@@ -269,7 +295,7 @@ describe("flagged conversations", () => {
   });
 
   it("says so when nothing is flagged and shows a load error with a retry", async () => {
-    await renderConsole();
+    await renderAdoption();
     expect(container.textContent).toContain("No flagged conversations.");
     api.assistFlagged.mockRejectedValueOnce(new api.ApiError("Boom", 500));
     await click(buttonByLabel(container, "Show flagged conversations for section claims"));
@@ -301,12 +327,169 @@ describe("flagged conversations", () => {
       candidate: null,
       criteria: [],
     });
-    await renderConsole();
+    await renderAdoption();
     await click(buttonByLabel(container, "Review in Evolution: conversation abcdef12"));
-    const tabs = [...container.querySelectorAll('[role="tab"]')];
-    expect(tabs[1].getAttribute("aria-selected")).toBe("true");
+    expect(tabNamed("Evolution").getAttribute("aria-selected")).toBe("true");
     expect(container.querySelector("#assist-panel-evolution").hidden).toBe(false);
     expect(api.getAgentState).toHaveBeenCalledWith("assist-1");
     expect(buttonByText(container, "Check flagged conversations for a pattern")).toBeDefined();
+  });
+});
+
+describe("five-tab shell", () => {
+  it("opens on Overview and mounts the other tabs only when they are first opened", async () => {
+    await renderConsole();
+    expect(tabNamed("Overview").getAttribute("aria-selected")).toBe("true");
+    expect(container.querySelector("#assist-panel-overview").hidden).toBe(false);
+    expect(container.querySelector('[data-kpi="questions"]')).not.toBeNull();
+    // Nothing of Adoption or Evolution has loaded yet.
+    expect(api.assistFlagged).not.toHaveBeenCalled();
+    expect(api.getAgentState).not.toHaveBeenCalled();
+    expect(container.querySelector("#assist-panel-adoption").textContent).toBe("");
+    expect(container.querySelector("#assist-panel-quality").textContent).toBe("");
+
+    await click(tabNamed("Adoption"));
+    expect(api.assistFlagged).toHaveBeenCalledTimes(1);
+    // A tab that was opened stays mounted when another is selected.
+    await click(tabNamed("Overview"));
+    expect(container.querySelector("#assist-panel-adoption").hidden).toBe(true);
+    expect(container.querySelector("#assist-panel-adoption").textContent).toContain("Feature coverage");
+  });
+
+  it("shows placeholders for Quality and Operations", async () => {
+    await renderConsole();
+    await click(tabNamed("Quality"));
+    expect(container.querySelector("#assist-panel-quality").textContent).toContain("Coming in the next task");
+    await click(tabNamed("Operations"));
+    expect(container.querySelector("#assist-panel-operations").textContent).toContain("Coming in the next task");
+  });
+
+  it("cycles through all five tabs with the arrow keys, Home and End", async () => {
+    // Passing through Evolution mounts it, so its loads stay pending here.
+    api.getAgentState.mockReturnValue(new Promise(() => {}));
+    await renderConsole();
+    const names = () => tabs().filter((t) => t.getAttribute("aria-selected") === "true").map((t) => t.textContent);
+    const list = container.querySelector('[role="tablist"]');
+    const order = ["Overview", "Adoption", "Quality", "Evolution", "Operations"];
+    for (const next of [...order.slice(1), "Overview"]) {
+      await pressKey(list, "ArrowRight");
+      expect(names()).toEqual([next]);
+      expect(document.activeElement).toBe(tabNamed(next));
+    }
+    await pressKey(list, "ArrowLeft");
+    expect(names()).toEqual(["Operations"]);
+    await pressKey(list, "Home");
+    expect(names()).toEqual(["Overview"]);
+    await pressKey(list, "End");
+    expect(names()).toEqual(["Operations"]);
+    // Only the selected tab is in the tab order.
+    expect(tabs().map((t) => t.tabIndex)).toEqual([-1, -1, -1, -1, 0]);
+  });
+
+  it("scrolls its tab bar instead of the page on a narrow window", async () => {
+    await renderConsole();
+    expect(container.querySelector('[role="tablist"]').className).toContain("overflow-x-auto");
+  });
+});
+
+describe("global controls", () => {
+  const DEFAULTS = { range: "30d", source: "all", version: null };
+
+  it("loads with the defaults and shows the badge, UTC note and amber demo note", async () => {
+    await renderConsole();
+    expect(api.assistOverview).toHaveBeenCalledWith(DEFAULTS);
+    expect(api.assistMetrics).toHaveBeenCalledWith(DEFAULTS);
+    expect(container.querySelector("[data-source-badge]").textContent).toBe("Data: Live + demo dataset");
+    expect(container.querySelector('[role="note"]')).not.toBeNull();
+    expect(container.textContent).toContain("UTC");
+  });
+
+  it("fetches the version list from the overview once per source, without the version", async () => {
+    await renderConsole();
+    const versionCalls = api.assistOverview.mock.calls.filter(([f]) => f.range === "24h");
+    expect(versionCalls).toEqual([[{ range: "24h", source: "all", version: null }]]);
+    const select = container.querySelector("select#console-version");
+    expect([...select.options].map((o) => o.textContent)).toEqual(["All", "v1", "v2"]);
+  });
+
+  it("refetches with the new range and keeps source and version", async () => {
+    await renderConsole();
+    await choose(container.querySelector("select#console-version"), "2");
+    expect(api.assistOverview).toHaveBeenLastCalledWith({ range: "30d", source: "all", version: 2 });
+    await click(buttonByText(container, "7 days"));
+    expect(api.assistOverview).toHaveBeenLastCalledWith({ range: "7d", source: "all", version: 2 });
+    expect(api.assistMetrics).toHaveBeenLastCalledWith({ range: "7d", source: "all", version: 2 });
+    // The version list is not refetched for a range or version change.
+    expect(api.assistOverview.mock.calls.filter(([f]) => f.range === "24h")).toHaveLength(1);
+  });
+
+  it("changing the source clears the version and updates the badge, and the note follows the API", async () => {
+    await renderConsole();
+    await choose(container.querySelector("select#console-version"), "2");
+    api.assistMetrics.mockResolvedValue(metricsFixture({ data_source_label: null }));
+    await choose(container.querySelector("select#console-source"), "live");
+    expect(api.assistOverview).toHaveBeenCalledWith({ range: "30d", source: "live", version: null });
+    expect(api.assistMetrics).toHaveBeenLastCalledWith({ range: "30d", source: "live", version: null });
+    expect(container.querySelector("[data-source-badge]").textContent).toBe("Data: Live only");
+    expect(container.querySelector("select#console-version").value).toBe("");
+    // No demo rows in what the API reports, so no amber note.
+    expect(container.querySelector('[role="note"]')).toBeNull();
+    await choose(container.querySelector("select#console-source"), "demo");
+    expect(container.querySelector("[data-source-badge]").textContent).toBe("Data: Demo dataset");
+  });
+
+  it("keeps the amber demo note whenever the API says demo rows are included", async () => {
+    await renderConsole();
+    const note = container.querySelector('[role="note"]');
+    expect(note.textContent).toContain("Includes imported demo data");
+    await click(buttonByText(container, "7 days"));
+    expect(container.querySelector('[role="note"]')).not.toBeNull();
+  });
+
+  it("Refresh refetches the data with the same filters", async () => {
+    await renderConsole();
+    const before = api.assistOverview.mock.calls.length;
+    const statusBefore = api.assistStatus.mock.calls.length;
+    await click(buttonByText(container, "Refresh data"));
+    expect(api.assistOverview.mock.calls.length).toBeGreaterThan(before);
+    expect(api.assistStatus.mock.calls.length).toBe(statusBefore + 1);
+    const after = api.assistOverview.mock.calls.slice(before).map(([f]) => f);
+    expect(after).toContainEqual({ range: "30d", source: "all", version: null });
+    expect(after).toContainEqual({ range: "24h", source: "all", version: null });
+  });
+
+  it("an alert on Overview opens its tab and scrolls to its anchor", async () => {
+    api.assistOverview.mockResolvedValue(
+      overviewFixture({
+        alerts: [
+          { id: "error_rate", severity: "critical", title: "Error rate is high", detail: "12% of calls failed", tab: "operations", anchor: "ops-errors", demo: true },
+        ],
+      })
+    );
+    const scroll = vi.fn();
+    Element.prototype.scrollIntoView = scroll;
+    await renderConsole();
+    const target = document.createElement("div");
+    target.id = "ops-errors";
+    container.appendChild(target);
+    const alert = container.querySelector("[data-alert-strip] button");
+    expect(alert.textContent).toContain("demo");
+    await click(alert);
+    expect(tabNamed("Operations").getAttribute("aria-selected")).toBe("true");
+    expect(scroll).toHaveBeenCalled();
+    expect(scroll.mock.contexts[0]).toBe(target);
+    delete Element.prototype.scrollIntoView;
+  });
+
+  it("shows an Adoption error with Retry when only the metrics fail", async () => {
+    api.assistMetrics.mockRejectedValueOnce(new api.ApiError("Boom", 500));
+    await renderConsole();
+    // The rest of the console is still usable.
+    expect(container.querySelector('[data-kpi="questions"]')).not.toBeNull();
+    await click(tabNamed("Adoption"));
+    const panel = container.querySelector("#assist-panel-adoption");
+    expect(panel.textContent).toContain("Couldn't load the adoption numbers");
+    await click(buttonByText(panel, "Retry"));
+    expect(panel.textContent).toContain("Feature coverage");
   });
 });

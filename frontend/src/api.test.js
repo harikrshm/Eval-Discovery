@@ -517,6 +517,73 @@ describe("fix-loop api", () => {
       expect(url).toMatch(/\/assist\/console\/insights$/);
       expect(init.method).toBe("POST");
     });
+
+    it("sends range, source and version as query parameters on every console read", async () => {
+      const { workspace, api } = await load();
+      workspace.setToken("demo-tok");
+      fetchMock.mockResolvedValue(jsonResponse(200, {}));
+      const filters = { range: "7d", source: "live", version: 3 };
+
+      await api.assistMetrics(filters);
+      await api.assistOverview(filters);
+      await api.assistTrends(filters);
+      await api.assistQuality(filters);
+      await api.assistOperations(filters);
+      await api.assistPipeline(filters);
+
+      const urls = fetchMock.mock.calls.map((c) => c[0].replace(/^.*?(\/assist)/, "$1"));
+      expect(urls).toEqual(
+        ["metrics", "overview", "trends", "quality", "operations", "pipeline"].map(
+          (name) => `/assist/console/${name}?range=7d&source=live&version=3`
+        )
+      );
+      for (const call of fetchMock.mock.calls) {
+        expect(headerOf(call, "X-Workspace-Token")).toBe("demo-tok");
+        expect(call[1].method).toBe("GET");
+      }
+    });
+
+    it("leaves out a null version and sends no query when there are no filters", async () => {
+      const { workspace, api } = await load();
+      workspace.setToken("demo-tok");
+      fetchMock.mockResolvedValue(jsonResponse(200, {}));
+
+      await api.assistOverview({ range: "30d", source: "all", version: null });
+      await api.assistMetrics();
+      await api.assistOperations({});
+
+      const urls = fetchMock.mock.calls.map((c) => c[0].replace(/^.*?(\/assist)/, "$1"));
+      expect(urls).toEqual([
+        "/assist/console/overview?range=30d&source=all",
+        "/assist/console/metrics",
+        "/assist/console/operations",
+      ]);
+    });
+
+    it("passes the reason and source filters to the flagged list", async () => {
+      const { workspace, api } = await load();
+      workspace.setToken("demo-tok");
+      fetchMock.mockResolvedValue(jsonResponse(200, []));
+
+      await api.assistFlagged({ reason: "reasked", source: "demo", limit: 20 });
+      await api.assistFlagged({ intent: "claim_explain", source: null, reason: undefined });
+
+      const urls = fetchMock.mock.calls.map((c) => c[0]);
+      expect(urls[0]).toMatch(/\/assist\/console\/flagged\?limit=20&reason=reasked&source=demo$/);
+      expect(urls[1]).toMatch(/\/assist\/console\/flagged\?intent=claim_explain$/);
+    });
+
+    it("posts to evaluate one waiting conversation now", async () => {
+      const { workspace, api } = await load();
+      workspace.setToken("demo-tok");
+      fetchMock.mockResolvedValueOnce(jsonResponse(200, { queued: 1, waiting: 4 }));
+
+      await expect(api.assistEvaluateNow()).resolves.toEqual({ queued: 1, waiting: 4 });
+      const [url, init] = fetchMock.mock.calls[0];
+      expect(url).toMatch(/\/assist\/console\/judge\/evaluate$/);
+      expect(init.method).toBe("POST");
+      expect(headerOf(fetchMock.mock.calls[0], "X-Workspace-Token")).toBe("demo-tok");
+    });
   });
 });
 

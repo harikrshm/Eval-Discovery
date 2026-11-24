@@ -185,16 +185,61 @@ export function assistStatus(token) {
   return request("/assist/console/status", { token });
 }
 
-export function assistMetrics() {
-  return request("/assist/console/metrics");
+// `filters = { range, source, version }` go out as query parameters; an unset one (a null version,
+// a missing key) is left out so the backend default applies.
+function filterQuery(filters) {
+  const params = new URLSearchParams();
+  const { range, source, version } = filters ?? {};
+  for (const [key, value] of Object.entries({ range, source, version })) {
+    if (value !== undefined && value !== null && value !== "") params.set(key, String(value));
+  }
+  const query = params.toString();
+  return query ? `?${query}` : "";
 }
 
-// Flagged conversations, newest first. Empty filters are left out of the query.
-export function assistFlagged({ intent, section, limit } = {}) {
+function consoleRead(name, filters) {
+  return request(`/assist/console/${name}${filterQuery(filters)}`);
+}
+
+export function assistMetrics(filters) {
+  return consoleRead("metrics", filters);
+}
+
+export function assistOverview(filters) {
+  return consoleRead("overview", filters);
+}
+
+export function assistTrends(filters) {
+  return consoleRead("trends", filters);
+}
+
+export function assistQuality(filters) {
+  return consoleRead("quality", filters);
+}
+
+export function assistOperations(filters) {
+  return consoleRead("operations", filters);
+}
+
+// The improvement loop belongs to the agent, so the backend ignores the filters here.
+export function assistPipeline(filters) {
+  return consoleRead("pipeline", filters);
+}
+
+// Queues one judgement for the oldest waiting conversation now: { queued, waiting }.
+export function assistEvaluateNow() {
+  return request("/assist/console/judge/evaluate", { method: "POST" });
+}
+
+// Flagged conversations, newest first. Empty filters are left out of the query. `reason` narrows to one
+// flag reason and `source` to all|live|demo.
+export function assistFlagged({ intent, section, limit, reason, source } = {}) {
   const params = new URLSearchParams();
   if (intent) params.set("intent", intent);
   if (section) params.set("section", section);
   if (limit) params.set("limit", String(limit));
+  if (reason) params.set("reason", reason);
+  if (source) params.set("source", source);
   const query = params.toString();
   return request(`/assist/console/flagged${query ? `?${query}` : ""}`);
 }

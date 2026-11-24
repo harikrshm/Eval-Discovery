@@ -1,64 +1,113 @@
 import { useEffect, useRef, useState } from "react";
-import { assistMetrics, assistStatus } from "../../api";
+import { assistMetrics, assistOverview, assistStatus } from "../../api";
+import { useConsoleQuery } from "../../hooks/useConsoleQuery";
 import { restoreAssistBackup } from "../../lib/workspace";
 import { Button } from "../ui/button";
 import AdoptionPanel from "./AdoptionPanel";
+import ConsoleControls from "./ConsoleControls";
+import { DEFAULT_FILTERS } from "./consoleFilters";
 import EvolutionPanel from "./EvolutionPanel";
+import OverviewTab from "./OverviewTab";
+import PanelState from "./charts/PanelState";
 
+// Overview is first and the default. Every other tab mounts the first time it is opened and then stays
+// mounted (hidden) so it keeps its state. Each tab component receives `{ filters, reloadKey, onOpenTab }`.
 const TABS = [
+  { id: "overview", label: "Overview" },
   { id: "adoption", label: "Adoption" },
+  { id: "quality", label: "Quality" },
   { id: "evolution", label: "Evolution" },
+  { id: "operations", label: "Operations" },
 ];
+
+const ANCHOR_TRIES = 10;
+const ANCHOR_RETRY_MS = 200;
+
+// The status call ignores the filters, so it gets a constant set and never refetches because of them.
+const STATUS_FILTERS = { range: "all", source: "all", version: null };
+const fetchStatus = () => assistStatus();
+const never = () => false;
 
 function sourceLine(name, counts) {
   if (!counts) return null;
   return `${name} — Live: ${counts.live ?? 0} · Imported: ${counts.imported ?? 0}`;
 }
 
-function useConsoleData(reloadKey) {
-  const [result, setResult] = useState({ key: null, status: null, metrics: null, error: null });
-
-  useEffect(() => {
-    let cancelled = false;
-    Promise.all([assistStatus(), assistMetrics()])
-      .then(([status, metrics]) => {
-        if (!cancelled) setResult({ key: reloadKey, status, metrics, error: null });
-      })
-      .catch((err) => {
-        if (cancelled) return;
-        const error = err instanceof Error && err.message ? err.message : "Something went wrong.";
-        setResult({ key: reloadKey, status: null, metrics: null, error });
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [reloadKey]);
-
-  // The last good data stays on screen while a refresh is in flight, so the open tab keeps its state.
-  return { ...result, loading: result.key !== reloadKey };
+// Stands in until the Quality and Operations tabs are built.
+function Placeholder() {
+  return <p className="text-sm text-muted-foreground">Coming in the next task</p>;
 }
 
-// The builder-facing console for the Patent Assist agent: how Google Patents is used (Adoption)
-// and the improvement loop for the assistant (Evolution). Most of the data is an imported demo
-// dataset, and the header says so whenever the API does.
+// The builder-facing console for the Patent Assist agent: an Overview with alerts and headline numbers,
+// how Google Patents is used (Adoption), conversation quality (Quality), the improvement loop for the
+// assistant (Evolution) and operations. Most of the data can be an imported demo dataset, and the
+// controls always say which data is on screen.
 export default function AssistConsole({ onDisconnect, autoFocus = false }) {
   const [reloadKey, setReloadKey] = useState(0);
-  const [tab, setTab] = useState("adoption");
-  const [evolutionOpened, setEvolutionOpened] = useState(false);
+  const [filters, setFilters] = useState(DEFAULT_FILTERS);
+  const [tab, setTab] = useState("overview");
+  const [opened, setOpened] = useState({ overview: true });
+  const [anchorRequest, setAnchorRequest] = useState(null);
   const tabRefs = useRef({});
   const headingRef = useRef(null);
-  const data = useConsoleData(reloadKey);
-  const { status, metrics } = data;
+
+  const statusQuery = useConsoleQuery(fetchStatus, STATUS_FILTERS, reloadKey, { isEmpty: never });
+  const metricsQuery = useConsoleQuery(assistMetrics, filters, reloadKey, { isEmpty: never });
+  // The version select's options come from the overview and depend on the source only, so this asks
+  // with the cheapest range and no version: it refetches for a new source or a Refresh, not for the rest.
+  const versionsQuery = useConsoleQuery(
+    assistOverview,
+    { range: "24h", source: filters.source, version: null },
+    reloadKey,
+    { isEmpty: never }
+  );
+
+  const status = statusQuery.state === "error" ? null : statusQuery.data;
+  const metrics = metricsQuery.data;
+  const versions = versionsQuery.data?.versions ?? [];
+  const loading = [statusQuery, metricsQuery, versionsQuery].some((q) => q.state === "loading" || q.refreshing);
 
   // After connecting, focus moves to the console heading (the connect box that had it is gone).
   useEffect(() => {
     if (autoFocus) headingRef.current?.focus();
   }, [autoFocus]);
 
+  // Scroll to the element an alert pointed at. The tab may still be loading, so look again for a moment.
+  useEffect(() => {
+    const anchor = anchorRequest?.anchor;
+    if (!anchor) return undefined;
+    let tries = 0;
+    let timer;
+    function attempt() {
+      const target = document.getElementById(anchor);
+      if (target) {
+        target.scrollIntoView?.({ block: "start" });
+        return;
+      }
+      tries += 1;
+      if (tries < ANCHOR_TRIES) timer = setTimeout(attempt, ANCHOR_RETRY_MS);
+    }
+    attempt();
+    return () => clearTimeout(timer);
+  }, [anchorRequest]);
+
   function selectTab(id) {
     setTab(id);
-    if (id === "evolution") setEvolutionOpened(true);
+    setOpened((o) => (o[id] ? o : { ...o, [id]: true }));
     tabRefs.current[id]?.focus();
+  }
+
+  // How a tab sends the builder somewhere else: switch to `id` and, if given, scroll to the element
+  // with that id once it exists.
+  function openTab(id, anchor) {
+    if (!TABS.some((t) => t.id === id)) return;
+    selectTab(id);
+    setAnchorRequest((prev) => (anchor ? { tab: id, anchor, n: (prev?.n ?? 0) + 1 } : null));
+  }
+
+  // A version number means something only within one source, so a new source starts with all versions.
+  function changeFilters(next) {
+    setFilters((prev) => ({ ...next, version: next.source === prev.source ? next.version : null }));
   }
 
   function onTabKeyDown(e) {
@@ -80,6 +129,7 @@ export default function AssistConsole({ onDisconnect, autoFocus = false }) {
 
   const label = metrics?.data_source_label;
   const sources = metrics?.sources;
+  const tabProps = { filters, reloadKey, onOpenTab: openTab };
 
   return (
     <div className="min-h-dvh bg-background">
@@ -95,9 +145,6 @@ export default function AssistConsole({ onDisconnect, autoFocus = false }) {
           </span>
         )}
         <div className="ml-auto flex gap-2">
-          <Button type="button" variant="outline" size="sm" onClick={() => setReloadKey((n) => n + 1)} disabled={data.loading}>
-            Refresh data
-          </Button>
           <Button type="button" variant="outline" size="sm" onClick={disconnect}>
             Disconnect
           </Button>
@@ -105,6 +152,15 @@ export default function AssistConsole({ onDisconnect, autoFocus = false }) {
       </header>
 
       <div className="mx-auto w-full max-w-5xl px-4 py-6 sm:px-6">
+        <div className="mb-4">
+          <ConsoleControls
+            value={filters}
+            onChange={changeFilters}
+            versions={versions}
+            onRefresh={() => setReloadKey((n) => n + 1)}
+            loading={loading}
+          />
+        </div>
         {label && (
           <div role="note" className="mb-4 rounded-md border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-900">
             <p>
@@ -122,17 +178,22 @@ export default function AssistConsole({ onDisconnect, autoFocus = false }) {
         )}
 
         <div role="status" aria-live="polite" className="text-sm text-muted-foreground">
-          {data.loading ? "Loading the console…" : ""}
+          {statusQuery.state === "loading" || statusQuery.refreshing ? "Loading the console…" : ""}
         </div>
-        {data.error && (
+        {statusQuery.state === "error" && (
           <p role="alert" className="mb-4 text-sm text-red-700">
-            Couldn&apos;t load the console: {data.error}
+            Couldn&apos;t load the console: {statusQuery.error}
           </p>
         )}
 
-        {!data.error && status && metrics && (
+        {status && (
           <>
-            <div role="tablist" aria-label="Assist console" onKeyDown={onTabKeyDown} className="mb-6 flex gap-1 border-b border-border">
+            <div
+              role="tablist"
+              aria-label="Assist console"
+              onKeyDown={onTabKeyDown}
+              className="mb-6 flex gap-1 overflow-x-auto border-b border-border"
+            >
               {TABS.map((t) => (
                 <button
                   key={t.id}
@@ -148,8 +209,8 @@ export default function AssistConsole({ onDisconnect, autoFocus = false }) {
                   onClick={() => selectTab(t.id)}
                   className={
                     tab === t.id
-                      ? "border-b-2 border-foreground px-4 py-2 text-sm font-medium text-foreground"
-                      : "border-b-2 border-transparent px-4 py-2 text-sm text-muted-foreground hover:text-foreground"
+                      ? "shrink-0 whitespace-nowrap border-b-2 border-foreground px-3 py-2 text-sm font-medium text-foreground sm:px-4"
+                      : "shrink-0 whitespace-nowrap border-b-2 border-transparent px-3 py-2 text-sm text-muted-foreground hover:text-foreground sm:px-4"
                   }
                 >
                   {t.label}
@@ -157,11 +218,29 @@ export default function AssistConsole({ onDisconnect, autoFocus = false }) {
               ))}
             </div>
 
+            <div role="tabpanel" id="assist-panel-overview" aria-labelledby="assist-tab-overview" hidden={tab !== "overview"}>
+              <OverviewTab {...tabProps} />
+            </div>
             <div role="tabpanel" id="assist-panel-adoption" aria-labelledby="assist-tab-adoption" hidden={tab !== "adoption"}>
-              <AdoptionPanel metrics={metrics} reloadKey={reloadKey} onReview={() => selectTab("evolution")} />
+              {opened.adoption && (
+                <PanelState
+                  state={metricsQuery.state}
+                  what="the adoption numbers"
+                  error={metricsQuery.error}
+                  onRetry={metricsQuery.retry}
+                >
+                  {metrics && <AdoptionPanel {...tabProps} metrics={metrics} onReview={() => selectTab("evolution")} />}
+                </PanelState>
+              )}
+            </div>
+            <div role="tabpanel" id="assist-panel-quality" aria-labelledby="assist-tab-quality" hidden={tab !== "quality"}>
+              {opened.quality && <Placeholder />}
             </div>
             <div role="tabpanel" id="assist-panel-evolution" aria-labelledby="assist-tab-evolution" hidden={tab !== "evolution"}>
-              {evolutionOpened && <EvolutionPanel agentId={status.agent_id} />}
+              {opened.evolution && <EvolutionPanel {...tabProps} agentId={status.agent_id} />}
+            </div>
+            <div role="tabpanel" id="assist-panel-operations" aria-labelledby="assist-tab-operations" hidden={tab !== "operations"}>
+              {opened.operations && <Placeholder />}
             </div>
           </>
         )}
