@@ -13,6 +13,7 @@ Say these things about the state of the work, before or during the demo, whichev
 - **The imported data is a demo dataset.** The page views and questions in the Adoption tab come from `examples/assist/page_views.example.jsonl` (12 page views, 17 questions, 5 flagged conversations), which the author wrote by hand. The console labels it "demo dataset". It is not usage, and the version comparison deliberately ignores it.
 - **Nothing is pushed or deployed.** This runs locally, on the branch `feat/patent-assist`.
 - **One real run was made, on 2026-11-23, and the fixes after it were not re-run.** 14 chat calls with the real Groq models on 3 trimmed fixture pages (not live Google Patents). My judgement of the first 12 answers, before the fixes: 5 correct, 1 mostly correct, 3 partly correct, 3 wrong (list and table answers: cited-by, prior art, CPC codes). The extractor matched its committed expected output. The flywheel did not improve the assistant: the discovery path found a pattern about legal-opinion refusals in imported demo runs whose tests already passed, so it suggested no fix, and the manual-criterion path produced a v2 that failed verification for a judge-blind-spot reason that was then fixed but not re-verified. The insights brief failed its own grounding check. The defects were fixed afterwards and are covered by offline tests only. **A second real run after the fixes has not been done.** Do not claim the flywheel improves Patent Assist answers. The Phase 4 simulation did not show the loop reducing preview runs, and that story is unchanged.
+- **Widget v2 has not been run in real Chrome either.** The reference pills, the follow-up button, the feedback card, keystroke isolation and the shorter prompt are tested in jsdom and with faked model calls only; `extension/CHECKLIST.md` section K is the author's to run. The new prompt asks for shorter answers (at most four short sentences); that is an instruction, it is unverified until the checklist is run, and it is not a claim that answers are better.
 - **Not exercised in the real run:** a 429 from the provider and adversarial input (injection).
 - **Frontend focus behaviour and the cross-tab behaviour** of the console (a second tab following connect and disconnect) are checked only in jsdom, not in a real browser. Keep to one tab.
 
@@ -21,6 +22,7 @@ Say these things about the state of the work, before or during the demo, whichev
 Do this before the call, not during it. The longer procedure, with checks, is `extension/CHECKLIST.md`; the short form is in the README's Patent Assist section.
 
 - [ ] **Backend running** from the repository root: `alembic upgrade head` (applies `0004` and `0005`), `python scripts/setup_assist.py` once (it prints the **demo workspace token once**; keep it somewhere private, and do not show it on screen), then `.env` with `ASSIST_AGENT_ID`, `ASSIST_KEY` and `GROQ_API_KEY`, then `uvicorn backend.main:app`. Keep the `.env` file closed on screen.
+- [ ] **Crisp prompt live.** The live prompt is a database prompt version, not the file. Run `python scripts/set_assist_prompt.py` (same database as the backend) once; it prints "Created prompt version N and made it current." or "Prompt already current (version N).". The console header then shows that version.
 - [ ] **Extension built and loaded.** In `extension/`: set `VITE_ASSIST_KEY` (the same value as `ASSIST_KEY`) and, if your backend is not on `http://127.0.0.1:8000`, `VITE_BACKEND_ORIGIN`, then `npm run build`. In Chrome: `chrome://extensions`, Developer mode, **Load unpacked**, `extension/dist`. After any rebuild reload the extension and the patent tab.
 - [ ] **Example data imported:** `python scripts/import_page_views.py examples/assist/page_views.example.jsonl`. It is idempotent, so importing again is safe.
 - [ ] **Frontend running:** `cd frontend`, `npm run dev`, http://localhost:5173. Connect once before the call to check the token works, then disconnect.
@@ -38,15 +40,15 @@ Opening line: "Products with rich pages are hard to learn. This is an assistant 
 
 ### 1. Ask on a real patent (0:00 to 0:45)
 
-- **Click:** on the US12401720B1 tab, the **Patent Assist** button, then the chip **Explain claim 1**. Wait for the answer. Then type `Can I sell a product like this without getting sued?` and send.
+- **Click:** on the US12401720B1 tab, the **Patent Assist** button, then the chip **Explain claim 1**. Wait for the answer. The chips show on the first turn only; after the answer one follow-up button appears. Then type `Can I sell a product like this without getting sued?` and send.
 - **Say:** "It reads the page I am on and answers from it; I would expect it to point at the claim text, but I am not promising a quote. The legal question gets no verdict. It explains what the claims say and ends with a fixed sentence: this is not legal advice. That is a keyword rule plus the system prompt, so a phrasing it misses depends on the model following its prompt."
-- **Expect, by the code and tests, not confirmed in real Chrome:** an answer that cites claim numbers that exist on the page; for the legal question, an answer without a yes or no that ends with "This is not legal advice, and I can't judge validity or infringement." If the answer cites a claim or law id it was not given, the extension shows "Some citations in this answer could not be verified against the page." Say that this check is deterministic code. If you chose a question that cites a law excerpt, say the law pack is a draft.
+- **Expect, by the code and tests, not confirmed in real Chrome:** an answer that cites claim numbers that exist on the page; for the legal question, an answer without a yes or no that ends with "This is not legal advice, and I can't judge validity or infringement." If the answer cites a claim or law id it was not given, the extension shows "Some citations in this answer could not be verified against the page." The check covers claim numbers, law ids, `[pNNNN]` paragraph markers and `[section:NAME]` tokens. Claim, paragraph and section references in the answer are returned by the backend as `references` and shown as clickable pills on granted patents only (plain text on applications); a pill scrolls the page to that claim, paragraph or section and highlights it for about 2 seconds. US12401720B1 has paragraph numbers, so it can show paragraph pills; the other saved pages do not. Say that this check is deterministic code. If you chose a question that cites a law excerpt, say the law pack is a draft.
 
 ### 2. Rate (0:45 to 1:05)
 
-- **Click:** on the first answer, **Not helpful**, type a reason (for example `missed the point`) and **Send feedback**.
+- **Click:** there are no per-answer rating buttons. After the **third** answered question one card, "How is this going?", appears under that answer, once per conversation. Ask a third question (use the follow-up button if you like), then click **Not helpful** on the card, type a reason (for example `missed the point`) and **Send feedback**. (**Dismiss** hides the card for good.)
 - **Say:** "A thumbs-down, a 'didn't answer', a re-ask or a failed citation check saves the conversation, with a snapshot of the page it saw, as a flagged conversation. The assistant's own prompt is not touched by this."
-- **Expect:** "Thanks for the feedback." The conversation appears in the console's flagged list after **Refresh data**.
+- **Expect:** "Thanks for the feedback." The rating is stored against the newest answer together with the whole conversation. The conversation appears in the console's flagged list after **Refresh data**.
 
 ### 3. The console shows the pattern (1:05 to 1:50)
 
@@ -90,7 +92,7 @@ On the free tier the 120B model allows about 8000 tokens per minute (the extensi
 ### The backend is down
 
 - The widget shows "The assistant could not answer right now. Please try again." with **Retry**; the page is unaffected. The console shows "Couldn't load the console: ...". Start the backend (`uvicorn backend.main:app`), click **Retry** in the widget and **Refresh data** in the console.
-- If it will not start, you can still show what runs offline: `python scripts/import_page_views.py examples/assist/page_views.example.jsonl --dry-run` (no database needed; it prints "12 page views, 17 questions, 5 flagged conversations"), `npx vitest run` in `extension/` (347 tests), and the architecture section [docs/ARCHITECTURE.md, section 10](ARCHITECTURE.md#10-patent-assist). Say plainly that the live demo was not available.
+- If it will not start, you can still show what runs offline: `python scripts/import_page_views.py examples/assist/page_views.example.jsonl --dry-run` (no database needed; it prints "12 page views, 17 questions, 5 flagged conversations"), `npx vitest run` in `extension/` (468 tests), and the architecture section [docs/ARCHITECTURE.md, section 10](ARCHITECTURE.md#10-patent-assist). Say plainly that the live demo was not available.
 
 ### Smaller problems
 
@@ -102,11 +104,13 @@ On the free tier the 120B model allows about 8000 tokens per minute (the extensi
 
 Models vary from run to run. Do not hide it.
 
+- **An answer is longer than four sentences, or shows raw markers.** The prompt asks for at most four short sentences, but that is an instruction the model may not follow, and the legal-opinion rule (list the claim's elements, then the fixed sentence) can pull against it. Say so; do not claim the new prompt makes answers better, only shorter by instruction.
+- **A pill does nothing or is greyed out.** A pill whose target is not on the live page is disabled ("Couldn't find this on the page"); paragraph pills need the page to carry paragraph numbers. Say it is unverified in real Chrome.
 - **A list answer is wrong or partial** (cited-by, prior art, CPC codes). This was the weakest area in the real run. The slice fitting was fixed afterwards and not re-run with the real model, so say "a list can be cut to fit and the assistant is told, but I have not re-verified it with the real model" and open the page's own section.
 - **Two near-identical questions get different answers.** Seen in the real run (a wrong and a right answer on one page). Known and not fixed; say so.
 - **The insights brief says its figures could not be matched, or that it was cut off.** The grounding check is best effort and the brief is flagged when the model stops early; say that, and read the figures against the counts shown.
 - **The assistant gives a verdict on a legal question, or leaves out the fixed sentence.** The sentence is appended by code for the intents the keyword rules catch, but a phrasing the rules miss depends on the model. Say so, and say it is a known limitation of keyword rules.
-- **A cited claim is wrong or unsupported.** The check catches claim numbers and law ids that do not exist in what the model was given. It does not check whether a correct citation supports the point.
+- **A cited claim is wrong or unsupported.** The check catches claim numbers, law ids, `[pNNNN]` paragraph markers and `[section:NAME]` tokens that do not exist in what the model was given. It does not check whether a correct citation supports the point.
 - **No pattern is found, or the discovered criterion is not the one you expected.** The criterion is a model's reading of the flagged conversations, and the panel lets you edit it. Say: "Discovery proposes, I decide."
 - **A suggested fix fails verification.** This is a designed outcome. Say: "The held-out test or a previously passing test caught it, and the assistant never left the old prompt."
 - **The replay table does not show an improvement.** Say what it shows. Do not explain it away.
@@ -120,4 +124,5 @@ Models vary from run to run. Do not hide it.
 | A human approves every change, and promotion is a code-written rule | The assistant evolves on its own |
 | The law pack is a draft the author must review | The law pack is correct or reviewed |
 | The extension is verified against saved pages and in jsdom, with a manual checklist for real Chrome | The extension works on live Google Patents (until the checklist has been run and recorded) |
+| The new prompt asks for shorter answers, and the references and pills are tested with faked calls and in jsdom | The answers are better, or the pills work on live Google Patents (until checklist section K has been run and the answers read) |
 | Strategy-document figures are illustrative | Any measured adoption or revenue figure; none exists here |
