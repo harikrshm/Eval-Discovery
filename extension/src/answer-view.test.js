@@ -70,6 +70,23 @@ describe('parseAnswer', () => {
     expect(parseAnswer('use `x` here')[0].items[0].map((r) => r.text).join('')).toBe('use x here')
   })
 
+  it('still parses separate italics after the closer-search memoization', () => {
+    expect(parseAnswer('*x* and *y*')[0].items[0]).toEqual([
+      { text: 'x', start: 1, bold: false, italic: true },
+      { text: ' and ', start: 3, bold: false, italic: false },
+      { text: 'y', start: 9, bold: false, italic: true },
+    ])
+    expect(parseAnswer('*a *b* c')[0].items[0].filter((r) => r.italic).map((r) => r.text)).toEqual(['a *b'])
+  })
+
+  it.each(['*a ', '**a '])('parses a long run of unclosed %j markers in linear time', (unit) => {
+    const src = unit.repeat(Math.ceil(20000 / unit.length))
+    const t0 = performance.now()
+    const blocks = parseAnswer(src)
+    expect(performance.now() - t0).toBeLessThan(200)
+    expect(blocks[0].items[0].map((r) => r.text).join('')).toBe(src)
+  })
+
   it('keeps run text equal to the source at run.start', () => {
     const src = '## H\n\nA **b *c* d** `e` - f\n- x **y**\n2) z'
     for (const block of parseAnswer(src)) {

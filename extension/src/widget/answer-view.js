@@ -35,6 +35,9 @@ function parseInline(text, from, to, bold, italic, out) {
     if (bufStart >= 0 && end > bufStart) out.push({ text: text.slice(bufStart, end), start: bufStart, bold, italic })
     bufStart = -1
   }
+  // A failed closer search from `open` also rules out every later opener of the same marker (it would
+  // search a subset of the same text), so remember where each marker last failed: keeps this linear.
+  const noCloserFrom = {}
   let i = from
   while (i < to) {
     const ch = text[i]
@@ -48,7 +51,7 @@ function parseInline(text, from, to, bold, italic, out) {
       const mark = double ? '**' : '*'
       const open = i + mark.length
       let close = -1
-      if (open < to && !isSpace(text[open])) {
+      if (open < to && !isSpace(text[open]) && !(open >= (noCloserFrom[mark] ?? Infinity))) {
         for (let j = text.indexOf(mark, open); j !== -1 && j + mark.length <= to; j = text.indexOf(mark, j + 1)) {
           // A single * must not be half of a **; the closer must follow a non-space.
           if (j > open && !isSpace(text[j - 1]) && (double || (text[j + 1] !== '*' && text[j - 1] !== '*'))) {
@@ -56,6 +59,7 @@ function parseInline(text, from, to, bold, italic, out) {
             break
           }
         }
+        if (close === -1) noCloserFrom[mark] = open
       }
       if (close !== -1) {
         flush(i)
