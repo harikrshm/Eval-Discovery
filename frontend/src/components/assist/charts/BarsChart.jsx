@@ -1,3 +1,4 @@
+import { useRef, useState } from "react";
 import { Bar, BarChart, CartesianGrid, LabelList, Rectangle, Tooltip, XAxis, YAxis } from "recharts";
 import { NA, isNumber } from "../format";
 import ChartFrame from "./ChartFrame";
@@ -10,8 +11,14 @@ function plain(value) {
   return isNumber(value) ? String(Math.round(value * 100) / 100) : NA;
 }
 
-// A bar that is a button: focusable, Enter/Space/click select its category.
+const RING_WIDTH = 3;
+
+// A bar that is a button: focusable, Enter/Space/click select its category. The focus ring is a
+// thick FOCUS-coloured stroke on the bar itself, drawn from state (no CSS outline on SVG). Like
+// :focus-visible, it shows for keyboard focus only: focus that follows a mouse press shows no ring.
 function SelectableBar({ props, category, label, radius, onSelect }) {
+  const [focused, setFocused] = useState(false);
+  const pressed = useRef(false);
   const { x, y, width, height, fill } = props;
   if (!isNumber(x) || !isNumber(y) || !(width > 0) || !(height > 0)) return null;
   const choose = () => onSelect(category);
@@ -21,16 +28,33 @@ function SelectableBar({ props, category, label, radius, onSelect }) {
       tabIndex={0}
       aria-label={label}
       onClick={choose}
+      onPointerDown={() => {
+        pressed.current = true;
+      }}
+      onFocus={() => setFocused(!pressed.current)}
+      onBlur={() => {
+        pressed.current = false;
+        setFocused(false);
+      }}
       onKeyDown={(event) => {
+        setFocused(true);
         if (event.key === "Enter" || event.key === " ") {
           event.preventDefault();
           choose();
         }
       }}
-      className="cursor-pointer outline-none"
-      style={{ outlineColor: FOCUS }}
+      className="cursor-pointer"
     >
-      <Rectangle x={x} y={y} width={width} height={height} fill={fill} radius={radius} />
+      <Rectangle
+        x={x}
+        y={y}
+        width={width}
+        height={height}
+        fill={fill}
+        radius={radius}
+        stroke={focused ? FOCUS : "none"}
+        strokeWidth={focused ? RING_WIDTH : 0}
+      />
     </g>
   );
 }
@@ -39,7 +63,9 @@ function SelectableBar({ props, category, label, radius, onSelect }) {
 // category names down the left, which is the readable choice for names; `"vertical"` draws columns.
 // `grouped` (default) puts series side by side, `grouped={false}` stacks them (no value labels
 // then: the axis carries the values). A null value is no bar; the category says "n/a".
-// `onSelect(category)` makes each bar a focusable button. `width` fixes the size (tests).
+// `onSelect(category)` makes each bar a focusable button. WARNING: a chart with `onSelect` must sit
+// in `<ChartCard interactive>`; the default `role="img"` wrapper makes the bar buttons invisible to
+// assistive technology. `width` fixes the size (tests).
 export default function BarsChart({
   data,
   categoryKey,

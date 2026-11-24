@@ -26,7 +26,9 @@ function summarise(title, columns, rows) {
 // A titled card around one chart. The chart is described for screen readers and a real <table>
 // with the same numbers sits behind a toggle (the text equivalent). `interactive` is for charts
 // whose marks are focusable buttons: role="img" would hide them from assistive tech, so the
-// wrapper becomes a labelled group instead.
+// wrapper becomes a labelled group instead. WARNING: ALWAYS pass `interactive` when the chart
+// inside has `onSelect` (a BarsChart with clickable bars); without it the bar buttons are hidden
+// from screen readers. Nothing enforces this at runtime.
 export default function ChartCard({
   title,
   subtitle = null,
@@ -88,14 +90,17 @@ export default function ChartCard({
               <tbody>
                 {tableRows.map((row, r) => (
                   <tr key={r} className="border-b border-border/60 last:border-0">
-                    {row.map((value, c) => (
-                      <td
-                        key={c}
-                        className={`py-1 pr-3 ${c === 0 ? "text-foreground" : "text-muted-foreground"}`}
-                      >
-                        {cell(value)}
-                      </td>
-                    ))}
+                    {row.map((value, c) =>
+                      c === 0 ? (
+                        <th key={c} scope="row" className="py-1 pr-3 font-normal text-foreground">
+                          {cell(value)}
+                        </th>
+                      ) : (
+                        <td key={c} className="py-1 pr-3 text-muted-foreground">
+                          {cell(value)}
+                        </td>
+                      ),
+                    )}
                   </tr>
                 ))}
               </tbody>

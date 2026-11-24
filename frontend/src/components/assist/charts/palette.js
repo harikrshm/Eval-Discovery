@@ -22,6 +22,9 @@
 //        scatter, bubble or map charts; chart tabs should keep to four series or fewer and
 //        fold the rest into "Other".
 //
+// More than 4 series are not supported by this palette's contrast: callers must pass at most 4
+// lines/series per chart (slots 5 and 6 and the grey tail exist only so nothing is cycled).
+//
 // Relief for the WARN: every chart shows its series names as legend text and has a "View as table"
 // text equivalent (ChartCard), and every bar carries a value label. Series are never told apart by
 // colour alone. Only the light surface exists in this app (no dark theme), so no dark run.

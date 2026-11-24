@@ -4,6 +4,7 @@
 // TrendChart and BarsChart take an optional `width` prop; when it is set they draw at that fixed
 // size and skip ResponsiveContainer. Production callers omit it (responsive, 100% wide); these
 // tests pass it. Nothing is mocked, so the real Recharts output (paths, dots, labels) is asserted.
+import { act } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { buttonByText, click, mount, pressKey, unmount } from "../testUtils";
 import BarsChart from "./BarsChart";
@@ -11,7 +12,7 @@ import ChartCard from "./ChartCard";
 import KpiCard from "./KpiCard";
 import PanelState from "./PanelState";
 import TrendChart from "./TrendChart";
-import { MAX_SERIES, SERIES, STATUS, seriesColor } from "./palette";
+import { FOCUS, MAX_SERIES, SERIES, STATUS, seriesColor } from "./palette";
 
 afterEach(unmount);
 
@@ -142,6 +143,11 @@ describe("ChartCard", () => {
       ["11:00", "n/a", "0.5"],
       ["12:00", "4.4", "55%"],
     ]);
+    expect([...table.querySelectorAll("tbody tr")].map((tr) => tr.firstElementChild.getAttribute("scope"))).toEqual([
+      "row",
+      "row",
+      "row",
+    ]);
     expect(container.querySelector('[role="img"] svg')).not.toBeNull();
 
     await click(buttonByText(container, "Hide table"));
@@ -160,6 +166,46 @@ describe("ChartCard", () => {
     const interactive = await card({ interactive: true });
     expect(interactive.querySelector('[role="img"]')).toBeNull();
     expect(interactive.querySelector('[role="group"]').getAttribute("aria-label")).toContain("Quality");
+  });
+});
+
+describe("ChartCard around BarsChart", () => {
+  const DATA = [
+    { intent: "claim_explain", rate: 0.5 },
+    { intent: "other", rate: 0.25 },
+  ];
+  const SERIES_RATE = [{ key: "rate", label: "Thumbs-up rate" }];
+  const COLUMNS = ["Intent", "Rate"];
+  const ROWS = [
+    ["claim_explain", "50%"],
+    ["other", "25%"],
+  ];
+
+  it("keeps the clickable bars reachable as buttons inside an interactive card (role group)", async () => {
+    const onSelect = vi.fn();
+    const container = await mount(
+      <ChartCard title="Rate by intent" tableColumns={COLUMNS} tableRows={ROWS} interactive>
+        <BarsChart data={DATA} categoryKey="intent" series={SERIES_RATE} width={500} onSelect={onSelect} />
+      </ChartCard>,
+    );
+    const wrapper = container.querySelector('[aria-label^="Rate by intent"]');
+    expect(wrapper.getAttribute("role")).toBe("group");
+    expect(container.querySelector('[role="img"]')).toBeNull();
+    const buttons = wrapper.querySelectorAll('[role="button"]');
+    expect(buttons).toHaveLength(2);
+    await click(buttons[1]);
+    expect(onSelect).toHaveBeenCalledWith("other");
+  });
+
+  it("keeps role img around a plain chart without onSelect", async () => {
+    const container = await mount(
+      <ChartCard title="Rate by intent" tableColumns={COLUMNS} tableRows={ROWS}>
+        <BarsChart data={DATA} categoryKey="intent" series={SERIES_RATE} width={500} />
+      </ChartCard>,
+    );
+    expect(container.querySelector('[role="img"]')).not.toBeNull();
+    expect(container.querySelector('[role="group"]')).toBeNull();
+    expect(container.querySelectorAll('[role="button"]')).toHaveLength(0);
   });
 });
 
@@ -278,15 +324,36 @@ describe("TrendChart", () => {
   });
 
   it("formats ISO timestamps as short dates for daily data, with or without a Z suffix", async () => {
-    const days = ["2026-11-18T09:30:00Z", "2026-11-19T09:30:00Z", "2026-11-20T09:30:00Z"];
-    const data = days.map((at, i) => ({ at, a: i, b: i }));
+    for (const suffix of ["Z", ""]) {
+      const days = ["2026-11-18T09:30:00", "2026-11-19T09:30:00", "2026-11-20T09:30:00"].map((d) => `${d}${suffix}`);
+      const data = days.map((at, i) => ({ at, a: i, b: i }));
+      const container = await mount(
+        <TrendChart data={data} xKey="at" series={SERIES_AB} bucket="day" width={WIDTH} />,
+      );
+      const ticks = tickTexts(container);
+      expect(ticks).toContain("Nov 18");
+      expect(ticks).toContain("Nov 20");
+      expect(ticks.join(" ")).not.toContain("09:30");
+      await unmount();
+    }
+  });
+
+  it("labels hourly buckets that do not start on the hour with their real minutes", async () => {
+    const at = ["14:37", "15:37", "16:37", "17:37", "18:37"].map((t) => `2026-11-20T${t}:00`);
+    const data = at.map((x, i) => ({ at: x, a: i, b: i }));
     const container = await mount(
-      <TrendChart data={data} xKey="at" series={SERIES_AB} bucket="day" width={WIDTH} />,
+      <TrendChart data={data} xKey="at" series={SERIES_AB} bucket="hour" width={WIDTH} />,
     );
-    const ticks = tickTexts(container);
-    expect(ticks).toContain("Nov 18");
-    expect(ticks).toContain("Nov 20");
-    expect(ticks.join(" ")).not.toContain("09:30");
+    expect(tickTexts(container)).toEqual(["14:37", "15:37", "16:37", "17:37", "18:37"]);
+  });
+
+  it("shows the date once, on the first tick of a new UTC day, for hourly data crossing midnight", async () => {
+    const at = ["2026-11-20T22:37:00", "2026-11-20T23:37:00", "2026-11-21T00:37:00", "2026-11-21T01:37:00", "2026-11-21T02:37:00"];
+    const data = at.map((x, i) => ({ at: x, a: i, b: i }));
+    const container = await mount(
+      <TrendChart data={data} xKey="at" series={SERIES_AB} bucket="hour" width={WIDTH} />,
+    );
+    expect(tickTexts(container)).toEqual(["22:37", "23:37", "Nov 21 00:37", "01:37", "02:37"]);
   });
 
   it("draws a dashed vertical line with a text label per marker, and demo markers say demo", async () => {
@@ -390,6 +457,42 @@ describe("BarsChart", () => {
     onSelect.mockClear();
     await pressKey(bars[0], "a");
     expect(onSelect).not.toHaveBeenCalled();
+  });
+
+  it("shows a thick FOCUS-coloured ring on a keyboard-focused bar and none otherwise", async () => {
+    const container = await mount(
+      <BarsChart data={DATA} categoryKey="intent" series={SERIES_RATE} width={500} onSelect={() => {}} />,
+    );
+    const bars = [...container.querySelectorAll('[role="button"]')];
+    const outline = (bar) => bar.querySelector("path");
+    for (const bar of bars) {
+      expect(outline(bar).getAttribute("stroke")).not.toBe(FOCUS);
+      expect(bar.className.baseVal ?? bar.getAttribute("class")).not.toContain("outline-none");
+    }
+
+    await act(async () => bars[0].focus());
+    expect(outline(bars[0]).getAttribute("stroke")).toBe(FOCUS);
+    expect(Number(outline(bars[0]).getAttribute("stroke-width"))).toBeGreaterThanOrEqual(2);
+    expect(outline(bars[1]).getAttribute("stroke")).not.toBe(FOCUS);
+
+    await act(async () => bars[0].blur());
+    expect(outline(bars[0]).getAttribute("stroke")).not.toBe(FOCUS);
+  });
+
+  it("shows no ring when focus follows a mouse press, but does once a key is pressed", async () => {
+    const container = await mount(
+      <BarsChart data={DATA} categoryKey="intent" series={SERIES_RATE} width={500} onSelect={() => {}} />,
+    );
+    const bar = container.querySelector('[role="button"]');
+    await act(async () => {
+      bar.dispatchEvent(new Event("pointerdown", { bubbles: true }));
+      bar.focus();
+    });
+    expect(bar.querySelector("path").getAttribute("stroke")).not.toBe(FOCUS);
+    await pressKey(bar, "Tab");
+    expect(bar.querySelector("path").getAttribute("stroke")).toBe(FOCUS);
+    await act(async () => bar.blur());
+    expect(bar.querySelector("path").getAttribute("stroke")).not.toBe(FOCUS);
   });
 
   it("supports vertical columns, grouped series and stacked series", async () => {

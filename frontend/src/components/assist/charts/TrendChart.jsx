@@ -20,15 +20,22 @@ function toMillis(value) {
 
 const two = (n) => String(n).padStart(2, "0");
 
-function tickLabel(ms, bucket) {
+const dayOf = (ms) => Math.floor(ms / 86400000);
+const clock = (d) => `${two(d.getUTCHours())}:${two(d.getUTCMinutes())}`;
+const dateOf = (d) => `${MONTHS[d.getUTCMonth()]} ${d.getUTCDate()}`;
+
+// Hourly buckets are counted back from the request time, so they do not start on the hour:
+// the label is the real UTC HH:MM. The date is added only to the first tick of a new UTC day.
+function tickLabel(ms, index, ticks, bucket) {
   const d = new Date(ms);
-  return bucket === "hour" ? `${two(d.getUTCHours())}:00` : `${MONTHS[d.getUTCMonth()]} ${d.getUTCDate()}`;
+  if (bucket !== "hour") return dateOf(d);
+  const newDay = index > 0 && dayOf(ticks[index - 1]) !== dayOf(ms);
+  return newDay ? `${dateOf(d)} ${clock(d)}` : clock(d);
 }
 
 function fullLabel(ms, bucket) {
   const d = new Date(ms);
-  const day = `${MONTHS[d.getUTCMonth()]} ${d.getUTCDate()}`;
-  return bucket === "hour" ? `${day}, ${two(d.getUTCHours())}:00 UTC` : day;
+  return bucket === "hour" ? `${dateOf(d)} ${clock(d)} UTC` : dateOf(d);
 }
 
 // Every bucket start is a real data point; thin them to a readable few.
@@ -46,7 +53,8 @@ function plain(value) {
 // A line chart over time. `data` rows carry an ISO timestamp under `xKey` and one number per series
 // key; a missing number (null/undefined/NaN) is a gap in the line, never zero. `bucket` is
 // "hour" or "day" and decides how ticks read. `markers` are dashed vertical lines at a time.
-// `width` fixes the size (tests); leave it out to fill the container.
+// `width` fixes the size (tests); leave it out to fill the container. Pass at most 4 series: the
+// palette's contrast does not support more (see palette.js).
 export default function TrendChart({
   data,
   xKey,
@@ -83,7 +91,7 @@ export default function TrendChart({
         scale="time"
         domain={["dataMin", "dataMax"]}
         ticks={ticks}
-        tickFormatter={(ms) => tickLabel(ms, bucket)}
+        tickFormatter={(ms, index) => tickLabel(ms, index, ticks, bucket)}
         tick={{ fill: TICK_TEXT, fontSize: 11 }}
         stroke={AXIS_LINE}
         tickLine={false}
