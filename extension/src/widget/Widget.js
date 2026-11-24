@@ -3,8 +3,11 @@
 // Everything shown is set with textContent, never innerHTML.
 import { isUsPatentNumber } from '../claimrefs.js'
 import { MESSAGES, isFixedMessage } from '../messages.js'
+import { displayText } from './answer-view.js'
 import { CHIPS } from './chips.js'
 import STYLES from './styles.css?raw'
+
+export { displayText } from './answer-view.js'
 
 export const NON_US_NOTICE = 'Patent Assist works on US utility patents and applications only.'
 export const INCOMPLETE_NOTE = 'Some page sections could not be read.'
@@ -38,12 +41,6 @@ export function buildQuestion(typed, selection) {
   if (!s) return t.slice(0, LIMITS.question)
   const quoted = `Explain this passage: "${s}"`
   return (t ? `${quoted} ${t}` : quoted).slice(0, LIMITS.question)
-}
-
-const ENTITIES = { '&lt;': '<', '&gt;': '>', '&amp;': '&' }
-/** The backend escapes angle brackets in echoed page text; undo that for DISPLAY only (one pass, so &amp;lt; stays &lt;). */
-export function displayText(answer) {
-  return String(answer ?? '').replace(/&(?:lt|gt|amp);/g, (m) => ENTITIES[m])
 }
 
 /** A re-ask: the next answer has the same intent as the previous one and arrives within 90 s of it. */
