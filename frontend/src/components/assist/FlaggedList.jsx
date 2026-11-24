@@ -1,5 +1,6 @@
 import { forwardRef } from "react";
 import { Button } from "../ui/button";
+import { flagReasonLabel } from "./flagReasons";
 import { humanize, shortId } from "./format";
 
 function Tag({ children, tone }) {
@@ -16,22 +17,15 @@ function Tag({ children, tone }) {
   );
 }
 
+const NO_FILTER = {};
+
 function join(values) {
   return values && values.length ? values.map(humanize).join(", ") : "none";
 }
 
-// The fixed flag reasons in words. Anything else is shown as "Other", never as the raw value.
-const FLAG_REASON_LABELS = {
-  rated_down: "Thumbs-down",
-  no_answer: "No answer",
-  reasked: "Re-ask",
-  citation_unverified: "Citation failure",
-  auto_judge: "Auto-judge",
-};
-
 function reasonsText(reasons) {
   if (!reasons || !reasons.length) return "none";
-  return reasons.map((reason) => FLAG_REASON_LABELS[reason] ?? "Other").join(", ");
+  return reasons.map(flagReasonLabel).join(", ");
 }
 
 // What the polite status announces once the list has loaded.
@@ -46,7 +40,7 @@ function countText(error, items) {
 // conversation the judge graded low). `controls` is an optional slot under the heading, for the
 // Quality tab's reason chips.
 const FlaggedList = forwardRef(function FlaggedList(
-  { items, loading, error, filter, scope = null, controls = null, onClearFilter, onReview, onRetry },
+  { items, loading, error, filter = NO_FILTER, scope = null, controls = null, onClearFilter = null, onReview, onRetry },
   headingRef
 ) {
   const filterText = filter.section

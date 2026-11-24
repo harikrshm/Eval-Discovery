@@ -246,7 +246,7 @@ def test_quality_endpoint_aggregates_and_filters(client, judged):
     body = get(client, headers, "quality", "?range=24h")
     assert set(body) == {
         "judged", "unjudged", "grade_trend", "answered", "concise_share", "citations_share", "legal", "reasons",
-        "ratings", "bucket",
+        "ratings", "bucket", "version_markers",
     }
     assert body["bucket"] == "hour" and len(body["grade_trend"]) == 24
     assert (body["judged"], body["unjudged"]) == (3, 1)
@@ -273,9 +273,35 @@ def test_quality_endpoint_aggregates_and_filters(client, judged):
     assert get(client, headers, "quality", "?range=24h&version=2")["judged"] == 1
 
 
+def test_quality_version_markers_match_overview_live_and_demo_labelled(client, db_session):
+    workspace, agent, headers = make_workspace(db_session)
+    now = utcnow()
+    db_session.add(
+        PromptVersion(agent_id=agent.id, text="p2", origin="manual", status="promoted", number=2,
+                      created_at=now - timedelta(days=2))
+    )
+    db_session.commit()
+    add_q(db_session, workspace, "d1", "other", source="imported", version=1, created_at=now - timedelta(days=5))
+    add_q(db_session, workspace, "d2", "other", source="imported", version=2, created_at=now - timedelta(days=3))
+    add_q(db_session, workspace, "l1", "other", version=1, created_at=now - timedelta(days=4))
+
+    body = get(client, headers, "quality", "?range=30d")
+    markers = body["version_markers"]
+    assert all(set(m) == {"at", "version", "source", "label"} for m in markers)
+    assert sorted(m["version"] for m in markers if m["source"] == "live") == [1, 2]
+    demo = [m for m in markers if m["source"] == "demo"]
+    assert [(m["version"], m["label"]) for m in demo] == [(1, "v1 (demo)"), (2, "v2 (demo)")]
+    assert [m["at"] for m in markers] == sorted(m["at"] for m in markers)
+    assert markers == get(client, headers, "overview", "?range=30d")["version_markers"]  # same helper, same shape
+    assert {m["source"] for m in get(client, headers, "quality", "?range=30d&source=live")["version_markers"]} == {"live"}
+    assert {m["source"] for m in get(client, headers, "quality", "?range=30d&source=demo")["version_markers"]} == {"demo"}
+
+
 def test_quality_empty_returns_nulls_not_zeros(client, world):
     _, _, headers = world
     body = get(client, headers, "quality")
+    assert get(client, headers, "quality", "?source=demo")["version_markers"] == []  # nothing generated yet
+    assert all(m["source"] == "live" for m in body["version_markers"])  # only the agent's own versions
     assert body["judged"] == 0 and body["unjudged"] == 0
     assert body["concise_share"] is None and body["citations_share"] is None
     assert body["grade_trend"] == []

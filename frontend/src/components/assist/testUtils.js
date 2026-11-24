@@ -299,6 +299,10 @@ export function qualityFixture(overrides = {}) {
     },
     ratings: { up: 3, down: 2, no_answer: 1, none: 6 },
     bucket: "day",
+    version_markers: [
+      { at: "2026-11-23T09:00:00", version: 2, source: "live", label: "v2" },
+      { at: "2026-11-22T12:00:00", version: 1, source: "demo", label: "v1 (demo)" },
+    ],
     ...overrides,
   };
 }
@@ -326,5 +330,6 @@ export function emptyQuality() {
     },
     ratings: { up: 0, down: 0, no_answer: 0, none: 0 },
     bucket: "day",
+    version_markers: [],
   };
 }

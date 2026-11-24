@@ -1,5 +1,5 @@
 import { useRef, useState } from "react";
-import { assistEvaluateNow, assistFlagged, assistQuality, assistTrends } from "../../api";
+import { assistEvaluateNow, assistFlagged, assistQuality } from "../../api";
 import { useConsoleQuery } from "../../hooks/useConsoleQuery";
 import { Button } from "../ui/button";
 import BarsChart from "./charts/BarsChart";
@@ -12,6 +12,7 @@ import InsightsBrief from "./InsightsBrief";
 import RefreshFrame from "./RefreshFrame";
 import { chartMarkers } from "./chartMarkers";
 import { scopeText } from "./consoleFilters";
+import { FLAG_REASON_LABELS } from "./flagReasons";
 import { isNumber, utcStamp } from "./format";
 
 const FLAGGED_LIMIT = 50;
@@ -38,14 +39,10 @@ const RATING_LABELS = [
   ["none", "No rating"],
 ];
 
-// The flagged-list filter chips and the `reason` each one asks the backend for.
+// The flagged-list filter chips: "All" and one per fixed flag reason, worded by the same map as the rows.
 const REASON_CHIPS = [
   { label: "All", reason: null },
-  { label: "Thumbs-down", reason: "rated_down" },
-  { label: "No answer", reason: "no_answer" },
-  { label: "Re-ask", reason: "reasked" },
-  { label: "Citation failure", reason: "citation_unverified" },
-  { label: "Auto-judge", reason: "auto_judge" },
+  ...Object.entries(FLAG_REASON_LABELS).map(([reason, label]) => ({ label, reason })),
 ];
 
 const GRADE_SERIES = [{ key: "avg_grade", label: "Average grade (1 to 5)" }];
@@ -55,6 +52,7 @@ const JUDGE_DISCLAIMER =
   "The grade and verdicts are the opinion of a language model that reads each conversation. They have not been validated against human raters, so treat them as a signal to look into, not as a measurement.";
 const DEMO_NOTE =
   "This view includes demo dataset conversations. Their judgements are generated for the demo, not measured.";
+const QUEUED_HINT = "Results appear after the judge runs; use Refresh data in a few minutes.";
 const GENERIC_ERROR = "Something went wrong.";
 
 const never = () => false;
@@ -121,7 +119,7 @@ function CountsCard({ title, subtitle, firstColumn, rows }) {
       tableColumns={[firstColumn, "Conversations"]}
       tableRows={rows.map((row) => [row.name, row.value])}
     >
-      <BarsChart data={rows} categoryKey="name" series={COUNT_SERIES} />
+      <BarsChart data={rows} categoryKey="name" series={COUNT_SERIES} layout="horizontal" />
     </ChartCard>
   );
 }
@@ -135,7 +133,8 @@ function NoDataCard({ title, text = "Not enough data yet." }) {
   );
 }
 
-function GradeTrend({ quality, markers }) {
+function GradeTrend({ quality }) {
+  const markers = quality.version_markers ?? [];
   const trend = quality.grade_trend ?? [];
   if (!trend.some((p) => isNumber(p.avg_grade))) {
     return <NoDataCard title="Average judge grade over time" text="No graded conversations in this range yet." />;
@@ -143,7 +142,9 @@ function GradeTrend({ quality, markers }) {
   return (
     <ChartCard
       title="Average judge grade over time"
-      subtitle="Grades run from 1 (worst) to 5 (best); a gap is a period with no judged conversation. Dashed lines mark when a prompt version went live. Times are UTC."
+      subtitle={`Grades run from 1 (worst) to 5 (best); a gap is a period with no judged conversation. ${
+        markers.length > 0 ? "Dashed lines mark when a prompt version went live. " : ""
+      }Times are UTC.`}
       tableColumns={["Time (UTC)", "Average grade", "Judged"]}
       tableRows={trend.map((p) => [utcStamp(p.t), isNumber(p.avg_grade) ? p.avg_grade : null, count(p.n)])}
     >
@@ -158,7 +159,7 @@ function GradeTrend({ quality, markers }) {
   );
 }
 
-function QualityData({ quality, markers, showDemoNote }) {
+function QualityData({ quality, showDemoNote }) {
   const answered = quality.answered ?? {};
   const legal = quality.legal ?? {};
   const judged = count(quality.judged) > 0;
@@ -195,7 +196,7 @@ function QualityData({ quality, markers, showDemoNote }) {
         </p>
       ) : null}
 
-      <GradeTrend quality={quality} markers={markers} />
+      <GradeTrend quality={quality} />
 
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
         <div className="min-w-0">
@@ -235,6 +236,7 @@ function QualityData({ quality, markers, showDemoNote }) {
   );
 }
 
+// Remounted (key) on every Refresh, which clears the last result and error.
 function EvaluateNow() {
   const [pending, setPending] = useState(false);
   const [result, setResult] = useState(null);
@@ -261,7 +263,13 @@ function EvaluateNow() {
   const waiting = count(result?.waiting);
   let status = "";
   if (pending) status = "Evaluating…";
-  else if (result) status = queued === 0 && waiting === 0 ? "Nothing to evaluate" : `Queued ${queued}; ${waiting} waiting for the next hour`;
+  else if (result) {
+    if (queued === 0 && waiting === 0) status = "Nothing to evaluate";
+    else {
+      status = `Queued ${queued}; ${waiting} waiting for the next hour`;
+      if (queued > 0) status += `. ${QUEUED_HINT}`;
+    }
+  }
 
   return (
     <div className="space-y-2">
@@ -318,9 +326,6 @@ export default function QualityTab({ filters, reloadKey = 0, onOpenTab }) {
   const [reason, setReason] = useState(null);
 
   const quality = useConsoleQuery(assistQuality, filters, reloadKey, { isEmpty: isEmptyQuality });
-  // The quality payload has no version markers; they come from the trends payload. They are only
-  // decoration, so a failed or pending call just means no markers.
-  const trends = useConsoleQuery(assistTrends, filters, reloadKey, { isEmpty: never });
   const flagged = useConsoleQuery(
     ({ range, source, version }) =>
       assistFlagged({ reason: reason ?? undefined, limit: FLAGGED_LIMIT, range, source, version }),
@@ -330,7 +335,6 @@ export default function QualityTab({ filters, reloadKey = 0, onOpenTab }) {
   );
 
   const qualityData = quality.state === "ready" ? quality.data : null;
-  const markers = trends.state === "ready" && !trends.refreshing ? trends.data?.version_markers : [];
   // While the list reloads for a new reason, the old list would be about something else: hide it.
   const flaggedBusy = flagged.state === "loading" || flagged.refreshing;
   const flaggedItems = !flaggedBusy && flagged.state === "ready" ? flagged.data : null;
@@ -344,11 +348,11 @@ export default function QualityTab({ filters, reloadKey = 0, onOpenTab }) {
         <p data-judge-disclaimer className="text-sm text-muted-foreground">
           {JUDGE_DISCLAIMER}
         </p>
-        <EvaluateNow />
+        <EvaluateNow key={reloadKey} />
         <RefreshFrame refreshing={quality.refreshing}>
           <PanelState state={quality.state} what="the quality numbers" error={quality.error} onRetry={quality.retry}>
             {qualityData ? (
-              <QualityData quality={qualityData} markers={markers} showDemoNote={filters?.source !== "live"} />
+              <QualityData quality={qualityData} showDemoNote={filters?.source !== "live"} />
             ) : null}
           </PanelState>
         </RefreshFrame>
@@ -358,10 +362,8 @@ export default function QualityTab({ filters, reloadKey = 0, onOpenTab }) {
         items={flaggedItems}
         loading={flaggedBusy}
         error={flagged.state === "error" ? flagged.error : null}
-        filter={{}}
         scope={scopeText(filters)}
         controls={<ReasonChips value={reason} onChange={setReason} />}
-        onClearFilter={() => setReason(null)}
         onRetry={flagged.retry}
         onReview={() => onOpenTab?.("evolution")}
       />

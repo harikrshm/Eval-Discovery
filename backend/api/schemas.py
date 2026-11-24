@@ -613,6 +613,7 @@ class QualityOut(BaseModel):
     reasons: dict[str, int]
     ratings: dict[str, int]
     bucket: Literal["hour", "day"]
+    version_markers: list[VersionMarkerOut]
 
 
 class LatencyPointOut(BaseModel):

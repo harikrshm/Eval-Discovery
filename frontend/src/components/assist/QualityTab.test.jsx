@@ -24,7 +24,6 @@ import {
   mount,
   qualityFixture,
   rerender,
-  trendsFixture,
   unmount,
 } from "./testUtils";
 
@@ -93,7 +92,6 @@ beforeEach(() => {
   originalObserver = globalThis.ResizeObserver;
   globalThis.ResizeObserver = SizedObserver;
   api.assistQuality.mockResolvedValue(qualityFixture());
-  api.assistTrends.mockResolvedValue(trendsFixture());
   api.assistFlagged.mockResolvedValue([]);
   api.assistEvaluateNow.mockResolvedValue({ queued: 0, waiting: 0 });
 });
@@ -172,12 +170,23 @@ describe("charts and tables", () => {
     expect(card("Average judge grade over time").querySelectorAll(".recharts-line-curve").length).toBe(1);
   });
 
-  it("still draws the trend when the version markers cannot be loaded", async () => {
-    api.assistTrends.mockRejectedValue(new Error("boom"));
+  it("claims dashed version lines only when the payload has markers", async () => {
     await renderTab();
-    expect(card("Average judge grade over time")).toBeTruthy();
-    expect(card("Average judge grade over time").querySelector("[data-legend]").textContent).not.toContain("v2");
-    expect(container.textContent).not.toContain("boom");
+    expect(card("Average judge grade over time").textContent).toContain("Dashed lines mark when a prompt version went live");
+    await unmount();
+    api.assistQuality.mockResolvedValue(qualityFixture({ version_markers: [] }));
+    await renderTab();
+    const trend = card("Average judge grade over time");
+    expect(trend).toBeTruthy();
+    expect(trend.textContent).not.toContain("Dashed lines");
+    expect(trend.querySelector("[data-legend]").textContent).not.toContain("v2");
+  });
+
+  it("keeps the markers on screen while the numbers refresh", async () => {
+    await renderTab();
+    api.assistQuality.mockReturnValue(new Promise(() => {}));
+    await rerender(createElement(QualityTab, props({ reloadKey: 1 })));
+    expect(card("Average judge grade over time").querySelector("[data-legend]").textContent).toContain("v2");
   });
 
   it("says so, instead of an empty chart, when nothing in the range was graded", async () => {
@@ -260,11 +269,11 @@ describe("charts and tables", () => {
 });
 
 describe("requests", () => {
-  it("asks for the quality numbers, the markers and the flagged list with the console filters", async () => {
+  it("asks for the quality numbers (markers included) and the flagged list with the console filters", async () => {
     const filters = { range: "7d", source: "live", version: 2 };
     await renderTab({ filters });
     expect(api.assistQuality).toHaveBeenCalledWith(filters);
-    expect(api.assistTrends).toHaveBeenCalledWith(filters);
+    expect(api.assistTrends).not.toHaveBeenCalled();
     expect(api.assistFlagged).toHaveBeenCalledWith(flaggedCall({}, filters));
   });
 
@@ -336,6 +345,14 @@ describe("flagged conversations and reason chips", () => {
     expect(items[0].textContent).not.toContain("auto judge");
   });
 
+  it("uses the same words on a chip and on a row", async () => {
+    const reasons = ["rated_down", "no_answer", "reasked", "citation_unverified", "auto_judge"];
+    api.assistFlagged.mockResolvedValue(reasons.map((reason, i) => flaggedRun({ run_id: `r${i}`, reasons: [reason] })));
+    await renderTab();
+    const rows = flaggedItems().map((li) => [...li.querySelectorAll("dd")].at(-1).textContent);
+    expect(chips().slice(1).map((b) => b.textContent)).toEqual(rows);
+  });
+
   it("labels every flag reason in words and never prints a raw reason", async () => {
     api.assistFlagged.mockResolvedValue([
       flaggedRun({ reasons: ["rated_down", "no_answer", "reasked", "citation_unverified", "auto_judge", "<b>new_reason</b>"] }),
@@ -390,8 +407,29 @@ describe("Evaluate now", () => {
     expect(message().textContent).toBe("");
     await click(button());
     expect(api.assistEvaluateNow).toHaveBeenCalledTimes(1);
-    expect(message().textContent).toBe("Queued 2; 3 waiting for the next hour");
+    expect(message().textContent).toMatch(/^Queued 2; 3 waiting for the next hour/);
+    expect(message().textContent).toBe(
+      "Queued 2; 3 waiting for the next hour. Results appear after the judge runs; use Refresh data in a few minutes."
+    );
     expect(message().getAttribute("role")).toBe("status");
+  });
+
+  it("clears the result when the console is refreshed", async () => {
+    api.assistEvaluateNow.mockResolvedValue({ queued: 1, waiting: 0 });
+    await renderTab();
+    await click(button());
+    expect(message().textContent).toContain("Queued 1");
+    await rerender(createElement(QualityTab, props({ reloadKey: 1 })));
+    expect(message().textContent).toBe("");
+  });
+
+  it("clears an evaluation error when the console is refreshed", async () => {
+    api.assistEvaluateNow.mockRejectedValue(new Error("down"));
+    await renderTab();
+    await click(button());
+    expect(container.querySelector("[data-evaluate-error]")).toBeTruthy();
+    await rerender(createElement(QualityTab, props({ reloadKey: 1 })));
+    expect(container.querySelector("[data-evaluate-error]")).toBeNull();
   });
 
   it("says Nothing to evaluate when nothing was queued and nothing waits", async () => {
@@ -419,7 +457,7 @@ describe("Evaluate now", () => {
     expect(api.assistEvaluateNow).toHaveBeenCalledTimes(1);
     await act(async () => resolve({ queued: 1, waiting: 0 }));
     expect(button().disabled).toBe(false);
-    expect(message().textContent).toBe("Queued 1; 0 waiting for the next hour");
+    expect(message().textContent).toMatch(/^Queued 1; 0 waiting for the next hour/);
   });
 
   it("shows an error when the call fails, and can be tried again", async () => {
@@ -434,7 +472,7 @@ describe("Evaluate now", () => {
     api.assistEvaluateNow.mockResolvedValue({ queued: 1, waiting: 0 });
     await click(button());
     expect(container.querySelector("[data-evaluate-error]")).toBeNull();
-    expect(message().textContent).toBe("Queued 1; 0 waiting for the next hour");
+    expect(message().textContent).toMatch(/^Queued 1; 0 waiting for the next hour/);
   });
 
   it("falls back to a generic message for an error without one", async () => {
@@ -464,7 +502,6 @@ describe("states", () => {
 
   it("shows Not enough data yet. for an empty database, well-formed and without NaN", async () => {
     api.assistQuality.mockResolvedValue(emptyQuality());
-    api.assistTrends.mockResolvedValue({ bucket: "day", totals: {}, previous: null, points: [], version_markers: [] });
     await renderTab();
     expect(container.textContent).toContain("Not enough data yet.");
     expect(kpi("judged")).toBeNull();

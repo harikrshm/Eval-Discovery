@@ -267,14 +267,16 @@ def console_quality(
 ) -> QualityOut:
     """What the automatic judge found: grades over time, answered/legal/reason counts and thumbs ratings.
 
-    Aggregates and fixed labels only. Shares are null when nothing was judged.
+    Also the prompt-version markers (the same list `/trends` and `/overview` return) so the grade chart can
+    mark when a version went live. Aggregates and fixed labels only. Shares are null when nothing was judged.
     """
-    _assist_agent(db, workspace)
+    agent = _assist_agent(db, workspace)
     _, questions = _load_timed_rows(db, workspace)
     judgements = cf.kept(_load_judgements(db, workspace), filters, "prompt_version")
     layout = cf.bucket_layout(filters, [at for at, _ in judgements])
     summary = quality_summary(judgements, cf.kept(questions, filters), _unjudged_count(db, workspace, filters), layout)
-    return QualityOut(bucket=cf.bucket_for(filters), **summary)
+    markers = _version_markers(db, agent.id, questions, filters)
+    return QualityOut(bucket=cf.bucket_for(filters), version_markers=markers, **summary)
 
 
 # ---- operations --------------------------------------------------------------------
