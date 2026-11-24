@@ -623,3 +623,8 @@ HANDLERS: dict[str, Callable[[Session, Job], dict]] = {
     "generate_heldout": handle_generate_heldout,
     "change_report": handle_change_report,
 }
+
+# Registered here, after JobFailed and RetryableJobFailure exist: that module imports them back from this one.
+from backend.jobs.conversation_judge import JOB_TYPE as JUDGE_JOB_TYPE, handle_judge_conversation  # noqa: E402
+
+HANDLERS[JUDGE_JOB_TYPE] = handle_judge_conversation

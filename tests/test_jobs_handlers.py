@@ -23,6 +23,7 @@ from backend.db.models import (
     utcnow,
 )
 from backend.jobs import handlers
+from backend.jobs.conversation_judge import handle_judge_conversation
 from backend.jobs.handlers import (
     HANDLERS,
     JobFailed,
@@ -119,6 +120,7 @@ def test_handlers_registry():
         "suggest_fix": handle_suggest_fix,
         "generate_heldout": handle_generate_heldout,
         "change_report": handle_change_report,
+        "judge_conversation": handle_judge_conversation,
     }
 
 

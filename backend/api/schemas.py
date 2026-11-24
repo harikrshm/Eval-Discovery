@@ -566,6 +566,13 @@ class AssistConsoleMetricsOut(BaseModel):
     sources: dict
 
 
+class JudgeEvaluateOut(BaseModel):
+    """What "Evaluate now" did: judge jobs queued (0 or 1) and conversations still waiting."""
+
+    queued: int
+    waiting: int
+
+
 class AssistInsightsOut(BaseModel):
     """A model-written brief with the counts it was given and whether every figure in it checks out."""
 

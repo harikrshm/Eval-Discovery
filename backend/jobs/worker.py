@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session
 from backend.db.models import Job
 from backend.db.reconcile import reconcile_verifying
 from backend.db.session import SessionLocal
+from backend.jobs.conversation_judge import scan_and_enqueue
 from backend.jobs.handlers import HANDLERS, JobFailed, RetryableJobFailure
 from backend.jobs.queue import MAX_JOB_ATTEMPTS, claim_next, complete, fail, requeue_stale
 
@@ -88,10 +89,25 @@ def run_one(db: Session, now: datetime | None = None) -> bool:
         _reconcile(db, now)
 
 
+def _scan_idle(db: Session) -> None:
+    """Queue a conversation judgement when the worker has nothing else to do; never raises."""
+    try:
+        scan_and_enqueue(db)
+    except Exception:
+        logger.exception("Idle judge scan failed")
+        try:
+            db.rollback()
+        except Exception:
+            logger.exception("Rolling back after the idle judge scan failed")
+
+
 def _run_pass() -> bool:
     db = SessionLocal()
     try:
-        return run_one(db)
+        worked = run_one(db)
+        if not worked:
+            _scan_idle(db)
+        return worked
     finally:
         db.close()
 
