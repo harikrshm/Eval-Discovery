@@ -270,3 +270,61 @@ export function emptyMetrics() {
     sources: { page_views: { live: 0, imported: 0 }, questions: { live: 0, imported: 0 } },
   };
 }
+
+// The /assist/console/quality payload (backend task 6) with a few real numbers in it. The average grade
+// of the three buckets is (3 x 6 + 4 x 2) / 8 = 3.25, not the plain mean of 3.5.
+export function qualityFixture(overrides = {}) {
+  return {
+    judged: 8,
+    unjudged: 3,
+    grade_trend: [
+      { t: "2026-11-22T00:00:00", avg_grade: 3, n: 6 },
+      { t: "2026-11-23T00:00:00", avg_grade: null, n: 0 },
+      { t: "2026-11-24T00:00:00", avg_grade: 4, n: 2 },
+    ],
+    answered: { yes: 5, partly: 2, no: 1 },
+    concise_share: 0.75,
+    citations_share: null,
+    legal: { handled: 2, mishandled: 1, not_applicable: 5 },
+    reasons: {
+      no_issue: 4,
+      missed_question: 2,
+      off_topic: 0,
+      too_long: 1,
+      unsupported_claim: 0,
+      bad_citation: 1,
+      legal_advice_given: 0,
+      refusal_mishandled: 0,
+      other: 0,
+    },
+    ratings: { up: 3, down: 2, no_answer: 1, none: 6 },
+    bucket: "day",
+    ...overrides,
+  };
+}
+
+// What an empty database returns: well-formed, with nothing in it.
+export function emptyQuality() {
+  return {
+    judged: 0,
+    unjudged: 0,
+    grade_trend: [],
+    answered: { yes: 0, partly: 0, no: 0 },
+    concise_share: null,
+    citations_share: null,
+    legal: { handled: 0, mishandled: 0, not_applicable: 0 },
+    reasons: {
+      no_issue: 0,
+      missed_question: 0,
+      off_topic: 0,
+      too_long: 0,
+      unsupported_claim: 0,
+      bad_citation: 0,
+      legal_advice_given: 0,
+      refusal_mishandled: 0,
+      other: 0,
+    },
+    ratings: { up: 0, down: 0, no_answer: 0, none: 0 },
+    bucket: "day",
+  };
+}

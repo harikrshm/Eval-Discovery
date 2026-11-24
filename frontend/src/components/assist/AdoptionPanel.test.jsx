@@ -285,13 +285,15 @@ describe("chart panels", () => {
     expect(section.textContent).toContain("Real (non-imported) questions only.");
   });
 
-  it("keeps the insights panel between the definitions and the version comparison", async () => {
+  it("keeps the definitions, then the version comparison, then the flagged list, and no insights panel", async () => {
     await renderPanel();
-    const order = ["definitions-heading", "insights-heading", "versions-heading", "flagged-heading"].map((id) =>
+    const order = ["definitions-heading", "versions-heading", "flagged-heading"].map((id) =>
       [...container.querySelectorAll("h3")].findIndex((h) => h.id === id)
     );
     expect(order.every((n) => n >= 0)).toBe(true);
     expect([...order].sort((a, b) => a - b)).toEqual(order);
+    // The insights brief moved to the Quality tab, so there is one copy.
+    expect(container.querySelector("#insights-heading")).toBeNull();
   });
 });
 
@@ -328,7 +330,7 @@ describe("drill-down into flagged conversations", () => {
     expect(items[0].textContent).not.toContain("abcdef1234567890");
     expect(items[0].textContent).toContain("US1234567B2");
     expect(items[0].textContent).toContain("claim explain");
-    expect(items[0].textContent).toContain("rated down, reasked");
+    expect(items[0].textContent).toContain("Thumbs-down, Re-ask");
     expect(items[1].textContent).toContain("live");
     expect(items[0].querySelector("a")).toBeNull();
   });

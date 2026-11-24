@@ -8,6 +8,7 @@ import ConsoleControls from "./ConsoleControls";
 import { DEFAULT_FILTERS } from "./consoleFilters";
 import EvolutionPanel from "./EvolutionPanel";
 import OverviewTab from "./OverviewTab";
+import QualityTab from "./QualityTab";
 import RefreshFrame from "./RefreshFrame";
 
 // Overview is first and the default. Every other tab mounts the first time it is opened and then stays
@@ -36,7 +37,7 @@ function sourceLine(name, counts) {
   return `${name} — Live: ${counts.live ?? 0} · Imported: ${counts.imported ?? 0}`;
 }
 
-// Stands in until the Quality and Operations tabs are built.
+// Stands in until the Operations tab is built.
 function Placeholder() {
   return <p className="text-sm text-muted-foreground">Coming in the next task</p>;
 }
@@ -236,7 +237,7 @@ export default function AssistConsole({ onDisconnect, autoFocus = false }) {
               {opened.adoption && <AdoptionPanel {...tabProps} />}
             </div>
             <div role="tabpanel" id="assist-panel-quality" aria-labelledby="assist-tab-quality" hidden={tab !== "quality"}>
-              {opened.quality && <Placeholder />}
+              {opened.quality && <QualityTab {...tabProps} />}
             </div>
             <div role="tabpanel" id="assist-panel-evolution" aria-labelledby="assist-tab-evolution" hidden={tab !== "evolution"}>
               {opened.evolution && <EvolutionPanel {...tabProps} agentId={status.agent_id} />}

@@ -20,6 +20,20 @@ function join(values) {
   return values && values.length ? values.map(humanize).join(", ") : "none";
 }
 
+// The fixed flag reasons in words. Anything else is shown as "Other", never as the raw value.
+const FLAG_REASON_LABELS = {
+  rated_down: "Thumbs-down",
+  no_answer: "No answer",
+  reasked: "Re-ask",
+  citation_unverified: "Citation failure",
+  auto_judge: "Auto-judge",
+};
+
+function reasonsText(reasons) {
+  if (!reasons || !reasons.length) return "none";
+  return reasons.map((reason) => FLAG_REASON_LABELS[reason] ?? "Other").join(", ");
+}
+
 // What the polite status announces once the list has loaded.
 function countText(error, items) {
   if (error || !items) return "";
@@ -28,9 +42,11 @@ function countText(error, items) {
 }
 
 // Flagged assistant conversations: ids and labels only. An imported (demo) conversation always
-// carries a plain-text "imported" tag.
+// carries a plain-text "imported" tag. Each row's reasons are fixed labels ("Auto-judge" for a
+// conversation the judge graded low). `controls` is an optional slot under the heading, for the
+// Quality tab's reason chips.
 const FlaggedList = forwardRef(function FlaggedList(
-  { items, loading, error, filter, scope = null, onClearFilter, onReview, onRetry },
+  { items, loading, error, filter, scope = null, controls = null, onClearFilter, onReview, onRetry },
   headingRef
 ) {
   const filterText = filter.section
@@ -59,6 +75,8 @@ const FlaggedList = forwardRef(function FlaggedList(
           <span className="text-sm text-muted-foreground">Showing {scope}</span>
         ) : null}
       </div>
+
+      {controls}
 
       <div role="status" aria-live="polite" className="text-sm text-muted-foreground">
         {loading ? "Loading flagged conversations…" : countText(error, items)}
@@ -99,7 +117,7 @@ const FlaggedList = forwardRef(function FlaggedList(
                 <dt>Sections</dt>
                 <dd>{join(run.sections)}</dd>
                 <dt>Reasons</dt>
-                <dd>{join(run.reasons)}</dd>
+                <dd>{reasonsText(run.reasons)}</dd>
               </dl>
             </li>
           ))}

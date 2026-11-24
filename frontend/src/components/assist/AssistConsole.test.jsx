@@ -8,6 +8,8 @@ vi.mock("../../api", async (importOriginal) => {
     assistStatus: vi.fn(),
     assistMetrics: vi.fn(),
     assistTrends: vi.fn(),
+    assistQuality: vi.fn(),
+    assistEvaluateNow: vi.fn(),
     assistFlagged: vi.fn(),
     assistInsights: vi.fn(),
     assistOverview: vi.fn(),
@@ -31,6 +33,7 @@ import {
   mount,
   overviewFixture,
   pressKey,
+  qualityFixture,
   trendsFixture,
   unmount,
 } from "./testUtils";
@@ -83,6 +86,7 @@ beforeEach(() => {
   api.assistMetrics.mockResolvedValue(metricsFixture());
   api.assistFlagged.mockResolvedValue([]);
   api.assistTrends.mockResolvedValue(trendsFixture());
+  api.assistQuality.mockResolvedValue(qualityFixture());
   api.assistOverview.mockResolvedValue(overviewFixture());
 });
 
@@ -193,12 +197,24 @@ describe("five-tab shell", () => {
     expect(container.querySelector("#assist-panel-adoption").textContent).toContain("Feature coverage by section");
   });
 
-  it("shows placeholders for Quality and Operations", async () => {
+  it("shows the Quality tab when it is opened, and a placeholder for Operations", async () => {
     await renderConsole();
+    expect(api.assistQuality).not.toHaveBeenCalled();
     await click(tabNamed("Quality"));
-    expect(container.querySelector("#assist-panel-quality").textContent).toContain("Coming in the next task");
+    const quality = container.querySelector("#assist-panel-quality");
+    expect(quality.querySelector("#quality-judge")).not.toBeNull();
+    expect(quality.querySelector('[data-kpi="judged"]')).not.toBeNull();
+    expect(quality.textContent).not.toContain("Coming in the next task");
     await click(tabNamed("Operations"));
     expect(container.querySelector("#assist-panel-operations").textContent).toContain("Coming in the next task");
+  });
+
+  it("has one insights brief, on Quality and not on Adoption", async () => {
+    await renderConsole();
+    await click(tabNamed("Adoption"));
+    await click(tabNamed("Quality"));
+    expect(container.querySelectorAll("#insights-heading")).toHaveLength(1);
+    expect(container.querySelector("#assist-panel-quality #insights-heading")).not.toBeNull();
   });
 
   it("cycles through all five tabs with the arrow keys, Home and End", async () => {
@@ -480,5 +496,36 @@ describe("updating state", () => {
     expect(tabNamed("Adoption").getAttribute("aria-selected")).toBe("true");
     // The panel loads after the tab opens, so the shell looks for the anchor again; wait for that, not a fixed time.
     await until(() => scroll.mock.contexts.some((el) => el?.id === "adoption-reasks"));
+  });
+
+  it("sends the console filters to the Quality tab's requests", async () => {
+    await renderConsole();
+    await click(tabNamed("Quality"));
+    await click(buttonByText(container, "7 days"));
+    await choose(container.querySelector("select#console-source"), "live");
+    expect(api.assistQuality).toHaveBeenLastCalledWith({ range: "7d", source: "live", version: null });
+    expect(api.assistFlagged).toHaveBeenLastCalledWith({
+      reason: undefined,
+      limit: 50,
+      range: "7d",
+      source: "live",
+      version: null,
+    });
+  });
+
+  it("an alert about the judge backlog opens Quality and scrolls to the judge section", async () => {
+    api.assistOverview.mockResolvedValue(
+      overviewFixture({
+        alerts: [
+          { id: "judge_backlog", severity: "warning", title: "Judge backlog", detail: "30 waiting", tab: "quality", anchor: "quality-judge", demo: false },
+        ],
+      })
+    );
+    const scroll = vi.fn();
+    Element.prototype.scrollIntoView = scroll;
+    await renderConsole();
+    await click(container.querySelector("[data-alert-strip] button"));
+    expect(tabNamed("Quality").getAttribute("aria-selected")).toBe("true");
+    await until(() => scroll.mock.contexts.some((el) => el?.id === "quality-judge"));
   });
 });

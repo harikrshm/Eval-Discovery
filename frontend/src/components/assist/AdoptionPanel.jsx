@@ -7,7 +7,6 @@ import KpiCard from "./charts/KpiCard";
 import PanelState from "./charts/PanelState";
 import TrendChart from "./charts/TrendChart";
 import FlaggedList from "./FlaggedList";
-import InsightsBrief from "./InsightsBrief";
 import RefreshFrame from "./RefreshFrame";
 import VersionComparison from "./VersionComparison";
 import { chartMarkers } from "./chartMarkers";
@@ -308,7 +307,7 @@ function MetricPanels({ adoption, onPick }) {
 // usage trend come from `/trends`, the section and task charts from `/metrics`; each has its own
 // loading, empty and error state, so one failing leaves the other working. Every section or task bar
 // opens the flagged conversations behind it, filtered by that section or task and by the console's
-// source. Props: `filters`, `reloadKey`, `onOpenTab(tabId, anchorId?)` (the shell's tab props).
+// source. (The insights brief lives on the Quality tab.) Props: `filters`, `reloadKey`, `onOpenTab(tabId, anchorId?)` (the shell's tab props).
 export default function AdoptionPanel({ filters, reloadKey = 0, onOpenTab }) {
   const [filter, setFilter] = useState(NO_FILTER);
   const flaggedRef = useRef(null);
@@ -384,8 +383,6 @@ export default function AdoptionPanel({ filters, reloadKey = 0, onOpenTab }) {
           ))}
         </ul>
       </section>
-
-      <InsightsBrief />
 
       <VersionComparison comparison={metricsData?.version_comparison} />
 
