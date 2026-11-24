@@ -9,7 +9,7 @@ The widget works (real-Chrome checks passed on 2026-11-23) but is not demo-ready
 ## Goals
 
 1. **Crisp answers.** 2 to 4 sentences, at most one short quote, plain wording; bullets only when the question asks for a list (at most 5 items). No preamble, no restating the question, no markdown characters on screen.
-2. **Clickable references that move the page.** A reference in an answer (a claim, a description paragraph, a page section) is a pill; clicking it scrolls Google Patents to that spot and highlights it briefly.
+2. **Clickable references that move the page, on granted patents.** On a granted US patent (kind code B1, B2 and similar), a reference in an answer (a claim, a description paragraph, a page section) is a pill; clicking it scrolls Google Patents to that spot and highlights it briefly. On a published application (kind code A1, A2, A9 and similar) references stay plain text: the author's decision, because application pages have no paragraph numbers.
 3. **No shortcut collisions.** Typing in the widget never triggers a Google Patents shortcut, and the page's own keys keep working outside the widget.
 4. **Refined floating card** (direction A from the mockups): header with the patent number, pills inside the sentence, calmer spacing and type.
 5. **Quieter conversation controls.** Quick-question chips only on the first turn; on later turns, one suggested follow-up chosen by code; feedback asked once per conversation, not per answer.
@@ -19,6 +19,7 @@ The widget works (real-Chrome checks passed on 2026-11-23) but is not demo-ready
 - A docked side panel, a one-answer-at-a-time layout, saved chat history across page loads.
 - Model-generated follow-ups (code picks them; see Constraints).
 - Row-level links for CPC codes, cited patents, family members or legal events: those link to their section only.
+- Clickable references on published applications (plain-text references only).
 - Dark mode, mobile layout, localisation.
 
 ## Anti-goals (failure even if it "works")
@@ -49,7 +50,7 @@ The widget works (real-Chrome checks passed on 2026-11-23) but is not demo-ready
 
 **Citing.** The prompt tells the model to cite claims as it does now and paragraphs and sections with a short, ASCII, bounded token validated like a law id. The exact token syntax is the builder's call. The backend is the only parser: it returns the answer plus the list of validated references, each with its start and end position in the returned answer string and its target (a claim number, a paragraph number or a section). The widget never parses the answer for references; it slices the returned string at those positions (before it undoes the `&lt;`/`&gt;`/`&amp;` escaping) and turns each validated occurrence into a pill labelled for people ("claim 3", "¶0042", "Description"). A range or list such as "claims 1-3" is one pill that jumps to the first claim named. Law ids such as `[usc-103]` are not page targets: they are shown as a plain, non-clickable tag. This adds a field to the chat response, so the extension, backend and console tests that rely on the response shape change with it.
 
-**Clicking a pill.** The widget finds the target on the live page (claim by number, paragraph by number, section by id), scrolls it into view (no animation when the user prefers reduced motion) and highlights it for about two seconds, then removes the highlight. If the target is not on the page (page differs from the capture, or a page without paragraph numbers), the pill is disabled with the tooltip "Couldn't find this on the page" and nothing else happens. Where a page lacks paragraph numbers, the reference degrades to a link to the description section.
+**Clicking a pill.** The widget finds the target on the live page (claim by number, paragraph by number, section by id), scrolls it into view (no animation when the user prefers reduced motion) and highlights it for about two seconds, then removes the highlight. Pills exist only when the patent number's kind code marks a granted patent; on a published application the answer's references are shown as plain text, validated and flagged exactly as today, and nothing is clickable. If a pill's target is not on a granted patent's page (the page differs from the capture), the pill is disabled with the tooltip "Couldn't find this on the page" and nothing else happens.
 
 **Answer rendering.** A renderer for a tiny markdown subset (paragraphs, `**bold**`, `*italic*`, `-`/`*` bullets, numbered lists) builds DOM nodes; anything else is shown as text. The prompt also asks for plain text, so the renderer is a safety net, not the main fix. The existing display unescaping of `&lt;`, `&gt;` and `&amp;` stays.
 
@@ -69,7 +70,7 @@ The widget works (real-Chrome checks passed on 2026-11-23) but is not demo-ready
 - Unit tests: markdown renderer (including hostile input), reference validation (valid, invented, out of range, malformed), pill-to-target lookup, follow-up picker (no repeats, no invented targets), feedback timing (once, after the 3rd question, never again), key-event stopping.
 - Backend tests: paragraph and section citation validation; the new prompt version is created through the version mechanism; answers keep the fixed legal sentence.
 - Manual checklist rows, real Chrome only: pills scroll and highlight for a claim, a paragraph and a section; shortcut keys do nothing in the box; chips vanish after the first question; one follow-up appears; feedback appears once.
-- Known risk, not yet verified: paragraph numbers exist on the saved page US12401720B1 but not in the saved page US20250119367A1, and no live page was checked. The fallback above exists for that.
+- Known risk, not yet verified: paragraph numbers exist on the saved granted-patent page US12401720B1 and not on the saved application page US20250119367A1 (which matches the author's observation), but no live granted-patent page was checked. A pill whose target is missing is disabled, as described above.
 - No claim that answers are "better" without reading them and, where possible, the replay table; "shorter" can be measured, "better" is a judgement.
 
 ## Left to the builder
@@ -80,6 +81,6 @@ Reference token syntax; the highlight mechanism; the follow-up mapping table; ex
 
 - Feedback after the 3rd question, once per conversation (the author asked for once per conversation; 3 is my choice).
 - Follow-ups from code, not the model, because of the token limit and so that nothing invented can appear.
-- Row-level links only for claims and description paragraphs; other sections link to the section.
+- Row-level links only for claims and description paragraphs; other sections link to the section. All links exist on granted patents only (the author's decision, 2026-11-24).
 - The crisp prompt ships as an author-approved new prompt version rather than an automatic flywheel promotion. It is created as the **active** version of the demo assistant (the author asked for crisp answers; a merely proposed version would leave the demo answering at the old length), with a note that it was set by the author and not by the loop, and `system_prompt.md` is updated in the same step so fresh setups start from it. The widget still has to render old-style answers correctly, because versions can be restored.
 - References are parsed once, by the backend, and the widget uses its positions (see Design, Citing); a range is one pill; law ids are plain tags, not links.
