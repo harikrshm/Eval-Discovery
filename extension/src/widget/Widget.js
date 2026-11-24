@@ -1,10 +1,13 @@
 // The Patent Assist overlay: a Shadow DOM widget (closed mode, styles inside the shadow root) with a
-// launcher button, a chat panel, quick-question chips and per-answer rating buttons.
-// Everything shown is set with textContent, never innerHTML.
-import { isUsPatentNumber } from '../claimrefs.js'
+// launcher button, a chat panel, first-turn quick-question chips, one suggested follow-up and a single
+// feedback request after the third answer.
+// Everything shown is built from DOM nodes and textContent, never innerHTML.
+import { isGrantedPatentNumber, isUsPatentNumber } from '../claimrefs.js'
 import { MESSAGES, isFixedMessage } from '../messages.js'
-import { displayText } from './answer-view.js'
+import { normalizeReferences, renderAnswer as renderAnswerBody } from './answer-view.js'
 import { CHIPS } from './chips.js'
+import { FEEDBACK_AFTER_QUESTIONS, pickFollowUp } from './followups.js'
+import { createJumper } from './jump.js'
 import STYLES from './styles.css?raw'
 
 export { displayText } from './answer-view.js'
@@ -27,6 +30,7 @@ export const LIMITS = {
   reaskWindowMs: 90000,
 }
 const RETRY_DELAY_MS = 3000
+const PILL_MISSING_TITLE = "Couldn't find this on the page"
 
 // ---- pure helpers --------------------------------------------------------
 
@@ -87,9 +91,9 @@ const isFailure = (res) => !res || typeof res !== 'object' || res.ok === false
 
 /**
  * @param {{doc: Document, session: {id: string, brief: object}, api: {chat: Function, rating: Function, reask: Function},
- *   getSelection?: () => string, now?: () => number}} options
+ *   getSelection?: () => string, now?: () => number, jumper?: ReturnType<typeof createJumper>}} options
  */
-export function createWidget({ doc, session, api, getSelection, now = () => Date.now() }) {
+export function createWidget({ doc, session, api, getSelection, now = () => Date.now(), jumper = createJumper(doc) }) {
   for (const stale of doc.querySelectorAll('[data-patent-assist]')) stale.remove()
   const host = el(doc, 'div', { 'data-patent-assist': true })
   const shadow = host.attachShadow({ mode: 'closed' })
@@ -98,7 +102,20 @@ export function createWidget({ doc, session, api, getSelection, now = () => Date
   const usPatent = isUsPatentNumber(brief.patent_number)
 
   /** Per-session state. `turns` is what is sent back as history: only answered questions. */
-  const state = { turns: [], questions: [], busy: false, open: false, remembered: '', destroyed: false }
+  const state = {
+    turns: [],
+    questions: [],
+    asked: [], // the text of every question sent in this page view (a retry is not a new question)
+    feedback: 'idle', // idle -> shown -> done: the feedback request appears at most once
+    busy: false,
+    open: false,
+    remembered: '',
+    destroyed: false,
+  }
+  const claimNumbers = (brief.claims ?? [])
+    .map((c) => c?.number)
+    .filter(Number.isInteger)
+    .sort((a, b) => a - b)
   const timers = new Set()
 
   // ---- structure ----
@@ -121,6 +138,7 @@ export function createWidget({ doc, session, api, getSelection, now = () => Date
     return b
   })
   chipRow.append(...chipButtons)
+  const followups = el(doc, 'div', { class: 'followups' })
   const selectionRow = el(doc, 'div', { class: 'selection', hidden: true })
   const selectionText = el(doc, 'span')
   const clearSelection = el(doc, 'button', { type: 'button', 'aria-label': 'Clear selected text' }, 'Clear')
@@ -130,7 +148,7 @@ export function createWidget({ doc, session, api, getSelection, now = () => Date
   const sendBtn = el(doc, 'button', { class: 'send', type: 'button', 'data-action': 'send' }, 'Send')
   composer.append(input, sendBtn)
   const footer = el(doc, 'p', { class: 'footer' }, FOOTER_TEXT)
-  panel.append(header, notice, note, log, chipRow, selectionRow, composer, footer)
+  panel.append(header, notice, note, log, chipRow, followups, selectionRow, composer, footer)
   root.append(launcher, panel)
   shadow.append(style, root)
   ;(doc.body ?? doc.documentElement).appendChild(host)
@@ -145,6 +163,7 @@ export function createWidget({ doc, session, api, getSelection, now = () => Date
     input.disabled = off
     sendBtn.disabled = off
     for (const b of chipButtons) b.disabled = off
+    for (const b of followups.querySelectorAll('button')) b.disabled = off
   }
   function renderSelection() {
     selectionRow.hidden = state.remembered === ''
@@ -193,6 +212,7 @@ export function createWidget({ doc, session, api, getSelection, now = () => Date
   function rate(entry, rating, reason) {
     if (entry.rated || state.destroyed) return
     entry.rated = true
+    state.feedback = 'done'
     for (const b of entry.buttons) b.disabled = true
     entry.pressed?.setAttribute('aria-pressed', 'true')
     entry.reasonForm.hidden = true
@@ -208,18 +228,21 @@ export function createWidget({ doc, session, api, getSelection, now = () => Date
     sendSignal((p) => api.rating(p), payload)
   }
 
-  function renderAnswer(entry) {
-    const node = addMessage('assistant', displayText(entry.answer))
+  /** The one feedback request of a page view, appended under the answer that reached the threshold. */
+  function showFeedback(entry, node) {
+    state.feedback = 'shown'
+    const block = el(doc, 'div', { class: 'feedback' })
     const actions = el(doc, 'div', { class: 'actions' })
     const up = el(doc, 'button', { type: 'button', 'data-action': 'up', 'aria-label': 'Thumbs up: this answer helped' }, 'Helpful')
     const down = el(doc, 'button', { type: 'button', 'data-action': 'down', 'aria-label': 'Thumbs down: this answer did not help' }, 'Not helpful')
     const none = el(doc, 'button', { type: 'button', 'data-action': 'no_answer' }, "Didn't answer my question")
+    const dismiss = el(doc, 'button', { type: 'button', 'data-action': 'dismiss' }, 'Dismiss')
     const thanks = el(doc, 'span', { class: 'thanks' })
     const reasonForm = el(doc, 'div', { class: 'reason', hidden: true })
     const reasonInput = el(doc, 'input', { type: 'text', maxlength: LIMITS.reason, 'data-field': 'reason', 'aria-label': 'Reason (optional)', placeholder: 'What was wrong? (optional)' })
     const reasonSend = el(doc, 'button', { type: 'button', 'data-action': 'send-reason' }, 'Send feedback')
     reasonForm.append(reasonInput, reasonSend)
-    entry.buttons = [up, down, none]
+    entry.buttons = [up, down, none, dismiss, reasonSend]
     entry.reasonForm = reasonForm
     entry.thanks = thanks
     up.addEventListener('click', () => {
@@ -245,8 +268,49 @@ export function createWidget({ doc, session, api, getSelection, now = () => Date
         reasonSend.click()
       }
     })
-    actions.append(up, down, none, thanks)
-    node.append(actions, reasonForm)
+    dismiss.addEventListener('click', () => {
+      if (entry.rated) return
+      state.feedback = 'done'
+      block.remove()
+    })
+    actions.append(up, down, none, dismiss, thanks)
+    block.append(el(doc, 'p', { class: 'feedback-title' }, 'How is this going?'), actions, reasonForm)
+    node.append(block)
+    scrollDown()
+  }
+
+  /** The assistant's answer: formatted text with reference pills; a pill whose target is not on the page is disabled. */
+  function renderAnswer(entry) {
+    const node = el(doc, 'div', { class: 'msg assistant' })
+    const body = el(doc, 'div', { class: 'text' })
+    body.append(
+      renderAnswerBody(doc, entry.answer, entry.references, {
+        pills: isGrantedPatentNumber(brief.patent_number),
+        onJump: (ref) => jumper.jump(ref),
+      }),
+    )
+    for (const pill of body.querySelectorAll('button.pill')) {
+      if (!jumper.canJump({ kind: pill.dataset.kind, target: pill.dataset.target })) {
+        pill.disabled = true
+        pill.title = PILL_MISSING_TITLE
+      }
+    }
+    node.append(body)
+    log.append(node)
+    scrollDown()
+    if (state.feedback === 'idle' && state.questions.length >= FEEDBACK_AFTER_QUESTIONS) showFeedback(entry, node)
+  }
+
+  /** One suggested next question, replacing the previous one; none once every candidate has been asked. */
+  function renderFollowUp() {
+    followups.replaceChildren()
+    const entry = state.questions.at(-1)
+    if (!entry || !usPatent) return
+    const question = pickFollowUp({ intent: entry.intent, references: entry.references, asked: state.asked, claimNumbers })
+    if (question === null) return
+    const button = el(doc, 'button', { class: 'followup', type: 'button', 'data-action': 'followup', disabled: state.busy }, question)
+    button.addEventListener('click', () => send(question))
+    followups.append(button)
   }
 
   function showError(res, question) {
@@ -266,6 +330,10 @@ export function createWidget({ doc, session, api, getSelection, now = () => Date
   async function send(question, isRetry = false) {
     if (state.busy || state.destroyed || !usPatent || !question) return
     removeError()
+    if (!isRetry) {
+      state.asked.push(question)
+      chipRow.hidden = true // the chips are for the first turn only
+    }
     setBusy(true)
     if (!isRetry) addMessage('user', question)
     const thinking = el(doc, 'div', { class: 'thinking' }, THINKING_TEXT)
@@ -289,12 +357,14 @@ export function createWidget({ doc, session, api, getSelection, now = () => Date
     setBusy(false)
     if (isFailure(res) || typeof res.answer !== 'string' || typeof res.question_id !== 'string') {
       showError(res, question)
+      renderFollowUp() // recomputed: the failed question now counts as asked
     } else {
       const previous = state.questions.at(-1)
       const entry = {
         question_id: res.question_id,
         text: question,
         answer: res.answer, // exactly as returned: this is what is sent back as history
+        references: normalizeReferences(res.references, res.answer.length),
         intent: String(res.intent ?? ''),
         answeredAt: now(),
         turnEnd: 0,
@@ -305,6 +375,7 @@ export function createWidget({ doc, session, api, getSelection, now = () => Date
       entry.turnEnd = state.turns.length
       state.questions.push(entry)
       renderAnswer(entry)
+      renderFollowUp()
       if (previous && !previous.reasked && shouldReask(previous, entry.intent, entry.answeredAt)) {
         previous.reasked = true
         sendSignal((p) => api.reask(p), {
@@ -378,6 +449,7 @@ export function createWidget({ doc, session, api, getSelection, now = () => Date
       for (const id of timers) clearTimeout(id)
       timers.clear()
       doc.removeEventListener('selectionchange', onSelectionChange)
+      jumper.clear()
       host.remove()
     },
   }

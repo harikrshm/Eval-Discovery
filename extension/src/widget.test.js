@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { CHIPS } from './widget/chips.js'
+import { FEEDBACK_AFTER_QUESTIONS } from './widget/followups.js'
 import {
   INCOMPLETE_NOTE,
   LIMITS,
@@ -32,7 +33,7 @@ function answerFor(overrides = {}) {
   }
 }
 
-function mount({ brief = BRIEF, chat, selection = '', ratingResult } = {}) {
+function mount({ brief = BRIEF, chat, selection = '', ratingResult, jumper } = {}) {
   const api = {
     chat: vi.fn(chat ?? (async () => answerFor())),
     rating: vi.fn(ratingResult ?? (async () => ({}))),
@@ -44,6 +45,7 @@ function mount({ brief = BRIEF, chat, selection = '', ratingResult } = {}) {
     session: { ...SESSION, brief },
     api,
     getSelection: () => sel.text,
+    ...(jumper ? { jumper } : {}),
   })
   const shadow = widget.shadow
   const q = (s) => shadow.querySelector(s)
@@ -65,7 +67,8 @@ function mount({ brief = BRIEF, chat, selection = '', ratingResult } = {}) {
     await send()
   }
   const chip = (label) => qa('button.chip').find((b) => b.textContent === label)
-  return { widget, api, sel, q, qa, flush, type, send, ask, chip }
+  const followup = () => qa('button.followup')
+  return { widget, api, sel, q, qa, flush, type, send, ask, chip, followup }
 }
 
 let current
@@ -402,19 +405,13 @@ describe('chat', () => {
     await ask('   ')
     expect(api.chat).not.toHaveBeenCalled()
   })
-  it('chips send their fixed text as an ordinary question (not the selection)', async () => {
+  it('a chip sends its fixed text as an ordinary question (not the selection)', async () => {
     const { api, chip, flush, sel, type, q } = m()
     sel.text = 'some passage'
     type('half typed draft')
-    for (const c of CHIPS) {
-      chip(c.label).click()
-      await flush()
-    }
-    expect(api.chat.mock.calls.map((c) => c[0].question)).toEqual([
-      'Explain claim 1',
-      'What do these CPC codes mean?',
-      'Is this still in force?',
-    ])
+    chip(CHIPS[1].label).click()
+    await flush()
+    expect(api.chat.mock.calls.map((c) => c[0].question)).toEqual(['What do these CPC codes mean?'])
     expect(q('textarea').value).toBe('half typed draft')
   })
   it('disables the input while waiting and shows "Thinking…"', async () => {
@@ -514,51 +511,214 @@ describe('errors', () => {
   })
 })
 
+describe('chips and follow-ups', () => {
+  it('shows the chip row before the first question and hides it from then on', async () => {
+    const { ask, q, qa } = m()
+    expect(q('.chips').hidden).toBe(false)
+    expect(qa('button.chip')).toHaveLength(3)
+    await ask('first')
+    expect(q('.chips').hidden).toBe(true)
+    await ask('second')
+    expect(q('.chips').hidden).toBe(true)
+  })
+  it('hides the chips as soon as the first question is sent, and a retry does not bring them back', async () => {
+    let fail = true
+    const { ask, q, flush } = m({ chat: async () => (fail ? { ok: false, status: 502, message: 'x' } : answerFor()) })
+    await ask('hello')
+    expect(q('.chips').hidden).toBe(true)
+    fail = false
+    q('.error button[data-action="retry"]').click()
+    await flush()
+    expect(q('.chips').hidden).toBe(true)
+  })
+  it('clicking a chip hides the row', async () => {
+    const { chip, flush, q } = m()
+    chip('Explain claim 1').click()
+    await flush()
+    expect(q('.chips').hidden).toBe(true)
+  })
+  it('after an answer there is one follow-up button; clicking it sends exactly that text', async () => {
+    const { api, ask, followup, flush } = m()
+    expect(followup()).toHaveLength(0)
+    await ask('what is claim 1')
+    expect(followup()).toHaveLength(1)
+    expect(followup()[0].dataset.action).toBe('followup')
+    const text = followup()[0].textContent
+    expect(text).toBe('What does claim 1 add?') // claim_explain, nothing cited yet: the first claim
+    followup()[0].click()
+    await flush()
+    expect(api.chat).toHaveBeenCalledTimes(2)
+    expect(api.chat.mock.calls[1][0].question).toBe(text)
+  })
+  it('the follow-up is replaced, never duplicated, and never repeats a question already asked', async () => {
+    const { ask, followup, q } = m()
+    await ask('one')
+    expect(followup().map((b) => b.textContent)).toEqual(['What does claim 1 add?'])
+    await ask('two')
+    expect(followup().map((b) => b.textContent)).toEqual(['What does claim 1 add?'])
+    expect(q('.followups').children).toHaveLength(1)
+    await ask('what does CLAIM 1 add?  ')
+    expect(followup().map((b) => b.textContent)).toEqual(['What do these CPC codes mean?'])
+    await ask('What do these CPC codes mean?')
+    expect(followup().map((b) => b.textContent)).toEqual(['Is this still in force?'])
+    await ask('Is this still in force?')
+    expect(followup()).toHaveLength(0) // nothing left to suggest
+  })
+  it('suggests the next claim after the highest one cited', async () => {
+    const brief = { ...BRIEF, claims: [1, 2, 3].map((number) => ({ number, text: 'x' })) }
+    const references = [{ start: 0, end: 7, kind: 'claim', target: '1', label: 'Claim 1' }]
+    const { ask, followup } = m({ brief, chat: async () => answerFor({ answer: 'Claim 1 is wide.', references }) })
+    await ask('explain it')
+    expect(followup()[0].textContent).toBe('What does claim 2 add?')
+  })
+  it('is disabled while a question is pending', async () => {
+    let resolve
+    const queue = [async () => answerFor(), () => new Promise((r) => (resolve = r))]
+    const { ask, followup, flush } = m({ chat: () => queue.shift()() })
+    await ask('one')
+    await ask('two')
+    expect(followup()[0].disabled).toBe(true)
+    resolve(answerFor())
+    await flush()
+    expect(followup()[0].disabled).toBe(false)
+  })
+  it('a failed question leaves a follow-up that does not duplicate the failed text', async () => {
+    const queue = [() => answerFor(), () => ({ ok: false, status: 502, message: 'x' })]
+    const { ask, followup, q } = m({ chat: async () => queue.shift()() })
+    await ask('one')
+    followup()[0].click()
+    await current.flush()
+    expect(q('.error')).not.toBeNull()
+    expect(followup().map((b) => b.textContent)).toEqual(['What do these CPC codes mean?'])
+  })
+  it('a non-US page offers neither a follow-up nor an enabled chip', () => {
+    const { followup, qa } = m({ brief: { ...BRIEF, patent_number: 'EP1234567B1' } })
+    expect(followup()).toHaveLength(0)
+    expect(qa('button.chip').every((b) => b.disabled)).toBe(true)
+  })
+})
+
+describe('feedback request', () => {
+  const buttons = (q) => ['up', 'down', 'no_answer', 'dismiss'].map((a) => q(`button[data-action="${a}"]`))
+  it('answers 1 and 2 carry no rating buttons', async () => {
+    const { ask, q, qa } = m()
+    await ask('one')
+    await ask('two')
+    expect(q('.feedback')).toBeNull()
+    expect(qa('button[data-action="up"], button[data-action="down"], button[data-action="no_answer"]')).toHaveLength(0)
+  })
+  it('appears once, under answer 3, with the three rating buttons, a reason form and Dismiss', async () => {
+    expect(FEEDBACK_AFTER_QUESTIONS).toBe(3)
+    const { ask, q, qa } = m()
+    await ask('one')
+    await ask('two')
+    await ask('three')
+    expect(qa('.feedback')).toHaveLength(1)
+    const answers = qa('.msg.assistant')
+    expect(answers[2].querySelector('.feedback')).not.toBeNull()
+    expect(q('.feedback').textContent).toContain('How is this going?')
+    const [up, down, none, dismiss] = buttons(q)
+    expect(up.textContent).toBe('Helpful')
+    expect(up.getAttribute('aria-label')).toBe('Thumbs up: this answer helped')
+    expect(down.textContent).toBe('Not helpful')
+    expect(down.getAttribute('aria-label')).toBe('Thumbs down: this answer did not help')
+    expect(none.textContent).toBe("Didn't answer my question")
+    expect(dismiss.textContent).toBe('Dismiss')
+    expect(q('.feedback .reason').hidden).toBe(true)
+  })
+  it('does not come back for answers 4 and 5 once it was shown', async () => {
+    const { ask, qa } = m()
+    for (const t of ['1', '2', '3', '4', '5']) await ask(t)
+    expect(qa('.feedback')).toHaveLength(1)
+    expect(qa('.msg.assistant')[2].querySelector('.feedback')).not.toBeNull()
+  })
+  it('Dismiss removes it for good', async () => {
+    const { ask, q, qa, api, flush } = m()
+    for (const t of ['1', '2', '3']) await ask(t)
+    q('button[data-action="dismiss"]').click()
+    await flush()
+    expect(q('.feedback')).toBeNull()
+    for (const t of ['4', '5', '6']) await ask(t)
+    expect(qa('.feedback')).toHaveLength(0)
+    expect(api.rating).not.toHaveBeenCalled()
+  })
+  it('rating it locks it and it does not return', async () => {
+    const { ask, q, qa, flush } = m()
+    for (const t of ['1', '2', '3']) await ask(t)
+    q('button[data-action="up"]').click()
+    await flush()
+    expect(q('.feedback button[data-action="up"]').disabled).toBe(true)
+    expect(q('.feedback .thanks').textContent).toBe('Thanks for the feedback.')
+    for (const t of ['4', '5']) await ask(t)
+    expect(qa('.feedback')).toHaveLength(1)
+  })
+  it('failed questions do not count toward the third answer', async () => {
+    const queue = [() => answerFor(), () => ({ ok: false, status: 500, message: 'x' }), () => answerFor(), () => answerFor()]
+    const { ask, q } = m({ chat: async () => queue.shift()() })
+    await ask('1')
+    await ask('2') // fails
+    await ask('3')
+    expect(q('.feedback')).toBeNull()
+    await ask('4')
+    expect(q('.feedback')).not.toBeNull()
+  })
+})
+
 describe('ratings', () => {
-  const expectedBrief = BRIEF
+  const rateable = async (opts) => {
+    const ctx = m(opts)
+    await ctx.ask('q one')
+    await ctx.ask('q two')
+    await ctx.ask('q three')
+    return ctx
+  }
   it('thumbs up sends a rating with the conversation so far and the brief', async () => {
-    const { api, ask, q, flush } = m()
-    await ask('q one')
+    const { api, q, flush } = await rateable()
     q('button[data-action="up"]').click()
     await flush()
     expect(api.rating).toHaveBeenCalledTimes(1)
     expect(api.rating.mock.calls[0][0]).toEqual({
-      question_id: 'q-1',
+      question_id: 'q-3',
       rating: 'up',
       conversation: [
         { role: 'user', content: 'q one' },
         { role: 'assistant', content: 'Answer 1' },
+        { role: 'user', content: 'q two' },
+        { role: 'assistant', content: 'Answer 2' },
+        { role: 'user', content: 'q three' },
+        { role: 'assistant', content: 'Answer 3' },
       ],
-      brief: expectedBrief,
+      brief: BRIEF,
     })
   })
-  it('the conversation of a rating ends at the rated answer', async () => {
-    const { api, ask, qa, flush } = m()
-    await ask('first')
-    await ask('second')
-    qa('button[data-action="up"]')[0].click()
+  it('the conversation of a rating ends at the answer the request appeared under', async () => {
+    const { api, ask, q, flush } = await rateable()
+    await ask('q four')
+    q('button[data-action="up"]').click()
     await flush()
-    expect(api.rating.mock.calls[0][0].question_id).toBe('q-1')
-    expect(api.rating.mock.calls[0][0].conversation).toHaveLength(2)
+    expect(api.rating.mock.calls[0][0].question_id).toBe('q-3')
+    expect(api.rating.mock.calls[0][0].conversation).toHaveLength(6)
   })
-  it('thumbs down asks for an optional reason (max 500) and sends it', async () => {
-    const { api, ask, q, flush } = m()
-    await ask('q one')
+  it('Not helpful asks for an optional reason (max 500) and sends one rating with it', async () => {
+    const { api, q, flush } = await rateable()
     q('button[data-action="down"]').click()
     await flush()
     expect(api.rating).not.toHaveBeenCalled()
     const reason = q('input[data-field="reason"]')
+    expect(q('.feedback .reason').hidden).toBe(false)
     expect(reason.maxLength).toBe(500)
     expect(reason.getAttribute('aria-label')).toBeTruthy()
     reason.value = 'wrong claim'
     q('button[data-action="send-reason"]').click()
     await flush()
     expect(api.rating).toHaveBeenCalledTimes(1)
-    expect(api.rating.mock.calls[0][0]).toMatchObject({ question_id: 'q-1', rating: 'down', reason: 'wrong claim' })
+    const body = api.rating.mock.calls[0][0]
+    expect(body).toMatchObject({ question_id: 'q-3', rating: 'down', reason: 'wrong claim' })
+    expect(body.conversation).toHaveLength(6)
+    expect(body.conversation.at(-1)).toEqual({ role: 'assistant', content: 'Answer 3' })
   })
-  it('thumbs down without a reason omits the field', async () => {
-    const { api, ask, q, flush } = m()
-    await ask('q one')
+  it('Not helpful without a reason omits the field', async () => {
+    const { api, q, flush } = await rateable()
     q('button[data-action="down"]').click()
     q('button[data-action="send-reason"]').click()
     await flush()
@@ -566,17 +726,13 @@ describe('ratings', () => {
     expect(api.rating.mock.calls[0][0].rating).toBe('down')
   })
   it('"Didn\'t answer my question" sends the no_answer rating', async () => {
-    const { api, ask, q, flush } = m()
-    await ask('q one')
-    const btn = q('button[data-action="no_answer"]')
-    expect(btn.textContent).toBe("Didn't answer my question")
-    btn.click()
+    const { api, q, flush } = await rateable()
+    q('button[data-action="no_answer"]').click()
     await flush()
-    expect(api.rating.mock.calls[0][0]).toMatchObject({ question_id: 'q-1', rating: 'no_answer' })
+    expect(api.rating.mock.calls[0][0]).toMatchObject({ question_id: 'q-3', rating: 'no_answer' })
   })
-  it('rates an answer once', async () => {
-    const { api, ask, q, flush } = m()
-    await ask('q one')
+  it('rates once', async () => {
+    const { api, q, flush } = await rateable()
     q('button[data-action="up"]').click()
     q('button[data-action="up"]').click()
     q('button[data-action="no_answer"]').click()
@@ -585,8 +741,7 @@ describe('ratings', () => {
     expect(q('button[data-action="up"]').disabled).toBe(true)
   })
   it('a failing rating never blocks the UI; one silent retry, none for 429', async () => {
-    const { api, ask, q, flush } = m({ ratingResult: async () => ({ ok: false, status: 502, message: 'x' }) })
-    await ask('q one')
+    const { api, ask, q, flush } = await rateable({ ratingResult: async () => ({ ok: false, status: 502, message: 'x' }) })
     q('button[data-action="up"]').click()
     await flush()
     expect(q('.error')).toBeNull()
@@ -596,30 +751,108 @@ describe('ratings', () => {
     await vi.advanceTimersByTimeAsync(60000)
     expect(api.rating).toHaveBeenCalledTimes(2)
     await ask('still works')
-    expect(api.chat).toHaveBeenCalledTimes(2)
+    expect(api.chat).toHaveBeenCalledTimes(4)
   })
   it('a rejected rating call is retried once; 429 is dropped silently', async () => {
-    const m1 = m({ ratingResult: async () => Promise.reject(new Error('gone')) })
-    await m1.ask('x')
+    const m1 = await rateable({ ratingResult: async () => Promise.reject(new Error('gone')) })
     m1.q('button[data-action="up"]').click()
     await vi.advanceTimersByTimeAsync(10000)
     expect(m1.api.rating).toHaveBeenCalledTimes(2)
     m1.widget.destroy()
+    counter = 0
     const m2 = mount({ ratingResult: async () => ({ ok: false, status: 429, message: 'x' }) })
     current = m2
-    await m2.ask('x')
+    for (const t of ['a', 'b', 'c']) await m2.ask(t)
     m2.q('button[data-action="up"]').click()
     await vi.advanceTimersByTimeAsync(10000)
     expect(m2.api.rating).toHaveBeenCalledTimes(1)
   })
   it('destroying the widget cancels a pending retry', async () => {
-    const { api, ask, q, widget } = m({ ratingResult: async () => ({ ok: false, status: 500, message: 'x' }) })
-    await ask('x')
+    const { api, q, widget } = await rateable({ ratingResult: async () => ({ ok: false, status: 500, message: 'x' }) })
     q('button[data-action="up"]').click()
     await vi.advanceTimersByTimeAsync(0)
     widget.destroy()
     await vi.advanceTimersByTimeAsync(10000)
     expect(api.rating).toHaveBeenCalledTimes(1)
+  })
+})
+
+describe('reference pills', () => {
+  const paragraphAnswer = (text = 'See paragraph [0042] for details.') => ({
+    answer: text,
+    references: [{ start: text.indexOf('[0042]'), end: text.indexOf('[0042]') + 6, kind: 'paragraph', target: '0042', label: '[0042]' }],
+  })
+  const fakeJumper = (canJump = () => true) => ({ canJump: vi.fn(canJump), jump: vi.fn(() => true), clear: vi.fn() })
+  const withParagraph = () => {
+    const p = document.createElement('div')
+    p.className = 'description-paragraph'
+    p.setAttribute('num', '0042')
+    document.body.append(p)
+    return p
+  }
+
+  it('on a granted patent a paragraph reference renders a pill that calls the jumper with that reference', async () => {
+    withParagraph()
+    const jumper = fakeJumper()
+    const { ask, q, qa } = m({ jumper, chat: async () => answerFor(paragraphAnswer()) })
+    await ask('where?')
+    const pills = qa('button.pill')
+    expect(pills).toHaveLength(1)
+    expect(pills[0].textContent).toBe('[0042]')
+    expect(pills[0].disabled).toBe(false)
+    pills[0].click()
+    expect(jumper.jump).toHaveBeenCalledTimes(1)
+    expect(jumper.jump).toHaveBeenCalledWith(expect.objectContaining({ kind: 'paragraph', target: '0042', label: '[0042]' }))
+    expect(q('.msg.assistant .text').textContent).toBe('See paragraph [0042] for details.')
+  })
+  it('works end to end with the real jumper against the page DOM', async () => {
+    const p = withParagraph()
+    p.scrollIntoView = vi.fn()
+    const { ask, qa } = m({ chat: async () => answerFor(paragraphAnswer()) })
+    await ask('where?')
+    qa('button.pill')[0].click()
+    expect(p.scrollIntoView).toHaveBeenCalledTimes(1)
+    expect(p.style.outline).toContain('solid')
+  })
+  it('the same answer on a patent application (A1) has no pill', async () => {
+    withParagraph()
+    const { ask, qa, q } = m({
+      brief: { ...BRIEF, patent_number: 'US20200012345A1' },
+      chat: async () => answerFor(paragraphAnswer()),
+    })
+    await ask('where?')
+    expect(qa('button.pill')).toHaveLength(0)
+    expect(q('.msg.assistant .ref').textContent).toBe('[0042]')
+  })
+  it('disables a pill whose target is not on the page, with a tooltip', async () => {
+    const jumper = fakeJumper(() => false)
+    const { ask, qa } = m({ jumper, chat: async () => answerFor(paragraphAnswer()) })
+    await ask('where?')
+    const pill = qa('button.pill')[0]
+    expect(jumper.canJump).toHaveBeenCalledWith({ kind: 'paragraph', target: '0042' })
+    expect(pill.disabled).toBe(true)
+    expect(pill.title).toBe("Couldn't find this on the page")
+  })
+  it('keeps the raw answer as history even when it has formatting and references', async () => {
+    const raw = '**Bold** see [0042] &lt;x&gt;'
+    const start = raw.indexOf('[0042]')
+    const refs = [{ start, end: start + 6, kind: 'paragraph', target: '0042', label: '[0042]' }]
+    const { api, ask, flush, followup } = m({ chat: async () => answerFor({ answer: raw, references: refs }) })
+    await ask('one')
+    followup()[0].click()
+    await flush()
+    expect(api.chat.mock.calls[1][0].history[1]).toEqual({ role: 'assistant', content: raw })
+  })
+  it('ignores malformed references', async () => {
+    const { ask, qa } = m({ chat: async () => answerFor({ answer: 'Short.', references: [{ start: 0, end: 99, kind: 'claim', target: '1', label: 'x' }, 'junk'] }) })
+    await ask('hi')
+    expect(qa('button.pill')).toHaveLength(0)
+  })
+  it('destroy clears the jumper highlight', () => {
+    const jumper = fakeJumper()
+    const { widget } = m({ jumper })
+    widget.destroy()
+    expect(jumper.clear).toHaveBeenCalledTimes(1)
   })
 })
 
