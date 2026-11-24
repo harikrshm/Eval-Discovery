@@ -10,7 +10,7 @@ const CLAIM_CANDIDATE = /^(?:What does claim|Explain claim) (\d+)(?: add| cover)
 
 const norm = (text) => String(text).trim().toLowerCase()
 
-/** The candidate questions for an intent, in order. `n` is the claim after the highest one just cited (or null). */
+/** The candidate questions for an intent, in order. `n` is the claim after the highest one cited (null: none cited or none after it). */
 function candidatesFor(intent, n) {
   switch (intent) {
     case 'claim_explain':
@@ -44,7 +44,8 @@ export function pickFollowUp({ intent, references, asked, claimNumbers } = {}) {
       if (Number.isInteger(num) && num > highest) highest = num
     }
   }
-  const next = numbers.filter((c) => c > highest).sort((a, b) => a - b)[0]
+  // A claim follow-up is only offered once the answer cited a claim.
+  const next = highest > 0 ? numbers.filter((c) => c > highest).sort((a, b) => a - b)[0] : undefined
   for (const candidate of candidatesFor(intent, next ?? null)) {
     if (done.has(norm(candidate))) continue
     const claim = CLAIM_CANDIDATE.exec(candidate)

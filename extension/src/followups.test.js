@@ -12,8 +12,12 @@ describe('FEEDBACK_AFTER_QUESTIONS', () => {
 })
 
 describe('pickFollowUp: one assertion per table row', () => {
-  it('claim_explain with no claim references suggests claim 1', () => {
-    expect(pick('claim_explain')).toBe('What does claim 1 add?')
+  it('claim_explain with no references skips the claim candidate', () => {
+    expect(pick('claim_explain')).toBe('What do these CPC codes mean?')
+    expect(pick('claim_scope')).toBe('What do these CPC codes mean?')
+    const paragraphOnly = [{ start: 0, end: 1, kind: 'paragraph', target: '0042', label: '[0042]' }]
+    expect(pick('claim_explain', { references: paragraphOnly })).toBe('What do these CPC codes mean?')
+    expect(pick('claim_explain', { asked: ['What do these CPC codes mean?'] })).toBe('Is this still in force?')
   })
   it('claim_explain suggests the claim after the highest one cited', () => {
     expect(pick('claim_explain', { references: [claimRef(1), claimRef(2)] })).toBe('What does claim 3 add?')

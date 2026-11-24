@@ -217,10 +217,13 @@ export function createWidget({ doc, session, api, getSelection, now = () => Date
     entry.pressed?.setAttribute('aria-pressed', 'true')
     entry.reasonForm.hidden = true
     entry.thanks.textContent = 'Thanks for the feedback.'
+    // `entry` is the answer the card sits under (it owns the lock and the UI); the rating itself is about
+    // the whole conversation so far, so it is recorded against the newest answered question.
+    const newest = state.questions.at(-1) ?? entry
     const payload = {
-      question_id: entry.question_id,
+      question_id: newest.question_id,
       rating,
-      conversation: fitConversation(state.turns.slice(0, entry.turnEnd)),
+      conversation: fitConversation(state.turns),
       brief,
     }
     const text = (reason ?? '').trim().slice(0, LIMITS.reason)
@@ -367,12 +370,10 @@ export function createWidget({ doc, session, api, getSelection, now = () => Date
         references: normalizeReferences(res.references, res.answer.length),
         intent: String(res.intent ?? ''),
         answeredAt: now(),
-        turnEnd: 0,
         rated: false,
         reasked: false,
       }
       state.turns.push({ role: 'user', content: question }, { role: 'assistant', content: res.answer })
-      entry.turnEnd = state.turns.length
       state.questions.push(entry)
       renderAnswer(entry)
       renderFollowUp()

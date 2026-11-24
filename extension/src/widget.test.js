@@ -544,7 +544,7 @@ describe('chips and follow-ups', () => {
     expect(followup()).toHaveLength(1)
     expect(followup()[0].dataset.action).toBe('followup')
     const text = followup()[0].textContent
-    expect(text).toBe('What does claim 1 add?') // claim_explain, nothing cited yet: the first claim
+    expect(text).toBe('What do these CPC codes mean?') // claim_explain, no claim cited: the claim candidate is skipped
     followup()[0].click()
     await flush()
     expect(api.chat).toHaveBeenCalledTimes(2)
@@ -553,13 +553,11 @@ describe('chips and follow-ups', () => {
   it('the follow-up is replaced, never duplicated, and never repeats a question already asked', async () => {
     const { ask, followup, q } = m()
     await ask('one')
-    expect(followup().map((b) => b.textContent)).toEqual(['What does claim 1 add?'])
-    await ask('two')
-    expect(followup().map((b) => b.textContent)).toEqual(['What does claim 1 add?'])
-    expect(q('.followups').children).toHaveLength(1)
-    await ask('what does CLAIM 1 add?  ')
     expect(followup().map((b) => b.textContent)).toEqual(['What do these CPC codes mean?'])
-    await ask('What do these CPC codes mean?')
+    await ask('two')
+    expect(followup().map((b) => b.textContent)).toEqual(['What do these CPC codes mean?'])
+    expect(q('.followups').children).toHaveLength(1)
+    await ask('  what do these CPC codes MEAN?  ')
     expect(followup().map((b) => b.textContent)).toEqual(['Is this still in force?'])
     await ask('Is this still in force?')
     expect(followup()).toHaveLength(0) // nothing left to suggest
@@ -589,7 +587,7 @@ describe('chips and follow-ups', () => {
     followup()[0].click()
     await current.flush()
     expect(q('.error')).not.toBeNull()
-    expect(followup().map((b) => b.textContent)).toEqual(['What do these CPC codes mean?'])
+    expect(followup().map((b) => b.textContent)).toEqual(['Is this still in force?'])
   })
   it('a non-US page offers neither a follow-up nor an enabled chip', () => {
     const { followup, qa } = m({ brief: { ...BRIEF, patent_number: 'EP1234567B1' } })
@@ -691,13 +689,30 @@ describe('ratings', () => {
       brief: BRIEF,
     })
   })
-  it('the conversation of a rating ends at the answer the request appeared under', async () => {
-    const { api, ask, q, flush } = await rateable()
-    await ask('q four')
+  it('a rating given after answer 3 is about answer 3 and the conversation so far', async () => {
+    const { api, q, flush } = await rateable()
     q('button[data-action="up"]').click()
     await flush()
+    expect(api.rating).toHaveBeenCalledTimes(1)
     expect(api.rating.mock.calls[0][0].question_id).toBe('q-3')
     expect(api.rating.mock.calls[0][0].conversation).toHaveLength(6)
+  })
+  it('a rating given after the user kept asking is about the newest answer and the whole conversation', async () => {
+    const { api, ask, q, qa, flush } = await rateable()
+    await ask('q four')
+    await ask('q five')
+    expect(qa('.feedback')).toHaveLength(1) // still the one card, under answer 3
+    q('button[data-action="up"]').click()
+    await flush()
+    expect(api.rating).toHaveBeenCalledTimes(1)
+    const body = api.rating.mock.calls[0][0]
+    expect(body.question_id).toBe('q-5')
+    expect(body.conversation).toHaveLength(10)
+    expect(body.conversation.slice(-2)).toEqual([
+      { role: 'user', content: 'q five' },
+      { role: 'assistant', content: 'Answer 5' },
+    ])
+    expect(q('.feedback button[data-action="up"]').disabled).toBe(true) // the card's own lock
   })
   it('Not helpful asks for an optional reason (max 500) and sends one rating with it', async () => {
     const { api, q, flush } = await rateable()
