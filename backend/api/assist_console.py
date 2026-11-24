@@ -6,6 +6,7 @@ answer text, no brief, no messages, no keys.
 """
 
 import logging
+import time
 from collections import defaultdict
 from typing import Annotated
 
@@ -46,6 +47,7 @@ from backend.core.assist.intent import SECTION_NAMES, Intent
 from backend.db.assist import EVIDENCE_SOURCES
 from backend.db.models import Agent, AssistPageView, AssistQuestion, PromptVersion, Run, Workspace
 from backend.db.session import get_db
+from backend.db.telemetry import classify_error, record_call
 from backend import groq_client
 from backend.groq_client import MODEL_JUDGE, groq_chat, request_retries
 
@@ -207,16 +209,25 @@ def console_insights(
     samples = _hotspot_samples(db, workspace, adoption)
     system, messages = build_insights_messages(adoption, samples)
     groq_client.last_finish_reason.set(None)  # read through the module: a reload makes a new variable
+    started = time.monotonic()
     try:
         with request_retries(2):
             reply = groq_chat(
                 system, messages, model=MODEL_JUDGE, max_tokens=INSIGHTS_MAX_TOKENS,
                 temperature=INSIGHTS_TEMPERATURE,
             )
-    except Exception:
+    except Exception as exc:
         logger.warning("Assist insights failed", exc_info=True)
+        record_call(
+            db, workspace_id=workspace.id, kind="insights", model=MODEL_JUDGE, started=started,
+            outcome=classify_error(exc),
+        )
         raise HTTPException(status_code=502, detail=INSIGHTS_FAILED) from None
     brief = reply.strip()[:MAX_BRIEF_CHARS] if isinstance(reply, str) else ""
+    record_call(
+        db, workspace_id=workspace.id, kind="insights", model=MODEL_JUDGE, started=started,
+        outcome="ok" if brief else "error",
+    )
     if not brief:
         raise HTTPException(status_code=502, detail=INSIGHTS_FAILED)
     grounded, warnings = check_grounded(brief, adoption, samples)

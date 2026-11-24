@@ -17,6 +17,7 @@ from backend.api.tests import router as tests_router
 from backend.api.versions import router as versions_router
 from backend.api.workspaces import router as workspaces_router
 from backend.db.session import SessionLocal
+from backend.db.telemetry import purge_old_calls
 from backend.db.workspaces import purge_expired
 from backend.jobs.worker import worker_loop
 
@@ -27,12 +28,19 @@ WORKER_SHUTDOWN_TIMEOUT_SECONDS = 5
 
 @asynccontextmanager
 async def lifespan(_: FastAPI):
-    """Purge expired workspaces once at startup, then run the job worker (unless WORKER_ENABLED=0)."""
+    """Purge expired workspaces and old call telemetry once at startup, then run the job worker (unless WORKER_ENABLED=0)."""
     db = SessionLocal()
     try:
         purged = purge_expired(db)
         if purged:
             logger.info("Purged %d expired workspace(s) at startup", purged)
+        try:
+            old_calls = purge_old_calls(db)
+            if old_calls:
+                logger.info("Purged %d model-call record(s) older than 90 days at startup", old_calls)
+        except Exception:  # telemetry housekeeping must never stop the app from starting
+            db.rollback()
+            logger.warning("Purging old model-call records failed", exc_info=True)
     finally:
         db.close()
 

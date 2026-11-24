@@ -41,6 +41,9 @@ class Workspace(Base):
     assist_questions: Mapped[list["AssistQuestion"]] = relationship(
         back_populates="workspace", cascade="all, delete-orphan"
     )
+    assist_calls: Mapped[list["AssistCall"]] = relationship(
+        back_populates="workspace", cascade="all, delete-orphan"
+    )
 
 
 class Agent(Base):
@@ -259,3 +262,28 @@ class AssistQuestion(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
 
     workspace: Mapped[Workspace] = relationship(back_populates="assist_questions")
+
+
+class AssistCall(Base):
+    """One model call (chat, judge or insights): how long it took, how it ended and what it cost in tokens.
+
+    Never holds question or answer text. Rows older than 90 days are deleted at startup.
+    """
+
+    __tablename__ = "assist_call"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    workspace_id: Mapped[str] = _fk("workspace.id")
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, index=True)
+    kind: Mapped[str] = mapped_column(String(16))  # "chat" | "judge" | "insights"
+    model: Mapped[str] = mapped_column(String(64))
+    latency_ms: Mapped[int] = mapped_column(Integer)
+    outcome: Mapped[str] = mapped_column(String(16))  # "ok" | "error" | "rate_limited" | "timeout"
+    attempts: Mapped[int] = mapped_column(Integer, default=1, server_default="1")
+    prompt_tokens: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    completion_tokens: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    total_tokens: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    prompt_version: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    source: Mapped[str] = mapped_column(String(16), default="live", server_default="live")  # "live" | "imported"
+
+    workspace: Mapped[Workspace] = relationship(back_populates="assist_calls")

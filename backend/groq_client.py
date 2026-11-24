@@ -49,6 +49,16 @@ def request_retries(n: int):
 # The finish_reason of the last groq_chat call made in this context ("length" = the reply hit max_tokens).
 last_finish_reason: ContextVar[str | None] = ContextVar("groq_last_finish_reason", default=None)
 
+# Token usage of the last groq_chat call made in this context: {"prompt_tokens", "completion_tokens",
+# "total_tokens"}, each a real int or None. None as a whole = no successful call yet (reset at the start of every
+# call, so a failed call never leaves the previous call's usage behind).
+last_usage: ContextVar[dict | None] = ContextVar("groq_last_usage", default=None)
+
+
+def _usage_int(usage, name: str) -> int | None:
+    value = getattr(usage, name, None)
+    return value if isinstance(value, int) and not isinstance(value, bool) else None
+
 
 class TokenPacer:
     """Optional per-model sliding-window token pacing. A call waits at most max_wait_seconds, then proceeds."""
@@ -129,7 +139,11 @@ def groq_chat(
     max_tokens: int | None = None,
     temperature: float | None = None,
 ) -> str:
-    """Send messages to Groq and return the assistant reply text, stripped of thinking blocks."""
+    """Send messages to Groq and return the assistant reply text, stripped of thinking blocks.
+
+    Side channels (ContextVars): last_finish_reason, and last_usage (reset to None here, set on success).
+    """
+    last_usage.set(None)
     full_messages = [{"role": "system", "content": system}] + messages
     kwargs = {"model": model, "messages": full_messages}
     if max_tokens is not None:
@@ -150,6 +164,8 @@ def groq_chat(
     if pacer is not None:
         total = getattr(getattr(response, "usage", None), "total_tokens", None)
         pacer.record(model, total if isinstance(total, int) and not isinstance(total, bool) else estimate)
+    usage = getattr(response, "usage", None)
+    last_usage.set({name: _usage_int(usage, name) for name in ("prompt_tokens", "completion_tokens", "total_tokens")})
     reason = getattr(response.choices[0], "finish_reason", None)
     last_finish_reason.set(reason if isinstance(reason, str) else None)
     return _strip_thinking(response.choices[0].message.content)

@@ -12,6 +12,7 @@ Their flow is auth -> request validation -> rate limits -> assist agent lookup -
 import hmac
 import logging
 import os
+import time
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Request, Response
 from sqlalchemy.orm import Session
@@ -55,6 +56,7 @@ from backend.db.assist import (
 )
 from backend.db.models import Agent, AssistQuestion
 from backend.db.session import get_db
+from backend.db.telemetry import classify_error, record_call
 from backend.groq_client import groq_chat, request_retries
 
 logger = logging.getLogger(__name__)
@@ -135,14 +137,23 @@ def chat(body: AssistChatRequest, request: Request, db: Session = Depends(get_db
     history = [turn.model_dump() for turn in body.history]
     req = build_answer_request(brief, history, question, version.text)
     intent = req.intent
+    started = time.monotonic()
     try:
         with request_retries(2):
             reply = groq_chat(req.system, req.messages, model=ASSIST_MODEL, max_tokens=CHAT_MAX_TOKENS)
         if not reply.strip():
             raise ValueError("empty model reply")
-    except Exception:
+    except Exception as exc:
         logger.warning("Assist chat failed", exc_info=True)
+        record_call(
+            db, workspace_id=workspace.id, kind="chat", model=ASSIST_MODEL, started=started,
+            outcome=classify_error(exc), prompt_version=version.number,
+        )
         raise HTTPException(status_code=502, detail=CHAT_FAILED) from None
+    record_call(
+        db, workspace_id=workspace.id, kind="chat", model=ASSIST_MODEL, started=started,
+        outcome="ok", prompt_version=version.number,
+    )
 
     answer, check = finalize_answer(reply, intent, brief, req.provided_law_ids)
 
