@@ -274,9 +274,16 @@ def console_quality(
     _, questions = _load_timed_rows(db, workspace)
     judgements = cf.kept(_load_judgements(db, workspace), filters, "prompt_version")
     layout = cf.bucket_layout(filters, [at for at, _ in judgements])
-    summary = quality_summary(judgements, cf.kept(questions, filters), _unjudged_count(db, workspace, filters), layout)
+    kept_questions = cf.kept(questions, filters)
+    summary = quality_summary(judgements, kept_questions, _unjudged_count(db, workspace, filters), layout)
     markers = _version_markers(db, agent.id, questions, filters)
-    return QualityOut(bucket=cf.bucket_for(filters), version_markers=markers, **summary)
+    # true when a demo dataset row feeds any number on the tab (a judgement or a rated question)
+    includes_demo = any(j.source == IMPORTED_SOURCE for _, j in judgements) or any(
+        q.source == IMPORTED_SOURCE for _, q in kept_questions
+    )
+    return QualityOut(
+        bucket=cf.bucket_for(filters), version_markers=markers, includes_demo=includes_demo, **summary
+    )
 
 
 # ---- operations --------------------------------------------------------------------
@@ -397,7 +404,8 @@ def _count(n: int, one: str, many: str) -> str:
 def pipeline_steps(facts: dict) -> list[dict]:
     """The improvement loop as eight steps: those before the first unfinished one are `done`, it is `current`.
 
-    `facts`: flagged_runs, has_pattern, criteria, tests, live_number and `fix`, the newest suggested prompt
+    `facts`: flagged_runs (with `demo_runs`, how many of them are demo dataset runs), has_pattern, criteria,
+    tests, live_number and `fix`, the newest suggested prompt
     version as {number, status, verified, required} or None. The newest suggestion decides the fix stage:
     proposed (awaiting review), approved_verifying (being checked) and promoted (or promoted and since
     superseded) move the loop forward; rejected, failed_verification and a never-verified superseded
@@ -423,8 +431,12 @@ def pipeline_steps(facts: dict) -> list[dict]:
     # Later evidence implies the earlier steps: discovery consumes the pattern summary and a criterion
     # can be added by hand, so a criterion with no stored pattern still means the pattern step passed.
     done = [d or any(done[i + 1 :]) for i, d in enumerate(done)]
+    demo = facts.get("demo_runs", 0)
+    flagged_detail = _count(flagged, "flagged conversation", "flagged conversations") if flagged else None
+    if flagged_detail and demo:
+        flagged_detail += f" ({demo} demo)"
     details = [
-        _count(flagged, "flagged conversation", "flagged conversations") if flagged else None,
+        flagged_detail,
         "Pattern found" if facts["has_pattern"] else None,
         _count(criteria, "criterion", "criteria") if criteria else None,
         _count(tests, "test", "tests") if tests else None,
@@ -445,10 +457,15 @@ def pipeline_steps(facts: dict) -> list[dict]:
     return steps
 
 
-def _pipeline_facts(db: Session, agent: Agent) -> dict:
-    flagged = db.scalar(
-        select(func.count()).select_from(Run).where(Run.agent_id == agent.id, Run.source.in_(EVIDENCE_SOURCES))
-    )
+def _pipeline_facts(db: Session, agent: Agent, filters: cf.Filters | None = None) -> dict:
+    """The loop's facts. Flagged conversations are counted through the console's source filter when one is
+    given (`filters`), else agent-wide; `demo_runs` is how many of the counted ones are demo dataset runs.
+    Pattern, criteria, tests and versions are the agent's own and never filtered."""
+    sources = list(db.scalars(select(Run.source).where(Run.agent_id == agent.id, Run.source.in_(EVIDENCE_SOURCES))))
+    if filters is not None:
+        sources = [source for source in sources if cf.matches(source, filters)]
+    flagged = len(sources)
+    demo_runs = sum(1 for source in sources if source == IMPORTED_SOURCE)
     criteria = db.scalar(select(func.count()).select_from(Criterion).where(Criterion.agent_id == agent.id))
     tests = db.scalar(
         select(func.count())
@@ -472,13 +489,13 @@ def _pipeline_facts(db: Session, agent: Agent) -> dict:
         }
     live = db.scalar(select(PromptVersion.number).where(PromptVersion.id == agent.current_prompt_version_id))
     return {
-        "flagged_runs": flagged, "has_pattern": bool(agent.pattern_summary), "criteria": criteria,
+        "flagged_runs": flagged, "demo_runs": demo_runs, "has_pattern": bool(agent.pattern_summary), "criteria": criteria,
         "tests": tests, "fix": fix, "live_number": live,
     }
 
 
-def _pipeline(db: Session, agent: Agent) -> dict:
-    return {"steps": pipeline_steps(_pipeline_facts(db, agent)), "cycle_note": CYCLE_NOTE}
+def _pipeline(db: Session, agent: Agent, filters: cf.Filters | None = None) -> dict:
+    return {"steps": pipeline_steps(_pipeline_facts(db, agent, filters)), "cycle_note": CYCLE_NOTE}
 
 
 @router.get("/pipeline", response_model=PipelineOut)
@@ -487,7 +504,8 @@ def console_pipeline(
 ) -> PipelineOut:
     """Where the assistant's improvement loop stands, derived from what the Evolution tab reads.
 
-    The loop belongs to the agent, not to a time range, so the console filters do not apply.
+    The loop belongs to the agent, not to a time range, so the range, source and version filters do not apply:
+    the flagged step counts every flagged conversation and says how many of them are demo dataset runs.
     """
     return PipelineOut(**_pipeline(db, _assist_agent(db, workspace)))
 
@@ -628,7 +646,7 @@ def console_overview(
         versions=_versions(db, agent, views, questions, filters),
         kpis=kpis,
         alerts=[asdict(a) for a in alert_rules.compute_alerts(snapshot)],
-        loop=_pipeline(db, agent),
+        loop=_pipeline(db, agent, filters),
         quality_trend=[{"t": p["t"], "avg_grade": p["avg_grade"]} for p in grade_trend(j_now, layout)],
         version_markers=_version_markers(db, agent.id, questions, filters),
     )

@@ -1,6 +1,6 @@
 from datetime import timedelta
 
-from backend.db.models import Agent, Run, PromptVersion, Workspace, utcnow
+from backend.db.models import Agent, AssistCall, AssistJudgement, Run, PromptVersion, Workspace, utcnow
 from backend.db.workspaces import (
     TOKEN_TTL_DAYS,
     create_workspace,
@@ -83,3 +83,26 @@ def test_purge_expired_only_removes_expired_and_returns_count(db_session):
     remaining = db_session.query(Workspace).all()
     assert [w.id for w in remaining] == [fresh.id]
     assert purge_expired(db_session, now=now) == 0
+
+
+def test_purge_expired_removes_the_workspaces_telemetry_and_judgements_with_it(db_session):
+    now = utcnow()
+    old, _ = create_workspace(db_session, now=now - timedelta(days=40))
+    fresh, _ = create_workspace(db_session, now=now)
+    for workspace in (old, fresh):
+        db_session.add(
+            AssistCall(workspace_id=workspace.id, kind="judge", model="m", latency_ms=5, outcome="ok", source="live")
+        )
+        db_session.add(
+            AssistJudgement(
+                workspace_id=workspace.id, session_id="s1", prompt_version=1, rubric_version="1", model="m",
+                answered="yes", concise=True, citations_sensible=True, legal="not_applicable", grade=4,
+                reason="no_issue", flagged=False,
+            )
+        )
+    db_session.commit()
+
+    assert purge_expired(db_session, now=now) == 1
+
+    assert [c.workspace_id for c in db_session.query(AssistCall).all()] == [fresh.id]
+    assert [j.workspace_id for j in db_session.query(AssistJudgement).all()] == [fresh.id]

@@ -306,11 +306,15 @@ def _assist_setup(db, kind="assist"):
 
 
 def _add_runs(db, agent, sources):
-    """One run per entry, position 1..n; the user message names the source and position."""
+    """One run per entry, position 1..n; the user message names the source and position.
+
+    Every run carries a saved page: build_tests skips assistant runs without one (they could not be replayed).
+    """
     for position, source in enumerate(sources, start=1):
         db.add(Run(
             agent_id=agent.id, prompt_version_id=agent.current_prompt_version_id, position=position, source=source,
             messages=[{"role": "user", "content": f"{source}-{position}"}, {"role": "assistant", "content": "a"}],
+            brief_snapshot={"patent_number": "US10000000B2"},
         ))
     db.commit()
 

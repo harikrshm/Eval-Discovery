@@ -80,18 +80,21 @@ def test_i2_assist_run_with_snapshot_is_judged_with_the_page(db_session, monkeyp
     assert PAGE_MARKER in judge_mock.call_args.kwargs["evidence"]
 
 
-def test_i2_assist_run_without_a_snapshot_is_judged_without_evidence(db_session, monkeypatch, sanity):
+def test_i2_assist_run_without_a_snapshot_is_skipped_not_judged(db_session, monkeypatch, sanity):
+    """Superseded rule: a run with no saved page can never become a replayable test, so it is not judged."""
     workspace, agent, crit = _agent_and_criterion(db_session, "assist")
     _add_run(db_session, agent, None)
-    judge_mock, _ = _build(db_session, workspace, crit, monkeypatch)
-    assert judge_mock.call_args.kwargs == {} and len(judge_mock.call_args.args) == 3
+    judge_mock, result = _build(db_session, workspace, crit, monkeypatch)
+    judge_mock.assert_not_called()
+    assert (result["judged"], result["skipped_no_page"], result["tests_created"]) == (0, 1, 0)
 
 
-def test_i2_assist_run_with_an_invalid_snapshot_is_judged_without_evidence(db_session, monkeypatch, sanity):
+def test_i2_assist_run_with_an_invalid_snapshot_is_skipped_not_judged(db_session, monkeypatch, sanity):
     workspace, agent, crit = _agent_and_criterion(db_session, "assist")
     _add_run(db_session, agent, {"patent_number": 12345, "claims": "not a list"})
     judge_mock, result = _build(db_session, workspace, crit, monkeypatch)
-    assert judge_mock.call_args.kwargs == {} and result["judged"] == 1
+    judge_mock.assert_not_called()
+    assert (result["judged"], result["skipped_no_page"]) == (0, 1)
 
 
 def test_i2_a_general_agent_is_unchanged_even_with_a_stray_snapshot(db_session, monkeypatch, sanity):

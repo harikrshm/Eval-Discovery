@@ -105,6 +105,15 @@ def _snapshot_brief(snapshot: object) -> Brief | None:
         raise JobFailed(_BAD_SNAPSHOT) from exc
 
 
+def _has_valid_brief(run: Run) -> bool:
+    """True if the run's stored page validates as a Brief (a test copied from it can be replayed)."""
+    try:
+        Brief.model_validate(run.brief_snapshot or {})
+    except ValueError:
+        return False
+    return True
+
+
 def _page_evidence(agent: Agent, run: Run) -> dict:
     """The judge's ``evidence`` keyword for a flagged assistant run: the page the answer was given against.
 
@@ -172,7 +181,10 @@ def _runs_to_judge(db: Session, agent: Agent) -> list[Run]:
 
     Normally the newest runs, oldest first. For an assistant agent with live (source "assist") runs, the
     live runs come first (newest first) and imported runs only fill what is left of the same total, so a
-    demo import can never push a real flagged conversation out of the window."""
+    demo import can never push a real flagged conversation out of the window.
+
+    The window is chosen before `handle_build_tests` skips runs that carry no saved page, so such runs
+    still occupy slots of it."""
     newest = select(Run).where(Run.agent_id == agent.id).order_by(Run.position.desc())
     if agent.kind == "assist":
         live = list(db.scalars(newest.where(Run.source == "assist").limit(RECENT_RUNS_TO_JUDGE)))
@@ -205,9 +217,16 @@ def handle_build_tests(db: Session, job: Job) -> dict:
     try:
         judged: list[tuple[Run, JudgeResult]] = []
         failures = 0
+        skipped_no_page = 0
         for run in recent:
             if not user_messages(run.messages):
                 continue  # nothing to replay, so it can never become a test
+            if agent.kind == "assist" and not _has_valid_brief(run):
+                # An auto-judge-flagged conversation never flagged any other way has no stored page: a test
+                # copied from it could not be replayed. It stays pattern and criterion evidence, but is
+                # neither judged (saves tokens) nor made a test.
+                skipped_no_page += 1
+                continue
             result = judge(config, spec, run.messages, **_page_evidence(agent, run))
             judged.append((run, result))
             if result.verdict == "fail":
@@ -264,6 +283,7 @@ def handle_build_tests(db: Session, job: Job) -> dict:
         "tests_created": len(roles),
         "already_handled": not roles,
         "weaker_verification": len(roles) == 1,
+        "skipped_no_page": skipped_no_page,
     }
     for role in roles:
         try_log_event(db, workspace_id, "test_created", {"role": role})

@@ -246,8 +246,9 @@ def test_quality_endpoint_aggregates_and_filters(client, judged):
     body = get(client, headers, "quality", "?range=24h")
     assert set(body) == {
         "judged", "unjudged", "grade_trend", "answered", "concise_share", "citations_share", "legal", "reasons",
-        "ratings", "bucket", "version_markers",
+        "ratings", "bucket", "version_markers", "includes_demo",
     }
+    assert body["includes_demo"] is True  # the imported judgement and question are in range
     assert body["bucket"] == "hour" and len(body["grade_trend"]) == 24
     assert (body["judged"], body["unjudged"]) == (3, 1)
     assert body["answered"] == {"yes": 1, "partly": 1, "no": 1}
@@ -266,10 +267,12 @@ def test_quality_endpoint_aggregates_and_filters(client, judged):
     assert get(client, headers, "quality", "?range=7d")["judged"] == 4
     live = get(client, headers, "quality", "?range=24h&source=live")
     assert (live["judged"], live["unjudged"]) == (2, 1)
+    assert live["includes_demo"] is False  # Live only: no demo row feeds a number
     assert live["ratings"] == {"up": 1, "down": 1, "no_answer": 0, "none": 1}
     demo = get(client, headers, "quality", "?range=24h&source=demo")
     assert (demo["judged"], demo["unjudged"]) == (1, 0)  # the judge never runs on demo conversations
     assert demo["answered"] == {"yes": 0, "partly": 1, "no": 0}
+    assert demo["includes_demo"] is True
     assert get(client, headers, "quality", "?range=24h&version=2")["judged"] == 1
 
 
@@ -295,6 +298,21 @@ def test_quality_version_markers_match_overview_live_and_demo_labelled(client, d
     assert markers == get(client, headers, "overview", "?range=30d")["version_markers"]  # same helper, same shape
     assert {m["source"] for m in get(client, headers, "quality", "?range=30d&source=live")["version_markers"]} == {"live"}
     assert {m["source"] for m in get(client, headers, "quality", "?range=30d&source=demo")["version_markers"]} == {"demo"}
+
+
+def test_quality_includes_demo_only_when_demo_rows_feed_the_numbers(client, world, db_session):
+    workspace, _, headers = world
+    add_q(db_session, workspace, "l1", "other", rating="up", created_at=utcnow() - timedelta(minutes=60))
+    add_judgement(db_session, workspace, "l1", grade=5, ago=timedelta(minutes=30))
+    for query in ("", "?source=all", "?source=live", "?range=24h"):
+        assert get(client, headers, "quality", query)["includes_demo"] is False  # nothing imported exists
+
+    add_q(db_session, workspace, "d1", "other", rating="down", source="imported", version=2,
+          created_at=utcnow() - timedelta(minutes=70))
+    assert get(client, headers, "quality", "?source=all")["includes_demo"] is True
+    assert get(client, headers, "quality", "?source=demo")["includes_demo"] is True
+    assert get(client, headers, "quality", "?source=live")["includes_demo"] is False
+    assert get(client, headers, "quality", "?source=all&version=1")["includes_demo"] is False  # filtered out
 
 
 def test_quality_empty_returns_nulls_not_zeros(client, world):
@@ -447,6 +465,42 @@ def current_of(body):
     return found[0] if found else None
 
 
+def test_pipeline_is_agent_wide_and_labels_the_demo_share(client, world, db_session):
+    workspace, agent, headers = world
+    flag(db_session, agent, "l1")
+    for i in range(3):
+        flag(db_session, agent, f"d{i}", source="imported")
+    for query in ("", "?source=live", "?source=demo&range=24h&version=1"):  # the pipeline endpoint ignores filters
+        body = get(client, headers, "pipeline") if not query else get(client, headers, "pipeline", query)
+        assert body["steps"][0]["detail"] == "4 flagged conversations (3 demo)"
+    only_live = make_workspace(db_session)
+    flag(db_session, only_live[1], "x1")
+    assert get(client, only_live[2], "pipeline")["steps"][0]["detail"] == "1 flagged conversation"  # no demo, no label
+
+
+def test_overview_loop_live_only_counts_no_demo_runs(client, world, db_session):
+    workspace, agent, headers = world
+    for i in range(5):
+        flag(db_session, agent, f"d{i}", source="imported")
+
+    live = get(client, headers, "overview", "?source=live")["loop"]
+    assert live["steps"][0]["detail"] is None and live["steps"][0]["state"] == "current"  # real traffic made none
+    assert current_of(live) == "flagged"
+
+    both = get(client, headers, "overview", "?source=all")["loop"]
+    assert both["steps"][0]["detail"] == "5 flagged conversations (5 demo)" and both["steps"][0]["state"] == "done"
+    assert get(client, headers, "overview")["loop"] == both  # the default source is all
+    demo = get(client, headers, "overview", "?source=demo")["loop"]
+    assert demo["steps"][0]["detail"] == "5 flagged conversations (5 demo)"
+
+    flag(db_session, agent, "l1")
+    live = get(client, headers, "overview", "?source=live")["loop"]
+    assert live["steps"][0]["detail"] == "1 flagged conversation" and live["steps"][0]["state"] == "done"
+    assert get(client, headers, "overview", "?source=all")["loop"]["steps"][0]["detail"] == (
+        "6 flagged conversations (5 demo)"
+    )
+
+
 def test_pipeline_states_follow_the_loop(client, world, db_session):
     workspace, agent, headers = world
     body = get(client, headers, "pipeline")
@@ -457,7 +511,7 @@ def test_pipeline_states_follow_the_loop(client, world, db_session):
     flag(db_session, agent, "a2", source="imported")
     body = get(client, headers, "pipeline")
     assert current_of(body) == "pattern" and states(body)["flagged"] == "done"
-    assert body["steps"][0]["detail"] == "2 flagged conversations"
+    assert body["steps"][0]["detail"] == "2 flagged conversations (1 demo)"  # the demo share is never hidden
 
     agent.pattern_summary = SUMMARY_MARK
     db_session.commit()

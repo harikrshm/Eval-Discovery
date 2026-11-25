@@ -144,6 +144,9 @@ def console_filters(
 ) -> cf.Filters:
     """The `range`, `source` and `version` query filters; 422 with a fixed message when any is invalid."""
     try:
+        # ASCII digits only: int() alone would also accept "1_0", " 7 " and "+1"
+        if version is not None and not (version.isascii() and version.isdigit()):
+            raise ValueError(version)
         parsed = int(version) if version is not None else None
         return cf.parse_filters(range_name, source, parsed)
     except ValueError:

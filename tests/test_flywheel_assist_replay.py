@@ -406,6 +406,75 @@ def test_build_tests_copies_the_run_snapshot_for_an_assistant_agent(db_session, 
     assert test.brief_snapshot is not run.brief_snapshot
 
 
+def test_build_tests_skips_runs_without_a_saved_page_and_never_judges_them(db_session, monkeypatch, sanity):
+    workspace, agent = _assist_agent(db_session)
+    crit = _criterion(db_session, agent)
+    with_page = _flagged(db_session, agent, session="session-aaaaaaaa1", answer="BAD_ANSWER with page")
+    # An auto-judge-flagged conversation that was never flagged any other way: no stored brief. It is newer,
+    # so it would be judged first and become the fix test if it were not skipped.
+    brief_less = save_flagged_run(
+        db_session, agent, "session-bbbbbbbb2",
+        messages=[{"role": "user", "content": "Explain claim 2"}, {"role": "assistant", "content": "BAD_ANSWER no page"}],
+        brief={}, source="assist",
+    )
+    assert brief_less.brief_snapshot == {} and brief_less.position > with_page.position
+    judge_mock = MagicMock(return_value=JudgeResult("fail", "bad"))
+    monkeypatch.setattr(handlers, "judge", judge_mock)
+
+    job = enqueue(db_session, workspace.id, "build_tests", {"criterion_id": crit.id})
+    result = handle_build_tests(db_session, job)
+
+    tests = list(db_session.scalars(select(EvalTest)))
+    assert result["skipped_no_page"] == 1 and result["judged"] == 1
+    assert [t.source_run_id for t in tests] == [with_page.id]  # never the brief-less run
+    assert all(t.brief_snapshot for t in tests)  # every created test can be replayed
+    assert judge_mock.call_count == 1  # the brief-less run was not judged (tokens saved)
+    assert "no page" not in str(judge_mock.call_args_list[0])
+    assert brief_less.id not in {t.source_run_id for t in tests}
+
+
+def test_build_tests_reports_zero_skipped_when_every_run_has_a_page(db_session, monkeypatch, sanity):
+    workspace, agent = _assist_agent(db_session)
+    crit = _criterion(db_session, agent)
+    _flagged(db_session, agent)
+    monkeypatch.setattr(handlers, "judge", MagicMock(return_value=JudgeResult("fail", "bad")))
+    job = enqueue(db_session, workspace.id, "build_tests", {"criterion_id": crit.id})
+    assert handle_build_tests(db_session, job)["skipped_no_page"] == 0
+
+
+def test_build_tests_with_only_page_less_runs_creates_nothing_and_says_why(db_session, monkeypatch, sanity):
+    workspace, agent = _assist_agent(db_session)
+    crit = _criterion(db_session, agent)
+    save_flagged_run(
+        db_session, agent, "session-bbbbbbbb2",
+        messages=[{"role": "user", "content": "Explain claim 2"}, {"role": "assistant", "content": "BAD_ANSWER"}],
+        brief={}, source="assist",
+    )
+    judge_mock = MagicMock(return_value=JudgeResult("fail", "bad"))
+    monkeypatch.setattr(handlers, "judge", judge_mock)
+    job = enqueue(db_session, workspace.id, "build_tests", {"criterion_id": crit.id})
+
+    result = handle_build_tests(db_session, job)
+
+    assert (result["tests_created"], result["judged"], result["skipped_no_page"]) == (0, 0, 1)
+    assert result["already_handled"] is True
+    judge_mock.assert_not_called()
+
+
+def test_a_general_agent_never_skips_a_run_for_having_no_page(db_session, monkeypatch, sanity):
+    workspace, agent = _assist_agent(db_session, token_agent_kind="general")
+    crit = _criterion(db_session, agent)
+    db_session.add(
+        Run(agent_id=agent.id, prompt_version_id=agent.current_prompt_version_id, position=1,
+            messages=[{"role": "user", "content": "u"}, {"role": "assistant", "content": "a"}])
+    )
+    db_session.commit()
+    monkeypatch.setattr(handlers, "judge", MagicMock(return_value=JudgeResult("fail", "bad")))
+    job = enqueue(db_session, workspace.id, "build_tests", {"criterion_id": crit.id})
+    result = handle_build_tests(db_session, job)
+    assert (result["tests_created"], result["skipped_no_page"]) == (1, 0)
+
+
 def test_build_tests_leaves_the_snapshot_null_for_a_general_agent(db_session, monkeypatch, sanity):
     workspace, agent = _assist_agent(db_session, token_agent_kind="general")
     crit = _criterion(db_session, agent)

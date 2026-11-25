@@ -614,6 +614,7 @@ class QualityOut(BaseModel):
     ratings: dict[str, int]
     bucket: Literal["hour", "day"]
     version_markers: list[VersionMarkerOut]
+    includes_demo: bool  # a demo dataset row feeds the numbers above
 
 
 class LatencyPointOut(BaseModel):

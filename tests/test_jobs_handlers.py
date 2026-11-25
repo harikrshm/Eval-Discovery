@@ -140,7 +140,7 @@ def test_build_tests_creates_fix_and_heldout(db_session, monkeypatch, sanity):
         "judged": 3,
         "tests_created": 2,
         "already_handled": False,
-        "weaker_verification": False,
+        "weaker_verification": False,        "skipped_no_page": 0,
     }
     tests = {t.role: t for t in db_session.scalars(select(EvalTest))}
     assert set(tests) == {"fix", "heldout"}
@@ -197,7 +197,7 @@ def test_build_tests_only_judges_latest_eight_runs(db_session, monkeypatch, sani
         "judged": 8,
         "tests_created": 0,
         "already_handled": True,
-        "weaker_verification": False,
+        "weaker_verification": False,        "skipped_no_page": 0,
     }
 
 

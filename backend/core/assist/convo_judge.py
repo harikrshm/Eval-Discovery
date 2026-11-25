@@ -10,6 +10,7 @@ import json
 from dataclasses import dataclass
 from pathlib import Path
 
+from backend import groq_client
 from backend.groq_client import MODEL_JUDGE, groq_chat
 from backend.utils import extract_json
 
@@ -29,7 +30,7 @@ LEGAL = ("handled", "mishandled", "not_applicable")
 FLAG_GRADE_AT_OR_BELOW = 2  # a conversation graded this low or lower goes into the flagged loop
 MAX_JUDGE_TURNS = 12  # the newest turns shown to the judge
 MAX_JUDGE_TURN_CHARS = 1500  # per field (id, question, answer, page summary)
-JUDGE_MAX_TOKENS = 600  # the 120B model spends part of this on hidden reasoning
+JUDGE_MAX_TOKENS = 1500  # the 120B model spends part of this on hidden reasoning
 
 _RUBRIC_FILE = Path(__file__).with_name("rubric.md")
 _RUBRIC = _RUBRIC_FILE.read_text(encoding="utf-8")
@@ -57,6 +58,14 @@ class Verdict:
 
 class JudgeOutputError(ValueError):
     """The model's output is not a valid verdict (not JSON, wrong shape, unknown label, bad grade)."""
+
+
+class JudgeTruncated(Exception):
+    """The reply hit the output token limit: a transient failure to retry, not an unreadable conversation.
+
+    Deliberately not a JudgeOutputError: a cut-off reply says nothing about whether the model could
+    grade this conversation, so the caller retries instead of marking the conversation unreadable.
+    """
 
 
 def _clip(value: str) -> str:
@@ -146,11 +155,15 @@ def parse_verdict(raw: str, turn_ids: list[str]) -> Verdict:
 def judge_conversation(turns: list[Turn], page_summary: str | None) -> Verdict:
     """Grade one conversation with one model call.
 
-    Raises JudgeOutputError when the output is unusable; provider errors (timeout, rate limit) propagate
+    Raises JudgeTruncated when the reply was cut off at the token limit (transient), JudgeOutputError when
+    a complete reply is unusable; provider errors (timeout, rate limit) propagate
     unchanged so the caller can classify them. Only ids of the turns actually shown count as `worst_question_id`.
     """
     if not turns:
         raise ValueError("no turns to judge")
     system, messages = build_judge_messages(turns, page_summary)
+    groq_client.last_finish_reason.set(None)  # read through the module: a reload makes a new variable
     raw = groq_chat(system, messages, model=MODEL_JUDGE, temperature=0, max_tokens=JUDGE_MAX_TOKENS)
+    if groq_client.last_finish_reason.get() == "length":
+        raise JudgeTruncated("judge reply was cut off at the token limit")
     return parse_verdict(raw, [t.question_id for t in shown_turns(turns)])

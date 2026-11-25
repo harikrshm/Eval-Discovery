@@ -14,7 +14,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import sessionmaker
 
 from backend import groq_client
-from backend.core.assist.convo_judge import JudgeOutputError, Verdict
+from backend.core.assist.convo_judge import JudgeOutputError, JudgeTruncated, Verdict
 from backend.db.agents import create_agent
 from backend.db.assist import add_question, save_flagged_run
 from backend.db.models import AssistCall, AssistJudgement, AssistPageView, Job, Run, utcnow
@@ -256,6 +256,62 @@ def test_handler_bad_output_fails_job_with_fixed_message(db_session, world, fake
     assert not isinstance(caught.value, RetryableJobFailure)
     assert str(caught.value) == "The judge could not read this conversation."
     assert [c.outcome for c in judge_calls(db_session)] == ["error"]
+
+
+def test_handler_records_the_judged_sessions_prompt_version_on_the_telemetry_row(db_session, world, fake_judge):
+    workspace, _, _ = world
+    ask(db_session, workspace, "s1", version=3)
+
+    handle_judge_conversation(db_session, judge_job(db_session, workspace, "s1"))
+
+    (call,) = judge_calls(db_session)
+    assert call.prompt_version == 3
+
+
+def test_a_truncated_reply_is_retryable_not_unreadable_and_the_session_stays_eligible(db_session, world, fake_judge):
+    workspace, _, _ = world
+    ask(db_session, workspace, "s1", minutes_ago=30)
+    fake_judge.error = JudgeTruncated("cut off")
+
+    with pytest.raises(RetryableJobFailure) as caught:
+        handle_judge_conversation(db_session, judge_job(db_session, workspace, "s1", attempts=2))
+
+    assert str(caught.value) == "The judge was unavailable. Try again."
+    (call,) = judge_calls(db_session)
+    assert (call.outcome, call.attempts, call.prompt_version) == ("error", 2, 1)
+    assert db_session.scalar(select(AssistJudgement)) is None
+
+
+def test_a_session_whose_replies_keep_truncating_fails_as_unavailable_and_is_retried_later(db_session, world, fake_judge):
+    workspace, _, _ = world
+    ask(db_session, workspace, "s1", minutes_ago=30)
+    fake_judge.error = JudgeTruncated("cut off")
+    job = enqueue(db_session, workspace.id, JOB_TYPE, {"session_id": "s1", "system": True})
+
+    for _ in range(3):  # MAX_JOB_ATTEMPTS: requeued twice, then failed
+        assert run_one(db_session) is True
+
+    job = db_session.get(Job, job.id)
+    assert (job.status, job.error) == ("failed", UNAVAILABLE)
+    stats = judge_queue_stats(db_session, workspace.id)
+    assert (stats["waiting_sessions"], stats["unreadable_sessions"]) == (1, 0)
+    assert evaluate_now(db_session, workspace.id)["queued"] == 1  # eligible again, never "unreadable"
+
+
+def test_a_storage_failure_after_the_model_call_still_records_the_telemetry_row(db_session, world, fake_judge, monkeypatch):
+    workspace, _, _ = world
+    ask(db_session, workspace, "s1")
+
+    def broken(*args, **kwargs):
+        raise RuntimeError("database went away")
+
+    monkeypatch.setattr(cj, "record_judgement", broken)
+
+    with pytest.raises(RuntimeError):
+        handle_judge_conversation(db_session, judge_job(db_session, workspace, "s1"))
+
+    (call,) = judge_calls(db_session)  # the model call happened and used tokens: it is still counted
+    assert (call.outcome, call.total_tokens, call.prompt_version) == ("error", 750, 1)
 
 
 def test_a_failing_judge_never_blocks_the_queue_and_runs_through_the_worker(db_session, world, fake_judge):

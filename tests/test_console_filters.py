@@ -318,6 +318,10 @@ def test_flagged_range_is_half_open_on_the_run_time(client, db_session):
         "/assist/console/flagged?range=1y",
         "/assist/console/flagged?version=abc",
         "/assist/console/flagged?version=0",
+        "/assist/console/metrics?version=1_0",  # int() would read this as 10
+        "/assist/console/overview?version=1_0",
+        "/assist/console/flagged?version=%2B1",
+        "/assist/console/flagged?version=%C2%B2",  # a superscript digit: str.isdigit() alone would let it through
     ],
 )
 def test_invalid_filter_values_422(client, timed, path):

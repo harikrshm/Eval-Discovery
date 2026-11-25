@@ -15,7 +15,7 @@ from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from backend.core.assist.convo_judge import JudgeOutputError, Turn, judge_conversation
+from backend.core.assist.convo_judge import JudgeOutputError, JudgeTruncated, Turn, judge_conversation
 from backend.db.assist import SessionConflict, record_judgement, session_is_imported
 from backend.db.models import Agent, AssistJudgement, AssistPageView, AssistQuestion, Job, Run, Workspace, utcnow
 from backend.db.telemetry import classify_error, record_call
@@ -64,11 +64,13 @@ def _page_summary(db: Session, agent_id: str, session_id: str) -> str | None:
     return " ".join(parts) or None
 
 
-def _record(db: Session, job: Job, started: float, outcome: str) -> None:
-    """One telemetry row for the judge call (never raises). Source is live: imported sessions never get here."""
+def _record(db: Session, job: Job, started: float, outcome: str, version: int | None) -> None:
+    """One telemetry row for the judge call (never raises). Source is live: imported sessions never get here.
+
+    `version` is the judged session's prompt version, so a version filter in the console keeps the call."""
     record_call(
         db, workspace_id=job.workspace_id, kind="judge", model=MODEL_JUDGE, started=started,
-        outcome=outcome, attempts=job.attempts, source="live",
+        outcome=outcome, attempts=job.attempts, source="live", prompt_version=version,
     )
 
 
@@ -125,14 +127,18 @@ def handle_judge_conversation(db: Session, job: Job) -> dict:
     started = time.monotonic()
     try:
         verdict = judge_conversation(turns, summary)
+    except JudgeTruncated as exc:  # cut off at the token limit: says nothing about the conversation, so retry
+        logger.warning("judge reply truncated for job %s: %s", job.id, exc)
+        _record(db, job, started, "error", version)
+        raise RetryableJobFailure(_UNAVAILABLE) from exc
     except JudgeOutputError as exc:
         logger.warning("judge output unusable for job %s: %s", job.id, exc)
-        _record(db, job, started, "error")
+        _record(db, job, started, "error", version)
         raise JobFailed(_UNREADABLE) from exc
     except Exception as exc:
         outcome = classify_error(exc)
         logger.warning("judge call failed for job %s (%s)", job.id, outcome, exc_info=True)
-        _record(db, job, started, outcome)
+        _record(db, job, started, outcome, version)
         if outcome in ("rate_limited", "timeout"):
             raise RetryableJobFailure(_UNAVAILABLE) from exc
         raise
@@ -143,12 +149,20 @@ def handle_judge_conversation(db: Session, job: Job) -> dict:
             model=MODEL_JUDGE, prompt_version=version, turns_messages=messages,
         )
     except IntegrityError:  # judged by someone else while the model ran: nothing to store, not a failure
-        _record(db, job, started, "ok")
+        _record(db, job, started, "ok", version)
         return _skipped("already_judged")
     except SessionConflict:  # the session turned out to be imported: never graded
-        _record(db, job, started, "ok")
+        _record(db, job, started, "ok", version)
         return _skipped("imported")
-    _record(db, job, started, "ok")
+    except Exception:
+        # The model call happened and used tokens: count it before the failure propagates.
+        try:
+            db.rollback()
+        except Exception:
+            logger.warning("Rolling back after a failed judgement write failed", exc_info=True)
+        _record(db, job, started, "error", version)
+        raise
+    _record(db, job, started, "ok", version)
     return {"status": "judged", "grade": verdict.grade, "flagged": bool(row.flagged)}
 
 

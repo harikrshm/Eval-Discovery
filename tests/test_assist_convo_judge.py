@@ -1,5 +1,6 @@
 """Conversation judge core: strict verdict parsing, hostile text, judgement storage and the auto-judge flag."""
 
+import hashlib
 import json
 from datetime import timedelta
 from pathlib import Path
@@ -12,6 +13,7 @@ from alembic.migration import MigrationContext
 from sqlalchemy import create_engine, inspect, select, text
 from sqlalchemy.exc import IntegrityError
 
+from backend import groq_client
 from backend.core.assist import convo_judge
 from backend.core.assist.adoption import flag_reasons
 from backend.core.assist.convo_judge import (
@@ -22,6 +24,7 @@ from backend.core.assist.convo_judge import (
     REASONS,
     RUBRIC_VERSION,
     JudgeOutputError,
+    JudgeTruncated,
     Turn,
     Verdict,
     build_judge_messages,
@@ -115,11 +118,54 @@ def test_unknown_worst_question_becomes_none():
 def test_constants():
     assert RUBRIC_VERSION == "1"
     assert FLAG_GRADE_AT_OR_BELOW == 2 and MAX_JUDGE_TURNS == 12 and MAX_JUDGE_TURN_CHARS == 1500
-    assert JUDGE_MAX_TOKENS == 600
+    assert JUDGE_MAX_TOKENS == 1500
     assert REASONS == (
         "no_issue", "missed_question", "off_topic", "too_long", "unsupported_claim", "bad_citation",
         "legal_advice_given", "refusal_mishandled",
     )
+
+
+# Pin: any edit to rubric.md changes what a grade means, so it needs a new RUBRIC_VERSION.
+PINNED_RUBRIC_VERSION = "1"
+PINNED_RUBRIC_SHA256 = "7e34b6c7db72098d1189595dde32e5a4793139a00d116680f56c723e26bbbac2"
+
+
+def test_rubric_text_is_pinned_to_its_version():
+    # line endings are normalised so a CRLF checkout hashes the same as an LF one
+    raw = Path(convo_judge._RUBRIC_FILE).read_bytes().replace(b"\r\n", b"\n")
+    digest = hashlib.sha256(raw).hexdigest()
+    assert RUBRIC_VERSION == PINNED_RUBRIC_VERSION
+    assert digest == PINNED_RUBRIC_SHA256, (
+        "backend/core/assist/rubric.md changed: bump RUBRIC_VERSION in convo_judge.py, then update "
+        "PINNED_RUBRIC_VERSION and PINNED_RUBRIC_SHA256 in this test (judgements record the rubric version)."
+    )
+
+
+def test_a_cut_off_reply_is_a_truncation_not_an_unreadable_verdict(monkeypatch):
+    turns = [Turn("q1", "What is claim 1?", "A widget.")]
+
+    def cut_off(*a, **k):
+        groq_client.last_finish_reason.set("length")
+        return '{"answered": "ye'
+
+    monkeypatch.setattr(convo_judge, "groq_chat", cut_off)
+    with pytest.raises(JudgeTruncated) as caught:
+        judge_conversation(turns, None)
+    assert not isinstance(caught.value, JudgeOutputError)
+
+    def complete_but_malformed(*a, **k):
+        groq_client.last_finish_reason.set("stop")
+        return '{"answered": "maybe"}'
+
+    monkeypatch.setattr(convo_judge, "groq_chat", complete_but_malformed)
+    with pytest.raises(JudgeOutputError):
+        judge_conversation(turns, None)
+
+
+def test_a_stale_finish_reason_from_an_earlier_call_does_not_count(monkeypatch):
+    groq_client.last_finish_reason.set("length")  # left over from some earlier call in this context
+    monkeypatch.setattr(convo_judge, "groq_chat", lambda *a, **k: reply(grade=4))
+    assert judge_conversation([Turn("q1", "q", "a")], None).grade == 4
 
 
 # ---- build_judge_messages ------------------------------------------------------
