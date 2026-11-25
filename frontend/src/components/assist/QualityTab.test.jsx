@@ -135,14 +135,19 @@ describe("headline numbers", () => {
     expect(container.querySelector("[data-unjudged]").textContent).toBe("No conversations are waiting to be judged.");
   });
 
-  it("says the judge numbers include the demo dataset unless the source is live", async () => {
+  it("says the judge numbers include the demo dataset only when the payload says demo rows are in them", async () => {
     await renderTab();
     expect(container.querySelector("[data-demo-note]").textContent).toContain("includes demo dataset");
-    await rerender(createElement(QualityTab, props({ filters: { ...FILTERS, source: "demo" } })));
-    expect(container.querySelector("[data-demo-note]").textContent).toContain("includes demo dataset");
-    await rerender(createElement(QualityTab, props({ filters: { ...FILTERS, source: "live" } })));
-    expect(container.querySelector("[data-demo-note]")).toBeNull();
+    api.assistQuality.mockResolvedValue(qualityFixture({ includes_demo: false }));
+    await rerender(createElement(QualityTab, props({ filters: { ...FILTERS, source: "all" }, reloadKey: 1 })));
+    expect(container.querySelector("[data-demo-note]")).toBeNull(); // source "all", but no demo rows exist
     expect(container.textContent).not.toContain("includes demo dataset");
+    api.assistQuality.mockResolvedValue(qualityFixture({ includes_demo: true }));
+    await rerender(createElement(QualityTab, props({ filters: { ...FILTERS, source: "demo" }, reloadKey: 2 })));
+    expect(container.querySelector("[data-demo-note]").textContent).toContain("includes demo dataset");
+    api.assistQuality.mockResolvedValue(qualityFixture({ includes_demo: false }));
+    await rerender(createElement(QualityTab, props({ filters: { ...FILTERS, source: "live" }, reloadKey: 3 })));
+    expect(container.querySelector("[data-demo-note]")).toBeNull();
   });
 
   it("states that the judge is an LLM's opinion that has not been checked against human raters", async () => {

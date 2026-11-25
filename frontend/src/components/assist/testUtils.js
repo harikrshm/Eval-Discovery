@@ -179,20 +179,24 @@ export function flaggedRun(overrides = {}) {
 
 export const FILTERS = { range: "30d", source: "all", version: null };
 
+// The backend's CYCLE_NOTE and step labels (assist_console_views.py), verbatim.
+export const CYCLE_NOTE =
+  "The loop repeats: a fix that is rejected or fails verification sends you back to the fix step, and newly flagged conversations start the next round.";
+
 const LOOP_STEPS = [
-  ["flagged", "Flagged conversations", "done", "3 flagged"],
+  ["flagged", "Flagged conversations", "done", "3 flagged conversations (1 demo)"],
   ["pattern", "Pattern found", "done", null],
-  ["criterion", "Criterion chosen", "current", "0 criteria"],
+  ["criterion", "Criterion written", "current", null],
   ["tests", "Tests built", "todo", null],
   ["fix", "Fix suggested", "todo", null],
   ["review", "Fix reviewed", "todo", null],
   ["verify", "Fix verified", "todo", null],
-  ["promoted", "Promoted", "todo", null],
+  ["promoted", "Fix promoted", "todo", null],
 ].map(([id, label, state, detail]) => ({ id, label, state, detail }));
 
 // The /assist/console/pipeline payload (backend task 6): the loop stands at "Criterion written".
 export function pipelineFixture(overrides = {}) {
-  return { steps: LOOP_STEPS, cycle_note: "The loop repeats: a rejected fix sends you back to the fix step.", ...overrides };
+  return { steps: LOOP_STEPS, cycle_note: CYCLE_NOTE, ...overrides };
 }
 
 // A GET /agents/{id}/prompt-versions row (newest first from the server).
@@ -247,7 +251,7 @@ export function overviewFixture(overrides = {}) {
       { id: "live_version", label: "Live version", value: "v2", unit: "version", delta: null, delta_good: "up", sparkline: [] },
     ],
     alerts: [],
-    loop: { steps: LOOP_STEPS, cycle_note: "The loop runs on live conversations only." },
+    loop: { steps: LOOP_STEPS, cycle_note: CYCLE_NOTE },
     quality_trend: [
       { t: "2026-11-22T10:00:00", avg_grade: 3.5 },
       { t: "2026-11-23T10:00:00", avg_grade: null },
@@ -349,6 +353,7 @@ export function qualityFixture(overrides = {}) {
       { at: "2026-11-23T09:00:00", version: 2, source: "live", label: "v2" },
       { at: "2026-11-22T12:00:00", version: 1, source: "demo", label: "v1 (demo)" },
     ],
+    includes_demo: true,
     ...overrides,
   };
 }
@@ -377,6 +382,7 @@ export function emptyQuality() {
     ratings: { up: 0, down: 0, no_answer: 0, none: 0 },
     bucket: "day",
     version_markers: [],
+    includes_demo: false,
   };
 }
 

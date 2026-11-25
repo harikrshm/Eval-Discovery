@@ -352,7 +352,7 @@ export default function QualityTab({ filters, reloadKey = 0, onOpenTab }) {
         <RefreshFrame refreshing={quality.refreshing}>
           <PanelState state={quality.state} what="the quality numbers" error={quality.error} onRetry={quality.retry}>
             {qualityData ? (
-              <QualityData quality={qualityData} showDemoNote={filters?.source !== "live"} />
+              <QualityData quality={qualityData} showDemoNote={qualityData.includes_demo === true} />
             ) : null}
           </PanelState>
         </RefreshFrame>

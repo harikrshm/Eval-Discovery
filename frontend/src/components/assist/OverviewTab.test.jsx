@@ -8,7 +8,7 @@ vi.mock("../../api", async (importOriginal) => {
 
 import * as api from "../../api";
 import OverviewTab from "./OverviewTab";
-import { FILTERS, buttonByText, click, emptyOverview, mount, overviewFixture, rerender, unmount } from "./testUtils";
+import { CYCLE_NOTE, FILTERS, buttonByText, click, emptyOverview, mount, overviewFixture, rerender, unmount } from "./testUtils";
 
 let container;
 
@@ -127,8 +127,10 @@ describe("OverviewTab", () => {
     await renderOverview();
     const steps = container.querySelectorAll('ol li[aria-current="step"]');
     expect(steps).toHaveLength(1);
-    expect(steps[0].textContent).toContain("Criterion chosen");
-    expect(container.textContent).toContain("The loop runs on live conversations only.");
+    expect(steps[0].textContent).toContain("Criterion written");
+    expect(container.textContent).toContain(CYCLE_NOTE);
+    // the demo share of the flagged conversations is shown, never hidden
+    expect(container.querySelector("ol li").textContent).toContain("3 flagged conversations (1 demo)");
   });
 
   it("opens the Evolution tab from the loop", async () => {

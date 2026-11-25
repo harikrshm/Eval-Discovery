@@ -26,6 +26,7 @@ vi.mock("../../api", async (importOriginal) => {
 import * as api from "../../api";
 import EvolutionPanel from "./EvolutionPanel";
 import {
+  CYCLE_NOTE,
   FILTERS,
   buttonByText,
   click,
@@ -239,9 +240,10 @@ describe("Evolution tab: the loop as a pipeline", () => {
     expect(section).not.toBeNull();
     expect(section.querySelectorAll("ol > li")).toHaveLength(8);
     const current = section.querySelector('[aria-current="step"]');
-    expect(current.textContent).toContain("Criterion chosen");
+    expect(current.textContent).toContain("Criterion written");
     expect(current.textContent).toContain("Current");
-    expect(section.textContent).toContain("The loop repeats: a rejected fix sends you back to the fix step.");
+    expect(section.textContent).toContain(CYCLE_NOTE);
+    expect(section.querySelector("ol > li").textContent).toContain("3 flagged conversations (1 demo)");
     // The pipeline belongs to the agent: it is read once, without the console filters.
     expect(api.assistPipeline).toHaveBeenCalledTimes(1);
     const sent = api.assistPipeline.mock.calls[0][0];
@@ -467,7 +469,11 @@ describe("Evolution tab: live data only", () => {
   it("shows no demo marker or number with the source filter on all, and reads no demo-capable endpoint", async () => {
     await renderPanel({ filters: { range: "all", source: "all", version: null }, reloadKey: 0 });
     await click(buttonByText(sectionOf("Before and after replay"), "View as table"));
-    expect(container.textContent).not.toMatch(/demo/i);
+    // The replay chart is real replay results only. The loop's flagged step may say how many of its
+    // conversations are demo runs ("(1 demo)"), because the demo share is always labelled, never hidden.
+    expect(sectionOf("Before and after replay").textContent).not.toMatch(/demo/i);
+    expect(container.textContent.match(/demo/gi)).toHaveLength(1);
+    expect(container.querySelector("#evolution-loop").textContent).toContain("(1 demo)");
     expect(api.assistOverview).not.toHaveBeenCalled();
     expect(api.assistTrends).not.toHaveBeenCalled();
     expect(api.assistMetrics).not.toHaveBeenCalled();

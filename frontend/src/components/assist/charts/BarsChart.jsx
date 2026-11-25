@@ -31,6 +31,12 @@ function SelectableBar({ props, category, label, radius, onSelect }) {
       onPointerDown={() => {
         pressed.current = true;
       }}
+      onPointerUp={() => {
+        pressed.current = false;
+      }}
+      onPointerCancel={() => {
+        pressed.current = false;
+      }}
       onFocus={() => setFocused(!pressed.current)}
       onBlur={() => {
         pressed.current = false;

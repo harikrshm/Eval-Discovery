@@ -147,6 +147,20 @@ function TestRow({ test, job, suggestJob, agentName, userRoleLabel, onReplay, on
   );
 }
 
+// Why a finished build left the criterion with no tests. Runs without a saved page are skipped by the
+// build (a test copied from one could not be replayed), so say that instead of "nothing fails".
+function emptyMessage(result) {
+  if (!result?.already_handled) return "No tests yet.";
+  const skipped = Number(result.skipped_no_page) || 0;
+  if (skipped > 0) {
+    const runs = skipped === 1 ? "1 saved run has" : `${skipped} saved runs have`;
+    const cannot = skipped === 1 ? "it can't become a test yet" : "they can't become tests yet";
+    const rest = Number(result.judged) > 0 ? " None of the other runs fail this criterion." : "";
+    return `${runs} no saved page (only the automatic judge flagged ${skipped === 1 ? "it" : "them"}), so ${cannot}.${rest}`;
+  }
+  return "None of your saved runs fail this criterion, so there is nothing to test yet.";
+}
+
 // The tests of one criterion: its status, one row per test, and the build step when there are none.
 export default function TestsSection({
   criterionSuite,
@@ -205,11 +219,7 @@ export default function TestsSection({
     } else {
       empty = (
         <div className="space-y-2">
-          <p className="text-sm text-muted-foreground">
-            {buildJob?.result?.already_handled
-              ? "None of your saved runs fail this criterion, so there is nothing to test yet."
-              : "No tests yet."}
-          </p>
+          <p className="text-sm text-muted-foreground">{emptyMessage(buildJob?.result)}</p>
           <Button type="button" variant="outline" size="sm" onClick={() => onBuildTests(criterionId)}>
             Build tests
           </Button>

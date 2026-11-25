@@ -269,6 +269,55 @@ describe("TestsSection with no tests", () => {
     );
   });
 
+  it("says runs without a saved page were skipped, instead of saying nothing fails", async () => {
+    await render({
+      criterionSuite: empty(),
+      jobs: {
+        "build:c1": {
+          status: "done",
+          error: null,
+          result: { already_handled: true, tests_created: 0, judged: 0, skipped_no_page: 2 },
+        },
+      },
+    });
+    expect(container.textContent).toContain(
+      "2 saved runs have no saved page (only the automatic judge flagged them), so they can't become tests yet."
+    );
+    expect(container.textContent).not.toContain("None of your saved runs");
+    expect(container.textContent).not.toContain("None of the other runs");
+  });
+
+  it("adds that the other runs do not fail when some were judged and some skipped", async () => {
+    await render({
+      criterionSuite: empty(),
+      jobs: {
+        "build:c1": {
+          status: "done",
+          error: null,
+          result: { already_handled: true, tests_created: 0, judged: 3, skipped_no_page: 1 },
+        },
+      },
+    });
+    expect(container.textContent).toContain(
+      "1 saved run has no saved page (only the automatic judge flagged it), so it can't become a test yet. None of the other runs fail this criterion."
+    );
+  });
+
+  it("keeps the plain wording when nothing was skipped", async () => {
+    await render({
+      criterionSuite: empty(),
+      jobs: {
+        "build:c1": {
+          status: "done",
+          error: null,
+          result: { already_handled: true, tests_created: 0, judged: 3, skipped_no_page: 0 },
+        },
+      },
+    });
+    expect(container.textContent).toContain("None of your saved runs fail this criterion");
+    expect(container.textContent).not.toContain("no saved page");
+  });
+
   it("has no special message for an already_built result", async () => {
     await render({
       criterionSuite: empty(),

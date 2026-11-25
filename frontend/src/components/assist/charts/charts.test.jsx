@@ -500,6 +500,22 @@ describe("BarsChart", () => {
     expect(bar.querySelector("path").getAttribute("stroke")).not.toBe(FOCUS);
   });
 
+  it("forgets a mouse or touch press when it ends or is cancelled, so a later keyboard focus shows the ring", async () => {
+    const container = await mount(
+      <BarsChart data={DATA} categoryKey="intent" series={SERIES_RATE} width={500} onSelect={() => {}} />,
+    );
+    const bar = container.querySelector('[role="button"]');
+    const ring = () => bar.querySelector("path").getAttribute("stroke");
+    for (const end of ["pointercancel", "pointerup"]) {
+      await act(async () => bar.dispatchEvent(new Event("pointerdown", { bubbles: true })));
+      await act(async () => bar.dispatchEvent(new Event(end, { bubbles: true })));
+      await act(async () => bar.focus()); // for example a later Tab: no press is in progress any more
+      expect(ring()).toBe(FOCUS);
+      await act(async () => bar.blur());
+      expect(ring()).not.toBe(FOCUS);
+    }
+  });
+
   it("supports vertical columns, grouped series and stacked series", async () => {
     const data = [
       { section: "claims", live: 3, demo: 2 },
