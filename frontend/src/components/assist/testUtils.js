@@ -379,3 +379,62 @@ export function emptyQuality() {
     version_markers: [],
   };
 }
+
+// The /assist/console/operations payload (backend task 6) with a few real numbers in it: 12 calls over
+// three hourly buckets (7 ok, 1 error, 3 rate limited, 1 timeout), the middle bucket with no chat calls.
+export function operationsFixture(overrides = {}) {
+  return {
+    bucket: "hour",
+    latency: [
+      { t: "2026-11-24T10:37:00", p50_ms: 850, p95_ms: 1900, n: 5 },
+      { t: "2026-11-24T11:37:00", p50_ms: null, p95_ms: null, n: 0 },
+      { t: "2026-11-24T12:37:00", p50_ms: 1200, p95_ms: 4300, n: 4 },
+    ],
+    outcomes: [
+      { t: "2026-11-24T10:37:00", ok: 5, error: 1, rate_limited: 0, timeout: 0 },
+      { t: "2026-11-24T11:37:00", ok: 0, error: 0, rate_limited: 0, timeout: 0 },
+      { t: "2026-11-24T12:37:00", ok: 2, error: 0, rate_limited: 3, timeout: 1 },
+    ],
+    requests: [
+      { t: "2026-11-24T10:37:00", n: 6 },
+      { t: "2026-11-24T11:37:00", n: 0 },
+      { t: "2026-11-24T12:37:00", n: 6 },
+    ],
+    tokens_by_kind: { chat: 9000, judge: 2500, insights: 1200 },
+    totals: { calls: 12, error_rate: 0.1667, rate_limit_rate: 0.25, p50_ms: 1000, p95_ms: 4300, tokens: 12700 },
+    judge_queue: {
+      waiting_sessions: 3,
+      queued_jobs: 1,
+      oldest_waiting_minutes: 42,
+      judged_last_hour: 7,
+      hourly_cap: 20,
+      unreadable_sessions: 2,
+    },
+    recent_failed_jobs: [
+      { id: "j1", type: "replay", created_at: "2026-11-24T11:00:00", error: "The judge could not read this conversation." },
+      { id: "j2", type: "judge_conversation", created_at: "2026-11-24T09:30:00", error: null },
+    ],
+    ...overrides,
+  };
+}
+
+// What an empty database returns: well-formed, with nothing in it.
+export function emptyOperations() {
+  return {
+    bucket: "day",
+    latency: [],
+    outcomes: [],
+    requests: [],
+    tokens_by_kind: { chat: 0, judge: 0, insights: 0 },
+    totals: { calls: 0, error_rate: null, rate_limit_rate: null, p50_ms: null, p95_ms: null, tokens: 0 },
+    judge_queue: {
+      waiting_sessions: 0,
+      queued_jobs: 0,
+      oldest_waiting_minutes: null,
+      judged_last_hour: 0,
+      hourly_cap: 20,
+      unreadable_sessions: 0,
+    },
+    recent_failed_jobs: [],
+  };
+}

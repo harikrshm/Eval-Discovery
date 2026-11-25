@@ -7,6 +7,7 @@ import AdoptionPanel from "./AdoptionPanel";
 import ConsoleControls from "./ConsoleControls";
 import { DEFAULT_FILTERS } from "./consoleFilters";
 import EvolutionPanel from "./EvolutionPanel";
+import OperationsTab from "./OperationsTab";
 import OverviewTab from "./OverviewTab";
 import QualityTab from "./QualityTab";
 import RefreshFrame from "./RefreshFrame";
@@ -35,11 +36,6 @@ const fetchVersions = (filters) =>
 function sourceLine(name, counts) {
   if (!counts) return null;
   return `${name} — Live: ${counts.live ?? 0} · Imported: ${counts.imported ?? 0}`;
-}
-
-// Stands in until the Operations tab is built.
-function Placeholder() {
-  return <p className="text-sm text-muted-foreground">Coming in the next task</p>;
 }
 
 // The builder-facing console for the Patent Assist agent: an Overview with alerts and headline numbers,
@@ -243,7 +239,7 @@ export default function AssistConsole({ onDisconnect, autoFocus = false }) {
               {opened.evolution && <EvolutionPanel {...tabProps} agentId={status.agent_id} />}
             </div>
             <div role="tabpanel" id="assist-panel-operations" aria-labelledby="assist-tab-operations" hidden={tab !== "operations"}>
-              {opened.operations && <Placeholder />}
+              {opened.operations && <OperationsTab {...tabProps} />}
             </div>
           </>
         )}

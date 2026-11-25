@@ -13,6 +13,7 @@ vi.mock("../../api", async (importOriginal) => {
     assistFlagged: vi.fn(),
     assistInsights: vi.fn(),
     assistOverview: vi.fn(),
+    assistOperations: vi.fn(),
     assistPipeline: vi.fn(),
     getVersions: vi.fn(),
     getReport: vi.fn(),
@@ -34,6 +35,7 @@ import {
   flaggedRun,
   metricsFixture,
   mount,
+  operationsFixture,
   overviewFixture,
   pipelineFixture,
   pressKey,
@@ -93,6 +95,7 @@ beforeEach(() => {
   api.assistQuality.mockResolvedValue(qualityFixture());
   api.assistOverview.mockResolvedValue(overviewFixture());
   api.assistPipeline.mockResolvedValue(pipelineFixture());
+  api.assistOperations.mockResolvedValue(operationsFixture());
   api.getVersions.mockResolvedValue([]);
   api.getReport.mockResolvedValue(null);
 });
@@ -204,7 +207,7 @@ describe("five-tab shell", () => {
     expect(container.querySelector("#assist-panel-adoption").textContent).toContain("Feature coverage by section");
   });
 
-  it("shows the Quality tab when it is opened, and a placeholder for Operations", async () => {
+  it("shows the Quality tab when it is opened, and the Operations tab only when it is opened", async () => {
     await renderConsole();
     expect(api.assistQuality).not.toHaveBeenCalled();
     await click(tabNamed("Quality"));
@@ -212,8 +215,16 @@ describe("five-tab shell", () => {
     expect(quality.querySelector("#quality-judge")).not.toBeNull();
     expect(quality.querySelector('[data-kpi="judged"]')).not.toBeNull();
     expect(quality.textContent).not.toContain("Coming in the next task");
+    expect(api.assistOperations).not.toHaveBeenCalled();
+    expect(container.querySelector("#assist-panel-operations").textContent).toBe("");
     await click(tabNamed("Operations"));
-    expect(container.querySelector("#assist-panel-operations").textContent).toContain("Coming in the next task");
+    const operations = container.querySelector("#assist-panel-operations");
+    expect(api.assistOperations).toHaveBeenCalledTimes(1);
+    expect(api.assistOperations).toHaveBeenCalledWith({ range: "30d", source: "all", version: null });
+    expect(operations.querySelector("#ops-latency")).not.toBeNull();
+    expect(operations.querySelector("#ops-errors")).not.toBeNull();
+    expect(operations.querySelector('[data-kpi="p95"]')).not.toBeNull();
+    expect(operations.textContent).not.toContain("Coming in the next task");
   });
 
   it("has one insights brief, on Quality and not on Adoption", async () => {
@@ -333,15 +344,14 @@ describe("global controls", () => {
     const scroll = vi.fn();
     Element.prototype.scrollIntoView = scroll;
     await renderConsole();
-    const target = document.createElement("div");
-    target.id = "ops-errors";
-    container.appendChild(target);
     const alert = container.querySelector("[data-alert-strip] button");
     expect(alert.textContent).toContain("demo");
     await click(alert);
     expect(tabNamed("Operations").getAttribute("aria-selected")).toBe("true");
     expect(scroll).toHaveBeenCalled();
-    expect(scroll.mock.contexts[0]).toBe(target);
+    // The Operations tab's own anchor, which exists from the moment the tab mounts (even while loading).
+    expect(scroll.mock.contexts[0].id).toBe("ops-errors");
+    expect(container.querySelector("#assist-panel-operations").contains(scroll.mock.contexts[0])).toBe(true);
   });
 
   it("an alert whose anchor does not exist still opens its tab and does not throw", async () => {
